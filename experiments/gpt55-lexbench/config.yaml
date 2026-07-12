@@ -35,6 +35,7 @@ browsers:
   local:
     browser_id: local
     headless: true
+    local_executable_path: $LOCAL_BROWSER_EXECUTABLE_PATH
     local_proxy_server: ""
 
 agents:

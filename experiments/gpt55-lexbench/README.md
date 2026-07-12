@@ -9,7 +9,7 @@
 
 | 项目 | 值 |
 | --- | --- |
-| Benchmark runner | `lexmount/browseruse-agent-bench@b9d3dc655aec3cd10fd1fb86cfb7678bb9a27399` |
+| Benchmark runner | `lexmount/browseruse-agent-bench@bce2c2a17dc2bcf3062b56df4946230c94426cd6` |
 | Dataset | `LexBench-Browser / All / 210 tasks` |
 | Dataset SHA-256 | `b2e8626b1554decce4f0ca6b4aa463f24ec9667836c74b797666d34e2f6b90fe` |
 | Agent | `browser-use` |
@@ -52,6 +52,10 @@
 - 原始 session 容量：Lexmount 20 → 40 → 60，失败后停止上探。
 - 端到端容量：两端先比较 c20，再以 20 为步长上探。
 - Local 使用 `MemoryMax=46G`，Host `MemAvailable < 32 GiB` 时触发护栏。
+- 5090 不可用时允许在同一台 macOS 主机顺序运行两端；该 fallback 使用进程树 RSS，
+  不把 RSS 写成 PSS，也不生成 cgroup/GPU 结论。
+- `MACHINE_ID` 默认写成 `<platform>-<backend>`，移到命名主机时可以显式覆盖。macOS
+  上 Lexmount arm 的资源数据只代表控制端进程树，不冒充远端服务端利用率。
 - 一个点只有在计划任务全部形成轨迹、无 quota/OOM/护栏中止时才算可持续点。
 
 ## 必须报告的指标
