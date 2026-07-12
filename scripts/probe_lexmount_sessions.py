@@ -43,8 +43,7 @@ def _required_env(profile: str) -> dict[str, str]:
     return {"api_key": values[names[0]], "project_id": values[names[1]], "base_url": base_url}
 
 
-def _session_items(client: Lexmount) -> list[Any] | None:
-    response = client.sessions.list()
+def _response_items(response: Any) -> list[Any] | None:
     if isinstance(response, (list, tuple)):
         return list(response)
     for field in ("items", "sessions", "data"):
@@ -57,12 +56,28 @@ def _session_items(client: Lexmount) -> list[Any] | None:
         return None
 
 
+def _session_items(client: Lexmount) -> list[Any] | None:
+    return _response_items(client.sessions.list())
+
+
 def _session_id(session: Any) -> str:
     return str(getattr(session, "session_id", None) or getattr(session, "id", None) or "")
 
 
 def _session_counts(client: Lexmount) -> dict[str, Any] | None:
-    items = _session_items(client)
+    response = client.sessions.list()
+    pagination = getattr(response, "pagination", None)
+    if pagination is not None:
+        active = int(getattr(pagination, "active_count", 0))
+        closed = int(getattr(pagination, "closed_count", 0))
+        return {
+            "active": active,
+            "total_records": int(getattr(pagination, "total_count", active + closed)),
+            "statuses": {"active": active, "closed": closed},
+            "page_size": int(getattr(pagination, "page_size", len(response))),
+            "total_pages": int(getattr(pagination, "total_pages", 1)),
+        }
+    items = _response_items(response)
     if items is None:
         return None
     statuses: dict[str, int] = {}

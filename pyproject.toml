@@ -5,6 +5,7 @@ description = "Reproducible Lexmount Browser versus local Chrome experiments"
 requires-python = ">=3.11"
 dependencies = [
     "lexmount==0.5.12",
+    "psutil>=7.0",
     "python-dotenv>=1.0",
 ]
 

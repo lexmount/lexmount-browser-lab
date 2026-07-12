@@ -48,7 +48,7 @@ uv run python scripts/select_tasks.py \
   --count 80
 ```
 
-Linux 5090 runner 上的配对运行入口：
+Linux 5090 runner 或 macOS fallback 上的配对运行入口：
 
 ```bash
 ./scripts/run_benchmark.sh \
@@ -60,3 +60,6 @@ Linux 5090 runner 上的配对运行入口：
 ```
 
 凭证只从外部 `.env` 注入。仓库内的配置只包含环境变量引用。
+
+Linux 使用 cgroup CPU/PSS/Chrome PSS；macOS 使用同进程树 CPU/RSS/Chrome RSS。
+两种口径不会混在同一张资源对比表中。

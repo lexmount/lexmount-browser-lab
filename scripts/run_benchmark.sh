@@ -10,6 +10,7 @@ PHASE=""
 CONCURRENCY=""
 COUNT=""
 SKIP_EVAL=0
+MACHINE_ID=${MACHINE_ID:-}
 
 usage() {
   printf '%s\n' \
@@ -37,7 +38,7 @@ done
 [[ "$PHASE" =~ ^(smoke|pilot|full|capacity)$ ]] || { echo "invalid --phase" >&2; exit 2; }
 [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || { echo "invalid --concurrency" >&2; exit 2; }
 
-EXPECTED_SHA=b9d3dc655aec3cd10fd1fb86cfb7678bb9a27399
+EXPECTED_SHA=bce2c2a17dc2bcf3062b56df4946230c94426cd6
 ACTUAL_SHA=$(git -C "$BENCHMARK_REPO" rev-parse HEAD)
 [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || {
   printf 'benchmark commit mismatch: expected %s, got %s\n' "$EXPECTED_SHA" "$ACTUAL_SHA" >&2
@@ -59,14 +60,20 @@ fi
 
 TASK_ARGS=()
 PLANNED_TASKS=""
+read_task_ids() {
+  TASK_IDS=()
+  while IFS= read -r task_id; do
+    [[ -n "$task_id" ]] && TASK_IDS+=("$task_id")
+  done < "$1"
+}
 case "$PHASE" in
   smoke)
-    mapfile -t TASK_IDS < "$ROOT_DIR/experiments/gpt55-lexbench/task_sets/smoke.txt"
+    read_task_ids "$ROOT_DIR/experiments/gpt55-lexbench/task_sets/smoke.txt"
     TASK_ARGS=(--mode specific --task-ids "${TASK_IDS[@]}")
     PLANNED_TASKS=${#TASK_IDS[@]}
     ;;
   pilot)
-    mapfile -t TASK_IDS < "$ROOT_DIR/experiments/gpt55-lexbench/task_sets/pilot20.txt"
+    read_task_ids "$ROOT_DIR/experiments/gpt55-lexbench/task_sets/pilot20.txt"
     TASK_ARGS=(--mode specific --task-ids "${TASK_IDS[@]}")
     PLANNED_TASKS=${#TASK_IDS[@]}
     ;;
@@ -80,7 +87,7 @@ case "$PHASE" in
     uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/select_tasks.py" \
       --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
       --count "$COUNT" --output "$CAPACITY_IDS"
-    mapfile -t TASK_IDS < "$CAPACITY_IDS"
+    read_task_ids "$CAPACITY_IDS"
     TASK_ARGS=(--mode specific --task-ids "${TASK_IDS[@]}")
     PLANNED_TASKS=${#TASK_IDS[@]}
     ;;
@@ -91,11 +98,24 @@ OUTPUT_DIR="$ROOT_DIR/artifacts/gpt55-lexbench/$RUN_ID"
 MARKER="$OUTPUT_DIR/benchmark-output-dir.txt"
 mkdir -p "$OUTPUT_DIR"
 
-uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/profile_command.py" \
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  export LOCAL_BROWSER_EXECUTABLE_PATH=${LOCAL_BROWSER_EXECUTABLE_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}
+  PROFILER="$ROOT_DIR/scripts/profile_process.py"
+  PROFILER_ARGS=(--min-host-available-gib 6)
+  MACHINE_ID=${MACHINE_ID:-macos-${BACKEND}}
+else
+  PROFILER="$ROOT_DIR/scripts/profile_command.py"
+  PROFILER_ARGS=()
+  MACHINE_ID=${MACHINE_ID:-linux-${BACKEND}}
+fi
+
+set +e
+uv run --project "$ROOT_DIR" python "$PROFILER" \
   --output-dir "$OUTPUT_DIR" \
   --cwd "$BENCHMARK_REPO" \
   --label "$RUN_ID" \
   --planned-tasks "$PLANNED_TASKS" \
+  "${PROFILER_ARGS[@]}" \
   -- \
   uv run --env-file "$ENV_FILE" scripts/run.py \
     --agent browser-use \
@@ -105,9 +125,24 @@ uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/profile_command.py" \
     --model gpt-5.5 \
     --browser "$BACKEND" \
     --concurrency "$CONCURRENCY" \
-    --machine-id 5090-local-comparison \
+    --machine-id "$MACHINE_ID" \
     --write-output-dir "$MARKER" \
     "${TASK_ARGS[@]}"
+BENCHMARK_RC=$?
+set -e
+printf '%s\n' "$BENCHMARK_RC" > "$OUTPUT_DIR/benchmark-return-code.txt"
+if ((BENCHMARK_RC != 0)); then
+  printf 'benchmark command returned %s; continuing with available task artifacts\n' \
+    "$BENCHMARK_RC" >&2
+fi
+
+GUARD_TRIGGERED=$(uv run --project "$ROOT_DIR" python -c \
+  'import json, sys; value = json.load(open(sys.argv[1], encoding="utf-8")).get("guard_triggered"); print("" if value is None else value)' \
+  "$OUTPUT_DIR/resource_summary.json")
+[[ -z "$GUARD_TRIGGERED" ]] || {
+  printf 'resource guard triggered: %s\n' "$GUARD_TRIGGERED" >&2
+  exit 1
+}
 
 [[ -s "$MARKER" ]] || { echo "benchmark output marker missing" >&2; exit 1; }
 BENCHMARK_OUTPUT=$(<"$MARKER")
