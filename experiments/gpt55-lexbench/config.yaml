@@ -1,0 +1,56 @@
+default:
+  agent: browser-use
+  data: LexBench-Browser
+  model: gpt-5.5
+  browser: lexmount
+
+models:
+  gpt-5.5:
+    model_type: OPENAI
+    model_provider: openai
+    model_id: gpt-5.5
+    api_key: $OPENAI_API_KEY
+    base_url: $OPENAI_BASE_URL
+    dont_force_structured_output: true
+    add_schema_to_system_prompt: true
+
+browsers:
+  lexmount:
+    browser_id: lexmount
+    lexmount_browser_mode: normal
+    lexmount_official_proxy: false
+    lexmount_api_key: $LEXMOUNT_API_KEY
+    lexmount_project_id: $LEXMOUNT_PROJECT_ID
+    lexmount_base_url: $LEXMOUNT_BASE_URL
+    lexmount_profiles:
+      zh:
+        api_key: $LEXMOUNT_CN_API_KEY
+        project_id: $LEXMOUNT_CN_PROJECT_ID
+        base_url: $LEXMOUNT_CN_BASE_URL
+      en:
+        api_key: $LEXMOUNT_API_KEY
+        project_id: $LEXMOUNT_PROJECT_ID
+        base_url: $LEXMOUNT_BASE_URL
+
+  local:
+    browser_id: local
+    headless: true
+    local_proxy_server: ""
+
+agents:
+  browser-use:
+    use_judge: false
+    use_vision: false
+    max_steps: 40
+    flash_mode: true
+    timeout: 600
+
+eval:
+  model: gpt-5.4
+  api_key: $OPENAI_API_KEY
+  base_url: $OPENAI_BASE_URL
+  temperature: 1.0
+  max_tries: 5
+  api_max_images: 50
+  detail: high
+  max_tokens: 4096

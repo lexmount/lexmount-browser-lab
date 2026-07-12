@@ -1,0 +1,26 @@
+[project]
+name = "lexbrowserenv-experiments"
+version = "0.1.0"
+description = "Reproducible Lexmount Browser versus local Chrome experiments"
+requires-python = ">=3.11"
+dependencies = [
+    "lexmount==0.5.12",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
