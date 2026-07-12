@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "paired": {
+    "tasks": 210,
+    "success": {
+      "lexmount": 150,
+      "local": 122
+    },
+    "table": {
+      "both_success": 104,
+      "lexmount_only": 46,
+      "local_only": 18,
+      "both_failed": 42
+    },
+    "lexmount_minus_local": 0.133333,
+    "bootstrap_95_ci": [0.061905, 0.204762],
+    "bootstrap_samples": 10000,
+    "noninferiority_margin": 0.05,
+    "noninferiority_passed": true
+  },
+  "arms": {
+    "lexmount": {
+      "counts": {
+        "planned": 210,
+        "trajectory": 210,
+        "judged": 210,
+        "success": 150,
+        "agent_state": {"done": 199, "error": 10, "timeout": 1},
+        "runner_task_processes": {"zero_exit": 200, "nonzero_exit": 10}
+      },
+      "success_rate": 0.714286,
+      "steps": {"mean": 11.842857, "p50": 9.0, "p95": 33.0},
+      "e2e_seconds": {"mean": 129.82799, "p50": 93.7205, "p95": 381.501},
+      "throughput_task_per_hour": 241.159556,
+      "agent_usage": {"tokens": 26553602, "cost_usd": 119.939592},
+      "judge_usage": {"tokens": 1757713, "cost_usd": 7.337595},
+      "error_task_counts": {
+        "timeout": 8,
+        "session_create": 0,
+        "network_navigation": 6,
+        "unhandled_error": 11
+      },
+      "failure_categories": {
+        "M1": 27,
+        "M2": 6,
+        "M3": 3,
+        "M6": 1,
+        "E1": 14,
+        "E2": 1,
+        "E3": 4,
+        "H1": 3,
+        "OTHER": 1
+      },
+      "strata": {
+        "en/T1": {"success": 55, "total": 84},
+        "en/T2": {"success": 7, "total": 8},
+        "zh/T1": {"success": 81, "total": 110},
+        "zh/T2": {"success": 7, "total": 8}
+      },
+      "resources": {
+        "duration_seconds": 3134.854,
+        "cpu_cores_mean": 0.3668,
+        "rss_gib": {"mean": 3.7437, "p95": 4.612, "max": 5.1377},
+        "chrome_rss_gib": {"mean": 0.0, "p95": 0.0, "max": 0.0},
+        "host_available_gib_min": 12.6892,
+        "guard_triggered": null
+      }
+    },
+    "local": {
+      "counts": {
+        "planned": 210,
+        "trajectory": 210,
+        "judged": 210,
+        "success": 122,
+        "agent_state": {"done": 206, "error": 4, "timeout": 0},
+        "runner_task_processes": {"zero_exit": 206, "nonzero_exit": 4}
+      },
+      "success_rate": 0.580952,
+      "steps": {"mean": 12.1, "p50": 10.0, "p95": 31.0},
+      "e2e_seconds": {"mean": 96.73279, "p50": 62.0995, "p95": 271.733},
+      "throughput_task_per_hour": 344.32172,
+      "agent_usage": {"tokens": 24310203, "cost_usd": 104.548618},
+      "judge_usage": {"tokens": 1743236, "cost_usd": 7.3533775},
+      "error_task_counts": {
+        "timeout": 11,
+        "session_create": 0,
+        "network_navigation": 18,
+        "unhandled_error": 4
+      },
+      "failure_categories": {
+        "M1": 19,
+        "M2": 7,
+        "M3": 6,
+        "M4": 1,
+        "E1": 30,
+        "E2": 4,
+        "E3": 21
+      },
+      "strata": {
+        "en/T1": {"success": 34, "total": 84},
+        "en/T2": {"success": 7, "total": 8},
+        "zh/T1": {"success": 73, "total": 110},
+        "zh/T2": {"success": 8, "total": 8}
+      },
+      "resources": {
+        "duration_seconds": 2195.621,
+        "cpu_cores_mean": 1.7188,
+        "rss_gib": {"mean": 13.8713, "p95": 16.949, "max": 23.2005},
+        "chrome_rss_gib": {"mean": 10.7906, "p95": 13.7246, "max": 19.7274},
+        "host_available_gib_min": 9.0577,
+        "guard_triggered": null
+      }
+    }
+  }
+}

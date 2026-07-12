@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "experiment_id": "gpt55-lexbench-20260713",
+  "status": "complete",
+  "runner": {
+    "repository": "lexmount/browseruse-agent-bench",
+    "commit": "bce2c2a17dc2bcf3062b56df4946230c94426cd6",
+    "browser_use_version": "0.13.4"
+  },
+  "dataset": {
+    "name": "LexBench-Browser",
+    "split": "All",
+    "tasks": 210,
+    "sha256": "b2e8626b1554decce4f0ca6b4aa463f24ec9667836c74b797666d34e2f6b90fe"
+  },
+  "agent": {
+    "name": "browser-use",
+    "model": "gpt-5.5",
+    "max_steps": 40,
+    "timeout_seconds": 600
+  },
+  "judge": {
+    "model": "gpt-5.4",
+    "method": "per-task threshold stepwise"
+  },
+  "execution": {
+    "concurrency": 10,
+    "order": "lexmount then local",
+    "paired_by_task_id": true,
+    "lexmount_run_id": "full-lexmount-c10-20260712T171920Z",
+    "local_run_id": "full-local-c10-20260712T191703Z"
+  },
+  "local_machine": {
+    "model": "MacBook Pro",
+    "chip": "Apple M4 Pro",
+    "cpu_cores": 14,
+    "memory_gb": 48,
+    "os": "macOS 15.7.3 (24G419)",
+    "browser": "Google Chrome 150.0.7871.102"
+  },
+  "resource_scope": {
+    "metric": "process-tree RSS",
+    "lexmount": "runner controller only; excludes remote browser hosts",
+    "local": "runner, agent and local Chrome process tree"
+  },
+  "files": {
+    "report": "report.md",
+    "metrics": "metrics.json"
+  }
+}
