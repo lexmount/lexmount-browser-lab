@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+
+# Raw benchmark outputs stay on the runner. Commit only reviewed summaries.
+artifacts/
+results/**/raw/
+results/**/samples.csv
