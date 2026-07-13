@@ -108,6 +108,14 @@ OUTPUT_DIR="$ROOT_DIR/artifacts/gpt55-lexbench/$RUN_ID"
 MARKER="$OUTPUT_DIR/benchmark-output-dir.txt"
 mkdir -p "$OUTPUT_DIR"
 
+MONITOR_PID=""
+MONITOR_SENTINEL_PID=""
+cleanup_session_monitor() {
+  [[ -z "$MONITOR_PID" ]] || kill "$MONITOR_PID" 2>/dev/null || true
+  [[ -z "$MONITOR_SENTINEL_PID" ]] || kill "$MONITOR_SENTINEL_PID" 2>/dev/null || true
+}
+trap cleanup_session_monitor EXIT
+
 if [[ "$(uname -s)" == "Darwin" ]]; then
   export LOCAL_BROWSER_EXECUTABLE_PATH=${LOCAL_BROWSER_EXECUTABLE_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}
   PROFILER_MODULE="lexbrowser_eval.resources.process_profiler"
@@ -117,6 +125,35 @@ else
   PROFILER_MODULE="lexbrowser_eval.resources.cgroup_profiler"
   PROFILER_ARGS=()
   MACHINE_ID=${MACHINE_ID:-linux-${BACKEND}}
+fi
+
+if [[ "$BACKEND" == "lexmount" ]]; then
+  READY_FILE="$OUTPUT_DIR/session-monitor.ready"
+  sleep 2147483647 &
+  MONITOR_SENTINEL_PID=$!
+  uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.session_monitor \
+    --env-file "$ENV_FILE" \
+    --watch-pid "$MONITOR_SENTINEL_PID" \
+    --interval-seconds 2 \
+    --ready-file "$READY_FILE" \
+    --output "$OUTPUT_DIR/session-monitor.json" \
+    > "$OUTPUT_DIR/session-monitor.log" 2>&1 &
+  MONITOR_PID=$!
+  for _ in {1..100}; do
+    [[ -f "$READY_FILE" ]] && break
+    kill -0 "$MONITOR_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [[ ! -f "$READY_FILE" ]]; then
+    set +e
+    wait "$MONITOR_PID"
+    MONITOR_RC=$?
+    set -e
+    MONITOR_PID=""
+    printf '%s\n' "$MONITOR_RC" > "$OUTPUT_DIR/session-monitor-return-code.txt"
+    echo "Lexmount session monitor did not become ready" >&2
+    exit 1
+  fi
 fi
 
 set +e
@@ -137,13 +174,30 @@ uv run --project "$ROOT_DIR" python -m "$PROFILER_MODULE" \
     --concurrency "$CONCURRENCY" \
     --machine-id "$MACHINE_ID" \
     --write-output-dir "$MARKER" \
-    "${TASK_ARGS[@]}"
+    "${TASK_ARGS[@]}" &
+PROFILER_PID=$!
+
+wait "$PROFILER_PID"
 BENCHMARK_RC=$?
+MONITOR_RC=0
+if [[ -n "$MONITOR_PID" ]]; then
+  kill "$MONITOR_SENTINEL_PID" 2>/dev/null
+  wait "$MONITOR_SENTINEL_PID" 2>/dev/null
+  MONITOR_SENTINEL_PID=""
+  wait "$MONITOR_PID"
+  MONITOR_RC=$?
+  MONITOR_PID=""
+fi
 set -e
 printf '%s\n' "$BENCHMARK_RC" > "$OUTPUT_DIR/benchmark-return-code.txt"
+printf '%s\n' "$MONITOR_RC" > "$OUTPUT_DIR/session-monitor-return-code.txt"
 if ((BENCHMARK_RC != 0)); then
   printf 'benchmark command returned %s; continuing with available task artifacts\n' \
     "$BENCHMARK_RC" >&2
+fi
+if ((MONITOR_RC != 0)); then
+  printf 'Lexmount session monitor returned %s\n' "$MONITOR_RC" >&2
+  exit 1
 fi
 
 GUARD_TRIGGERED=$(uv run --project "$ROOT_DIR" python -c \
@@ -158,7 +212,7 @@ GUARD_TRIGGERED=$(uv run --project "$ROOT_DIR" python -c \
 BENCHMARK_OUTPUT=$(<"$MARKER")
 TIMESTAMP=$(basename "$BENCHMARK_OUTPUT")
 
-if ((SKIP_EVAL == 0)); then
+run_eval() {
   (
     cd "$BENCHMARK_REPO"
     uv run --env-file "$ENV_FILE" scripts/eval.py \
@@ -169,13 +223,46 @@ if ((SKIP_EVAL == 0)); then
       --timestamp "$TIMESTAMP" \
       --num-worker 5 \
       --eval-strategy stepwise
-  ) | tee "$OUTPUT_DIR/eval.log"
-fi
+  ) | tee -a "$OUTPUT_DIR/eval.log"
+}
 
-uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
-  --run-dir "$BENCHMARK_OUTPUT" \
-  --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
-  --resource-summary "$OUTPUT_DIR/resource_summary.json" \
-  --output "$OUTPUT_DIR/benchmark_summary.json"
+summarize_run() {
+  uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
+    --run-dir "$BENCHMARK_OUTPUT" \
+    --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
+    --resource-summary "$OUTPUT_DIR/resource_summary.json" \
+    --output "$OUTPUT_DIR/benchmark_summary.json"
+}
+
+synthetic_judge_count() {
+  uv run --project "$ROOT_DIR" python -c \
+    'import json, sys; from lexbrowser_eval.lexbench.summarize_replays import synthetic_evaluation_ids; print(len(synthetic_evaluation_ids(json.load(open(sys.argv[1], encoding="utf-8")))))' \
+    "$OUTPUT_DIR/benchmark_summary.json"
+}
+
+if ((SKIP_EVAL == 0)); then
+  : > "$OUTPUT_DIR/eval.log"
+  run_eval
+fi
+summarize_run
+
+SYNTHETIC_JUDGE_FAILURES=0
+if ((SKIP_EVAL == 0)); then
+  SYNTHETIC_JUDGE_FAILURES=$(synthetic_judge_count)
+  for retry in 1 2; do
+    ((SYNTHETIC_JUDGE_FAILURES > 0)) || break
+    printf 'retrying %s synthetic Judge failure(s), attempt %s/2\n' \
+      "$SYNTHETIC_JUDGE_FAILURES" "$retry" | tee -a "$OUTPUT_DIR/eval.log"
+    run_eval
+    summarize_run
+    SYNTHETIC_JUDGE_FAILURES=$(synthetic_judge_count)
+  done
+fi
+printf '%s\n' "$SYNTHETIC_JUDGE_FAILURES" > "$OUTPUT_DIR/synthetic-judge-failures.txt"
+if ((SYNTHETIC_JUDGE_FAILURES > 0)); then
+  printf '%s synthetic Judge failure(s) remain after retries\n' \
+    "$SYNTHETIC_JUDGE_FAILURES" >&2
+  exit 1
+fi
 
 printf '%s\n' "$OUTPUT_DIR"

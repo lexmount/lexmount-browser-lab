@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import lexbrowser_eval.lexbench.session_monitor as session_monitor
-from lexbrowser_eval.lexbench.session_monitor import _active_session_count, summarize_samples
+from lexbrowser_eval.lexbench.session_monitor import (
+    _active_session_count,
+    _residual_sessions,
+    summarize_samples,
+)
 
 
 def test_summarize_samples_reports_actual_active_concurrency() -> None:
@@ -31,3 +35,12 @@ def test_active_session_count_redacts_credentials(monkeypatch) -> None:
     assert profile == "en"
     assert count is None
     assert error == "RuntimeError: request using <redacted> failed"
+
+
+def test_residual_sessions_preserves_unknown_counts() -> None:
+    result = _residual_sessions(
+        {"en": 1, "zh": None, "total": None},
+        {"en": 1, "zh": 0, "total": 1},
+    )
+
+    assert result == {"en": 0, "zh": None, "total": None}

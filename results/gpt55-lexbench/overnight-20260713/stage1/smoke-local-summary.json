@@ -1,0 +1,504 @@
+{
+  "schema_version": 1,
+  "run_dir": "/home/wf/sxh/browseruse-agent-bench/experiments/LexBench-Browser/All/browser-use/gpt-5.5/20260713_214542",
+  "dataset": "/home/wf/sxh/browseruse-agent-bench/browseruse_bench/data/LexBench-Browser/task.jsonl",
+  "counts": {
+    "planned": 16,
+    "trajectory": 16,
+    "judged": 16,
+    "success": 6,
+    "agent_done": 16,
+    "agent_success": 6
+  },
+  "rates": {
+    "trajectory_per_planned": 1.0,
+    "success_per_planned": 0.375,
+    "success_per_judged": 0.375
+  },
+  "steps": {
+    "mean": 17.1875,
+    "p50": 14.0,
+    "p95": 37.0
+  },
+  "e2e_seconds": {
+    "mean": 155.204937,
+    "p50": 125.5135,
+    "p95": 413.197
+  },
+  "agent_usage": {
+    "total_tokens": 2720776,
+    "total_cost": 12.490303
+  },
+  "judge_usage": {
+    "total_tokens": 141368
+  },
+  "error_task_counts": {
+    "timeout": 0,
+    "session_create": 0,
+    "network_navigation": 2,
+    "unhandled_error": 0
+  },
+  "strata": {
+    "en/T1": {
+      "planned": 6,
+      "trajectory": 6,
+      "judged": 6,
+      "success": 1
+    },
+    "en/T2": {
+      "planned": 1,
+      "trajectory": 1,
+      "judged": 1,
+      "success": 1
+    },
+    "zh/T1": {
+      "planned": 9,
+      "trajectory": 9,
+      "judged": 9,
+      "success": 4
+    }
+  },
+  "sum_task_e2e_seconds": 2483.279,
+  "throughput_task_per_hour": 77.602304,
+  "resource_summary": {
+    "schema_version": 1,
+    "label": "audit-local-c4-20260713T134541Z",
+    "unit": "lexbrowserenv-audit-local-c4-20260713T134541Z-8a81ea63.scope",
+    "started_at": "2026-07-13T13:45:41.360584+00:00",
+    "ended_at": "2026-07-13T13:58:03.606314+00:00",
+    "duration_seconds": 742.246,
+    "cwd": "/home/wf/sxh/browseruse-agent-bench",
+    "command": [
+      "uv",
+      "run",
+      "--env-file",
+      "/home/wf/sxh/browseruse-agent-bench/.env",
+      "scripts/run.py",
+      "--agent",
+      "browser-use",
+      "--agent-config",
+      "/home/wf/sxh/LexBrowserEnv/experiments/gpt55-lexbench/config.yaml",
+      "--data",
+      "LexBench-Browser",
+      "--split",
+      "All",
+      "--model",
+      "gpt-5.5",
+      "--browser",
+      "local",
+      "--concurrency",
+      "4",
+      "--machine-id",
+      "linux-local",
+      "--write-output-dir",
+      "/home/wf/sxh/LexBrowserEnv/artifacts/gpt55-lexbench/audit-local-c4-20260713T134541Z/benchmark-output-dir.txt",
+      "--mode",
+      "specific",
+      "--task-ids",
+      "217",
+      "122",
+      "175",
+      "96",
+      "90",
+      "155",
+      "172",
+      "123",
+      "3022",
+      "3008",
+      "77",
+      "208",
+      "3012",
+      "2025",
+      "46",
+      "292"
+    ],
+    "return_code": 0,
+    "guard_triggered": null,
+    "sample_interval_seconds": 2.0,
+    "sample_count": 371,
+    "planned_tasks": 16,
+    "planned_throughput_task_per_hour": 77.6023,
+    "memory_max": "46G",
+    "min_host_available_gib_guard": 32.0,
+    "metrics": {
+      "cpu_cores_mean": 0.4728,
+      "pss_gib": {
+        "mean": 2.0882,
+        "p95": 3.5021,
+        "max": 3.6467
+      },
+      "chrome_pss_gib": {
+        "mean": 1.02,
+        "p95": 2.1392,
+        "max": 2.2697
+      },
+      "memory_current_gib": {
+        "mean": 2.7339,
+        "p95": 4.2406,
+        "max": 4.4283
+      },
+      "memory_peak_kernel_gib": 4.4558,
+      "host_available_gib_min": 55.3071,
+      "gpu_utilization_percent_mean": 96.8571,
+      "gpu_idle_percent_mean": 3.1429,
+      "gpu_memory_mib_mean": 24799.5674,
+      "gpu_power_w_mean": 427.2603,
+      "vllm_running_nonzero_fraction": null,
+      "vllm_waiting_nonzero_fraction": null
+    }
+  },
+  "per_task": {
+    "217": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 31,
+      "e2e_seconds": 196.536,
+      "tokens": 233830,
+      "agent_cost": 0.799532,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 55,
+      "judge_tokens": 10605
+    },
+    "122": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 6,
+      "e2e_seconds": 54.255,
+      "tokens": 27600,
+      "agent_cost": 0.163875,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 4,
+      "judge_tokens": 8540
+    },
+    "175": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 7,
+      "e2e_seconds": 49.893,
+      "tokens": 28172,
+      "agent_cost": 0.146176,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": true,
+        "unhandled_error": false
+      },
+      "judge_score": 0,
+      "judge_tokens": 5115
+    },
+    "96": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 18,
+      "e2e_seconds": 159.148,
+      "tokens": 244075,
+      "agent_cost": 1.140412,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 41,
+      "judge_tokens": 10949
+    },
+    "90": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 10,
+      "e2e_seconds": 60.982,
+      "tokens": 91078,
+      "agent_cost": 0.389811,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 70,
+      "judge_tokens": 10115
+    },
+    "155": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 15,
+      "e2e_seconds": 131.538,
+      "tokens": 109633,
+      "agent_cost": 0.522522,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 86,
+      "judge_tokens": 7692
+    },
+    "172": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 23,
+      "e2e_seconds": 210.24,
+      "tokens": 157476,
+      "agent_cost": 0.541677,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 6,
+      "judge_tokens": 7918
+    },
+    "123": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 6,
+      "e2e_seconds": 51.788,
+      "tokens": 26482,
+      "agent_cost": 0.094633,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 10,
+      "judge_tokens": 5841
+    },
+    "3022": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 36,
+      "e2e_seconds": 413.197,
+      "tokens": 512364,
+      "agent_cost": 2.739642,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 50,
+      "judge_tokens": 11965
+    },
+    "3008": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 7,
+      "e2e_seconds": 57.5,
+      "tokens": 34457,
+      "agent_cost": 0.145696,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 0,
+      "judge_tokens": 6090
+    },
+    "77": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 30,
+      "e2e_seconds": 353.692,
+      "tokens": 189041,
+      "agent_cost": 0.603588,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": true,
+        "unhandled_error": false
+      },
+      "judge_score": 10,
+      "judge_tokens": 6672
+    },
+    "208": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 21,
+      "e2e_seconds": 149.483,
+      "tokens": 201815,
+      "agent_cost": 0.957529,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 80,
+      "judge_tokens": 12080
+    },
+    "3012": {
+      "region": "en",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": false,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 37,
+      "e2e_seconds": 372.689,
+      "tokens": 533611,
+      "agent_cost": 2.679482,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 68,
+      "judge_tokens": 14426
+    },
+    "2025": {
+      "region": "en",
+      "task_type": "T2",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": false,
+      "env_status": "success",
+      "steps": 2,
+      "e2e_seconds": 15.29,
+      "tokens": 5111,
+      "agent_cost": 0.012546,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 88,
+      "judge_tokens": 3280
+    },
+    "46": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 13,
+      "e2e_seconds": 119.489,
+      "tokens": 218685,
+      "agent_cost": 1.099316,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 96,
+      "judge_tokens": 9877
+    },
+    "292": {
+      "region": "zh",
+      "task_type": "T1",
+      "trajectory": true,
+      "judged": true,
+      "success": true,
+      "agent_done": "done",
+      "agent_success": true,
+      "env_status": "success",
+      "steps": 13,
+      "e2e_seconds": 87.559,
+      "tokens": 107346,
+      "agent_cost": 0.453866,
+      "signals": {
+        "timeout": false,
+        "session_create": false,
+        "network_navigation": false,
+        "unhandled_error": false
+      },
+      "judge_score": 80,
+      "judge_tokens": 10203
+    }
+  }
+}
