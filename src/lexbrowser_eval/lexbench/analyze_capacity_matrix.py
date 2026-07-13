@@ -167,6 +167,12 @@ def _nested_number(value: dict[str, Any], *path: str) -> float | None:
     return float(current) if isinstance(current, (int, float)) else None
 
 
+def _ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator in (None, 0):
+        return None
+    return round(numerator / denominator, 6)
+
+
 def _resource_ratio(higher: dict[str, Any], lower: dict[str, Any]) -> dict[str, float | None]:
     higher_metrics = (higher.get("resource_summary") or {}).get("metrics") or {}
     lower_metrics = (lower.get("resource_summary") or {}).get("metrics") or {}
@@ -183,11 +189,7 @@ def _resource_ratio(higher: dict[str, Any], lower: dict[str, Any]) -> dict[str, 
     for label, path in paths.items():
         numerator = _nested_number(higher_metrics, *path)
         denominator = _nested_number(lower_metrics, *path)
-        output[label] = (
-            round(numerator / denominator, 6)
-            if numerator is not None and denominator not in (None, 0)
-            else None
-        )
+        output[label] = _ratio(numerator, denominator)
     return output
 
 
@@ -235,10 +237,9 @@ def analyze_capacity_matrix(
             bootstrap_samples=bootstrap_samples,
         )
         backend_resource_comparison[str(concurrency)] = {
-            "throughput_ratio_local_over_lexmount": round(
-                local_runs[concurrency]["throughput_task_per_hour"]
-                / lexmount_runs[concurrency]["throughput_task_per_hour"],
-                6,
+            "throughput_ratio_local_over_lexmount": _ratio(
+                _nested_number(local_runs[concurrency], "throughput_task_per_hour"),
+                _nested_number(lexmount_runs[concurrency], "throughput_task_per_hour"),
             ),
             "resource_ratio_local_over_lexmount": _resource_ratio(
                 local_runs[concurrency], lexmount_runs[concurrency]
@@ -272,10 +273,9 @@ def analyze_capacity_matrix(
                 bootstrap_samples=bootstrap_samples,
             ),
             "throughput_ratio": {
-                backend: round(
-                    runs[higher]["throughput_task_per_hour"]
-                    / runs[lower]["throughput_task_per_hour"],
-                    6,
+                backend: _ratio(
+                    _nested_number(runs[higher], "throughput_task_per_hour"),
+                    _nested_number(runs[lower], "throughput_task_per_hour"),
                 )
                 for backend, runs in (
                     ("lexmount", lexmount_runs),

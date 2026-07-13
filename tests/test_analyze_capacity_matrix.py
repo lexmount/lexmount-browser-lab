@@ -207,3 +207,34 @@ def test_analyze_capacity_matrix_requires_lexmount_session_monitor() -> None:
     result = analyze_capacity_matrix(lexmount, local, bootstrap_samples=10)
 
     assert result["sustainable"]["16"]["lexmount"] is False
+
+
+def test_analyze_capacity_matrix_handles_missing_and_zero_throughput() -> None:
+    lexmount = {
+        16: summary([1, 0], throughput=0),
+        32: summary([1, 0], throughput=100),
+    }
+    local = {
+        16: summary([1, 0], throughput=50),
+        32: summary([1, 0], throughput=100),
+    }
+    del local[32]["throughput_task_per_hour"]
+
+    result = analyze_capacity_matrix(lexmount, local, bootstrap_samples=10)
+
+    assert (
+        result["backend_resource_comparison"]["16"][
+            "throughput_ratio_local_over_lexmount"
+        ]
+        is None
+    )
+    assert (
+        result["backend_resource_comparison"]["32"][
+            "throughput_ratio_local_over_lexmount"
+        ]
+        is None
+    )
+    assert result["within_backend_scaling"]["c16_to_c32"]["throughput_ratio"] == {
+        "lexmount": None,
+        "local": None,
+    }
