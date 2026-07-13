@@ -58,6 +58,15 @@
   上 Lexmount arm 的资源数据只代表控制端进程树，不冒充远端服务端利用率。
 - 一个点只有在计划任务全部形成轨迹、无 quota/OOM/护栏中止时才算可持续点。
 
+### 5. Paired log and mechanism audit
+
+- 用 `scripts/audit_paired_runs.py` 联结 dataset、两端 summary、原始 `result.json` 和
+  Judge NDJSON，审计所有单边成功任务。
+- `task_sets/mechanism12.txt` 是按机制选择的诊断集，覆盖正向访问阻断、反向案例和
+  阈值敏感案例；它只用于复现机制，不用于重新估计总体成功率。
+- 两轮复测交换 backend 运行顺序，并用 `scripts/summarize_replays.py` 将 synthetic
+  Judge failure 标为 missing，而不是记为 0 分。
+
 ## 必须报告的指标
 
 ### 质量与稳定性

@@ -1,0 +1,1166 @@
+{
+  "schema_version": 1,
+  "selected_tasks": 12,
+  "repetitions_per_arm": {
+    "lexmount": 3,
+    "local": 3
+  },
+  "aggregate": {
+    "lexmount": {
+      "task_attempts": 36,
+      "valid_judgments": 36,
+      "synthetic_judge_failures": 0,
+      "successes": 23,
+      "pass_rate": 0.638889
+    },
+    "local": {
+      "task_attempts": 36,
+      "valid_judgments": 35,
+      "synthetic_judge_failures": 1,
+      "successes": 13,
+      "pass_rate": 0.371429
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "22",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 99,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 79,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 70,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 60,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": true,
+            "judge_score": 71,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": true,
+            "judge_score": 74,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "23",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 83,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 78,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": false,
+            "judge_score": 18,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 20,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 30,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 20,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "39",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 100,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": false,
+            "judge_score": 50,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 85,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 5,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 20,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 10,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "45",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 100,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": false,
+            "judge_score": 8,
+            "synthetic_judge_failure": false,
+            "agent_done": "error",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": true
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 98,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 22,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 18,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 30,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "59",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 75,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 100,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 70,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 1,
+        "pass_rate": 0.333333,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 2,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 15,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": true,
+            "judge_score": 75,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "97",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 70,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 71,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 66,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 6,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 3,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 2,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "114",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 92,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 94,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 97,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 1,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": true,
+            "judge_score": 92,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": true,
+            "judge_score": 92,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "122",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 70,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 99,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": false,
+            "judge_score": 51,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 8,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": true,
+            "judge_score": 97,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": true,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": true,
+            "judge_score": 76,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "138",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": false,
+            "judge_score": 59,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": false,
+            "judge_score": 63,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": false,
+            "judge_score": 59,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 2,
+        "pass_rate": 0.666667,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": true,
+            "judge_score": 88,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": true,
+            "judge_score": 86,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 61,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "180",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": false,
+            "judge_score": 64,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": false,
+            "judge_score": 57,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": false,
+            "judge_score": 56,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": true,
+            "judge_score": 76,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": true,
+            "judge_score": 71,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": true,
+            "judge_score": 73,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "246",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": false,
+            "judge_score": 5,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": false,
+            "judge_score": 5,
+            "synthetic_judge_failure": false,
+            "agent_done": "error",
+            "signals": {
+              "timeout": true,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": true
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": false,
+            "judge_score": 0,
+            "synthetic_judge_failure": false,
+            "agent_done": "error",
+            "signals": {
+              "timeout": true,
+              "session_create": false,
+              "network_navigation": true,
+              "unhandled_error": true
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 2,
+        "successes": 1,
+        "pass_rate": 0.5,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": true,
+            "judge_score": 100,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 55,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": null,
+            "judge_score": null,
+            "synthetic_judge_failure": true,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "3008",
+      "lexmount": {
+        "valid_judgments": 3,
+        "successes": 3,
+        "pass_rate": 1.0,
+        "runs": [
+          {
+            "run_id": "20260713_011920",
+            "success": true,
+            "judge_score": 75,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104850",
+            "success": true,
+            "judge_score": 95,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_110405",
+            "success": true,
+            "judge_score": 94,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      },
+      "local": {
+        "valid_judgments": 3,
+        "successes": 0,
+        "pass_rate": 0.0,
+        "runs": [
+          {
+            "run_id": "20260713_031704",
+            "success": false,
+            "judge_score": 0,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_104018",
+            "success": false,
+            "judge_score": 0,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          },
+          {
+            "run_id": "20260713_111627",
+            "success": false,
+            "judge_score": 0,
+            "synthetic_judge_failure": false,
+            "agent_done": "done",
+            "signals": {
+              "timeout": false,
+              "session_create": false,
+              "network_navigation": false,
+              "unhandled_error": false
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

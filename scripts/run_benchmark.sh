@@ -9,13 +9,15 @@ BACKEND=""
 PHASE=""
 CONCURRENCY=""
 COUNT=""
+TASK_FILE=""
 SKIP_EVAL=0
 MACHINE_ID=${MACHINE_ID:-}
 
 usage() {
   printf '%s\n' \
     "usage: $0 --benchmark-repo PATH --env-file PATH --backend lexmount|local" \
-    "          --phase smoke|pilot|full|capacity --concurrency N [--count N] [--skip-eval]"
+    "          --phase smoke|pilot|full|capacity|audit --concurrency N" \
+    "          [--count N] [--task-file PATH] [--skip-eval]"
 }
 
 while (($#)); do
@@ -26,6 +28,7 @@ while (($#)); do
     --phase) PHASE=$2; shift 2 ;;
     --concurrency) CONCURRENCY=$2; shift 2 ;;
     --count) COUNT=$2; shift 2 ;;
+    --task-file) TASK_FILE=$2; shift 2 ;;
     --skip-eval) SKIP_EVAL=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -35,7 +38,7 @@ done
 [[ -d "$BENCHMARK_REPO/.git" || -f "$BENCHMARK_REPO/.git" ]] || { echo "invalid --benchmark-repo" >&2; exit 2; }
 [[ -f "$ENV_FILE" ]] || { echo "invalid --env-file" >&2; exit 2; }
 [[ "$BACKEND" == "lexmount" || "$BACKEND" == "local" ]] || { echo "invalid --backend" >&2; exit 2; }
-[[ "$PHASE" =~ ^(smoke|pilot|full|capacity)$ ]] || { echo "invalid --phase" >&2; exit 2; }
+[[ "$PHASE" =~ ^(smoke|pilot|full|capacity|audit)$ ]] || { echo "invalid --phase" >&2; exit 2; }
 [[ "$CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || { echo "invalid --concurrency" >&2; exit 2; }
 
 EXPECTED_SHA=bce2c2a17dc2bcf3062b56df4946230c94426cd6
@@ -88,6 +91,13 @@ case "$PHASE" in
       --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
       --count "$COUNT" --output "$CAPACITY_IDS"
     read_task_ids "$CAPACITY_IDS"
+    TASK_ARGS=(--mode specific --task-ids "${TASK_IDS[@]}")
+    PLANNED_TASKS=${#TASK_IDS[@]}
+    ;;
+  audit)
+    [[ -f "$TASK_FILE" ]] || { echo "audit requires --task-file" >&2; exit 2; }
+    read_task_ids "$TASK_FILE"
+    ((${#TASK_IDS[@]} > 0)) || { echo "audit task file is empty" >&2; exit 2; }
     TASK_ARGS=(--mode specific --task-ids "${TASK_IDS[@]}")
     PLANNED_TASKS=${#TASK_IDS[@]}
     ;;
