@@ -56,7 +56,23 @@ def analyze_local_rerun(
     *,
     bootstrap_samples: int,
 ) -> dict[str, Any]:
+    lexmount_tasks = lexmount_full["per_task"]
     original_local = local_full["per_task"]
+    lexmount_task_ids = set(lexmount_tasks)
+    local_task_ids = set(original_local)
+    if lexmount_task_ids != local_task_ids:
+        missing_from_lexmount = sorted(
+            local_task_ids - lexmount_task_ids, key=lambda value: int(value)
+        )
+        missing_from_local = sorted(
+            lexmount_task_ids - local_task_ids, key=lambda value: int(value)
+        )
+        raise ValueError(
+            "full runs do not contain the same task ids; "
+            f"missing from lexmount: {missing_from_lexmount}; "
+            f"missing from local: {missing_from_local}"
+        )
+
     rerun_tasks = local_rerun["per_task"]
     original_failures = {task_id for task_id, task in original_local.items() if not task["success"]}
     unexpected = sorted(set(rerun_tasks) - original_failures)
@@ -77,12 +93,8 @@ def analyze_local_rerun(
         bootstrap_samples=bootstrap_samples,
     )
     recovered_states = {
-        "lexmount_only": [
-            task_id for task_id in recovered if lexmount_full["per_task"][task_id]["success"]
-        ],
-        "both_failed": [
-            task_id for task_id in recovered if not lexmount_full["per_task"][task_id]["success"]
-        ],
+        "lexmount_only": [task_id for task_id in recovered if lexmount_tasks[task_id]["success"]],
+        "both_failed": [task_id for task_id in recovered if not lexmount_tasks[task_id]["success"]],
     }
 
     smoke_tasks = local_smoke["per_task"]

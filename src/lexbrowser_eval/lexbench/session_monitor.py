@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from lexmount import Lexmount
 from lexmount.exceptions import LexmountError
 
-from .probe_sessions import PROFILE_ENV, _required_env, _session_counts
+from .probe_sessions import PROFILE_ENV, _redact_error, _required_env, _session_counts
 
 
 def _percentile(values: list[int], fraction: float) -> int | None:
@@ -48,6 +48,17 @@ def _process_exists(pid: int) -> bool:
     return True
 
 
+def _active_session_count(
+    profile: str, client: Lexmount, credentials: dict[str, str]
+) -> tuple[str, int | None, str | None]:
+    try:
+        counts = _session_counts(client)
+        return profile, int(counts["active"]) if counts else None, None
+    except (LexmountError, OSError, RuntimeError, TimeoutError, ValueError) as exc:
+        message = _redact_error(str(exc), credentials)
+        return profile, None, f"{type(exc).__name__}: {message}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sample active Lexmount sessions")
     parser.add_argument("--env-file", type=Path, required=True)
@@ -59,7 +70,8 @@ def main() -> int:
         parser.error("--interval-seconds must be positive")
 
     load_dotenv(args.env_file, override=False)
-    clients = {profile: Lexmount(**_required_env(profile)) for profile in sorted(PROFILE_ENV)}
+    credentials = {profile: _required_env(profile) for profile in sorted(PROFILE_ENV)}
+    clients = {profile: Lexmount(**creds) for profile, creds in credentials.items()}
     started_at = datetime.now(UTC)
     started = time.monotonic()
     samples: list[dict[str, Any]] = []
@@ -69,11 +81,7 @@ def main() -> int:
         sample_started = time.monotonic()
 
         def active(profile: str) -> tuple[str, int | None, str | None]:
-            try:
-                counts = _session_counts(clients[profile])
-                return profile, int(counts["active"]) if counts else None, None
-            except (LexmountError, OSError, RuntimeError, TimeoutError, ValueError) as exc:
-                return profile, None, f"{type(exc).__name__}: {exc}"
+            return _active_session_count(profile, clients[profile], credentials[profile])
 
         with ThreadPoolExecutor(max_workers=len(clients)) as executor:
             results = list(executor.map(active, clients))

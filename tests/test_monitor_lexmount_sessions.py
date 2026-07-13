@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from lexbrowser_eval.lexbench.session_monitor import summarize_samples
+import lexbrowser_eval.lexbench.session_monitor as session_monitor
+from lexbrowser_eval.lexbench.session_monitor import _active_session_count, summarize_samples
 
 
 def test_summarize_samples_reports_actual_active_concurrency() -> None:
@@ -15,3 +16,18 @@ def test_summarize_samples_reports_actual_active_concurrency() -> None:
     assert result["total"] == {"mean": 45.0, "p95": 64, "max": 64}
     assert result["en"]["max"] == 26
     assert result["zh"]["max"] == 38
+
+
+def test_active_session_count_redacts_credentials(monkeypatch) -> None:
+    secret = "secret-api-key"
+
+    def raise_with_secret(_client) -> None:
+        raise RuntimeError(f"request using {secret} failed")
+
+    monkeypatch.setattr(session_monitor, "_session_counts", raise_with_secret)
+
+    profile, count, error = _active_session_count("en", object(), {"api_key": secret})
+
+    assert profile == "en"
+    assert count is None
+    assert error == "RuntimeError: request using <redacted> failed"

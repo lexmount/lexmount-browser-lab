@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from lexbrowser_eval.lexbench.followup import (
     analyze_capacity,
     analyze_local_rerun,
@@ -73,6 +75,24 @@ def test_analyze_local_rerun_builds_local_favoring_sensitivity() -> None:
         "recovered_task_ids": ["2"],
         "source": "original Judge primary category E1/E2/E3",
     }
+
+
+def test_analyze_local_rerun_rejects_unpaired_full_runs() -> None:
+    lexmount = _summary({"1", "2"})
+    lexmount["per_task"].pop("2")
+    local = _summary({"1"})
+    smoke = _summary(set())
+    rerun = _summary({"2"})
+    rerun["per_task"] = {"2": rerun["per_task"]["2"]}
+
+    with pytest.raises(ValueError, match="missing from lexmount: \\['2'\\]"):
+        analyze_local_rerun(
+            lexmount,
+            local,
+            smoke,
+            rerun,
+            bootstrap_samples=100,
+        )
 
 
 def test_analyze_capacity_requires_and_compares_same_tasks() -> None:
