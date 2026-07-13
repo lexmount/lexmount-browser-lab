@@ -58,9 +58,9 @@ def _sustainable(summary: dict[str, Any], monitor: dict[str, Any] | None) -> boo
         and counts.get("trajectory") == counts.get("planned")
         and counts.get("judged") == counts.get("planned")
     )
-    no_session_create_failures = int(
-        (summary.get("error_task_counts") or {}).get("session_create", 0)
-    ) == 0
+    no_session_create_failures = (
+        int((summary.get("error_task_counts") or {}).get("session_create", 0)) == 0
+    )
     monitor_ok = monitor is None or (
         monitor.get("residual_ok") is True and not (monitor.get("errors") or [])
     )
@@ -228,9 +228,7 @@ def main() -> int:
     result = analyze_capacity_matrix(
         _load_paths(_parse_paths(args.lexmount, "--lexmount")),
         _load_paths(_parse_paths(args.local, "--local")),
-        lexmount_sessions=_load_paths(
-            _parse_paths(args.lexmount_session, "--lexmount-session")
-        ),
+        lexmount_sessions=_load_paths(_parse_paths(args.lexmount_session, "--lexmount-session")),
         bootstrap_samples=args.bootstrap_samples,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

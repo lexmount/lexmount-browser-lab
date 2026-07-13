@@ -15,8 +15,7 @@ def summary(successes: list[int], *, throughput: float, guard: str | None = None
             "success": sum(successes),
         },
         "per_task": {
-            str(index): {"success": bool(value)}
-            for index, value in enumerate(successes, start=1)
+            str(index): {"success": bool(value)} for index, value in enumerate(successes, start=1)
         },
         "throughput_task_per_hour": throughput,
         "error_task_counts": {"session_create": 0},
