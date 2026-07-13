@@ -93,3 +93,15 @@ def test_analyze_mechanism_repeats_rejects_selection_mismatch() -> None:
         analyze_mechanism_repeats(
             selection(), runs, runs, labels=["a", "b", "c"]
         )
+
+
+def test_analyze_mechanism_repeats_rejects_empty_selection_groups() -> None:
+    empty_selection = {"selection": {"stable_lexmount_only": []}}
+
+    with pytest.raises(ValueError, match="selection contains no task records"):
+        analyze_mechanism_repeats(
+            empty_selection,
+            [summary({"1": 1})] * 3,
+            [summary({"1": 0})] * 3,
+            labels=["a", "b", "c"],
+        )

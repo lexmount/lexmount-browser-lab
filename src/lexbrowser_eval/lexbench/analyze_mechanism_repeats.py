@@ -162,6 +162,8 @@ def analyze_mechanism_repeats(
 
     selected = _selection_map(selection)
     task_ids = sorted(selected, key=int)
+    if not task_ids:
+        raise ValueError("selection contains no task records")
     expected = set(task_ids)
     lexmount_runs = [
         _success_map(summary, f"Lexmount {label}")
