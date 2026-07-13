@@ -143,6 +143,11 @@ Qwen3-8B rollout 与 gpt-5.4 WebJudge，所有产物落在独立 campaign：
 | Qwen3-8B | Lexmount | **11.43%（24/210）** | 11.04 | 304.90 s |
 | Qwen3-8B | Local Chrome | 8.57%（18/210） | 10.08 | **267.48 s** |
 
+GPT-5.5补测把88条原始Mac Local failure全部放到5090重跑；只恢复10条。即使只把
+这10条加回Local，Lexmount仍领先8.57pp，配对bootstrap 95% CI为[+1.43,+15.71]pp。
+固定64任务的Lexmount c64相对c10把吞吐从194.3提升到319.9 task/h，但实际active
+峰值为39、PSS P95从3.80升到14.30 GiB；Judge差值-3.13pp的95% CI包含0。
+
 Qwen3-8B压力测试中，Lexmount受云端session quota限制，最大可持续并发为20；
 Local在本次46 GiB评测cgroup限制下最大可持续并发为60，c80被systemd-oomd终止。
 同为c20时，Local吞吐高19.1%，但平均CPU约为Lexmount的9.6倍，进程树PSS

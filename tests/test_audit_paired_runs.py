@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.audit_paired_runs import (
+from lexbrowser_eval.lexbench.audit_paired_runs import (
     answer_similarity,
     evidence_bucket,
     load_dataset,

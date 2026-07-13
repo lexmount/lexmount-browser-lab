@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment_id": "gpt55-lexbench-20260713",
-  "status": "complete",
+  "status": "complete_with_followup",
   "runner": {
     "repository": "lexmount/browseruse-agent-bench",
     "commit": "bce2c2a17dc2bcf3062b56df4946230c94426cd6",
@@ -28,7 +28,18 @@
     "order": "lexmount then local",
     "paired_by_task_id": true,
     "lexmount_run_id": "full-lexmount-c10-20260712T171920Z",
-    "local_run_id": "full-local-c10-20260712T191703Z"
+    "local_run_id": "full-local-c10-20260712T191703Z",
+    "followup": {
+      "local_smoke_run_id": "audit-local-c4-20260713T051950Z",
+      "local_failure_rerun_id": "audit-local-c10-20260713T053447Z",
+      "capacity_c10_run_id": "capacity-lexmount-c10-20260713T065014Z",
+      "capacity_c64_run_id": "capacity-lexmount-c64-20260713T074319Z",
+      "task_sets": {
+        "local_smoke12_sha256": "7b80c50f2a805bbc3dc6646d44bf9fea6fa7393ac81b2a4f3d2a1103208bdef0",
+        "local_failures88_sha256": "da94ea3bfed13a565e30db8add7e00cdc91503fc4e8f9f8a54cb0296f0d3b7e3",
+        "capacity64_sha256": "8806a9686ed3b2a46f20da479ac07ceb31ee5f452aba5b18b471ae8801650047"
+      }
+    }
   },
   "local_machine": {
     "model": "MacBook Pro",
@@ -38,16 +49,34 @@
     "os": "macOS 15.7.3 (24G419)",
     "browser": "Google Chrome 150.0.7871.102"
   },
+  "followup_machine": {
+    "machine_id": "ubuntu-5090",
+    "cpu": "Intel Core i9-14900K",
+    "logical_cpus": 32,
+    "memory_gib": 125.6,
+    "os": "Ubuntu 22.04.3 LTS",
+    "browser": "Google Chrome 140.0.7339.185",
+    "gpus": "2 x NVIDIA GeForce RTX 5090"
+  },
+  "egress_followup": {
+    "mac_and_5090_same_public_ipv4": true,
+    "asn": "AS4808 China Unicom Beijing Province Network",
+    "location": "Beijing, CN",
+    "public_ip_committed": false,
+    "original_full_run_egress_recorded": false
+  },
   "resource_scope": {
     "metric": "process-tree RSS",
     "lexmount": "runner controller only; excludes remote browser hosts",
-    "local": "runner, agent and local Chrome process tree"
+    "local": "runner, agent and local Chrome process tree",
+    "followup_linux": "cgroup CPU, PSS, Chrome PSS and memory.current/peak"
   },
   "files": {
     "report": "report.md",
     "metrics": "metrics.json",
     "causal_audit": "log-audit.md",
     "paired_log_audit": "paired-log-audit.json",
-    "mechanism_replays": "mechanism12-replays.json"
+    "mechanism_replays": "mechanism12-replays.json",
+    "followup": "followup.json"
   }
 }

@@ -28,7 +28,8 @@
 - 两套 Lexmount project 都通过 `sessions.list` 鉴权。
 - 使用从固定 commit 创建的独立干净 worktree；运行脚本会将其忽略的 `config.yaml`
   指向本实验配置，不操作日常开发 checkout。
-- `probe_lexmount_sessions.py` 逐级验证 20、40、60 个同时存活 session，并在每级结束后确认清理完成。
+- `lexbrowser_eval.lexbench.probe_sessions` 验证指定数量的同时创建；若创建超时，会从异常中提取
+  `session_id`，继续轮询并清理延迟激活的 session，再检查 active 数回到基线。
 - 5090 主机确认 Chrome、代理/出口、systemd user scope、磁盘和至少 32 GiB Host 可用内存。
 
 ### 1. Paired smoke
@@ -49,8 +50,10 @@
 
 ### 4. Capacity and resource ladder
 
-- 原始 session 容量：Lexmount 20 → 40 → 60，失败后停止上探。
-- 端到端容量：两端先比较 c20，再以 20 为步长上探。
+- 原始 session 容量：两套 project 分别执行指定并发探针；`--poll-timeout-seconds`
+  只限制创建等待，`--cleanup-grace-seconds` 负责回收超时后才激活的 session。
+- 端到端容量：`task_sets/capacity64.txt` 固定 64 条分层任务，在同一台 Linux runner
+  顺序比较 Lexmount c10 与 c64，并采样 en/zh project 的实际 active session 数。
 - Local 使用 `MemoryMax=46G`，Host `MemAvailable < 32 GiB` 时触发护栏。
 - 5090 不可用时允许在同一台 macOS 主机顺序运行两端；该 fallback 使用进程树 RSS，
   不把 RSS 写成 PSS，也不生成 cgroup/GPU 结论。
@@ -58,13 +61,21 @@
   上 Lexmount arm 的资源数据只代表控制端进程树，不冒充远端服务端利用率。
 - 一个点只有在计划任务全部形成轨迹、无 quota/OOM/护栏中止时才算可持续点。
 
+### 4b. 5090 Local failure rerun
+
+- `task_sets/local-linux-smoke12.txt` 先复测 12 条原始 Mac Local failure。
+- `task_sets/local-mac-failures88.txt` 再覆盖全部 88 条原始 Mac Local failure。
+- 敏感性分析保留原始 Local 的全部成功，并只把 5090 复测成功的 failure 加回 Local；
+  这是刻意偏向 Local 的压力测试，不替代第二轮完整 210 条配对实验。
+- 运行时记录两端出口 IPv4/ASN/地区是否一致；提交结果不公开公网 IP 明文。
+
 ### 5. Paired log and mechanism audit
 
-- 用 `scripts/audit_paired_runs.py` 联结 dataset、两端 summary、原始 `result.json` 和
+- 用 `lexbrowser_eval.lexbench.audit_paired_runs` 联结 dataset、两端 summary、原始 `result.json` 和
   Judge NDJSON，审计所有单边成功任务。
 - `task_sets/mechanism12.txt` 是按机制选择的诊断集，覆盖正向访问阻断、反向案例和
   阈值敏感案例；它只用于复现机制，不用于重新估计总体成功率。
-- 两轮复测交换 backend 运行顺序，并用 `scripts/summarize_replays.py` 将 synthetic
+- 两轮复测交换 backend 运行顺序，并用 `lexbrowser_eval.lexbench.summarize_replays` 将 synthetic
   Judge failure 标为 missing，而不是记为 0 分。
 
 ## 必须报告的指标
@@ -106,7 +117,25 @@ results/gpt55-lexbench/<run-id>/
   manifest.json
   resource_summary.json
   benchmark_summary.json
+  followup.json
   report.md
 ```
 
 原始轨迹、截图、日志和 `samples.csv` 默认不提交；需要共享时先做密钥与 URL 脱敏。
+
+补测汇总可由保留在运行机的 artifact 重建：
+
+```bash
+uv run python -m lexbrowser_eval.lexbench.followup \
+  --lexmount-full artifacts/gpt55-lexbench/full-lexmount-c10-20260712T171920Z/benchmark_summary.json \
+  --local-full artifacts/gpt55-lexbench/full-local-c10-20260712T191703Z/benchmark_summary.json \
+  --local-smoke artifacts/gpt55-lexbench/audit-local-c4-20260713T051950Z/benchmark_summary.json \
+  --local-rerun artifacts/gpt55-lexbench/audit-local-c10-20260713T053447Z/benchmark_summary.json \
+  --paired-audit results/gpt55-lexbench/20260713/paired-log-audit.json \
+  --capacity-c10 artifacts/gpt55-lexbench/capacity-lexmount-c10-20260713T065014Z/benchmark_summary.json \
+  --capacity-c64 artifacts/gpt55-lexbench/capacity-lexmount-c64-20260713T074319Z/benchmark_summary.json \
+  --sessions-c64 artifacts/gpt55-lexbench/capacity-lexmount-c64-20260713T074319Z/session_samples.json \
+  --probe-en-c64 artifacts/gpt55-lexbench/probe-en-c64-20260713T063020Z.json \
+  --probe-zh-c64 artifacts/gpt55-lexbench/probe-zh-c64-20260713T063353Z.json \
+  --output results/gpt55-lexbench/20260713/followup.json
+```
