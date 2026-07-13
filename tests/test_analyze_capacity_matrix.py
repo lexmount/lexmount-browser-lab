@@ -5,7 +5,13 @@ import pytest
 from lexbrowser_eval.lexbench.analyze_capacity_matrix import analyze_capacity_matrix
 
 
-def summary(successes: list[int], *, throughput: float, guard: str | None = None) -> dict:
+def summary(
+    successes: list[int],
+    *,
+    throughput: float,
+    resource_scale: float = 1,
+    guard: str | None = None,
+) -> dict:
     return {
         "run_dir": "/tmp/run",
         "counts": {
@@ -19,18 +25,30 @@ def summary(successes: list[int], *, throughput: float, guard: str | None = None
         },
         "throughput_task_per_hour": throughput,
         "error_task_counts": {"session_create": 0},
-        "resource_summary": {"guard_triggered": guard, "metrics": {}},
+        "resource_summary": {
+            "guard_triggered": guard,
+            "metrics": {
+                "cpu_cores_mean": resource_scale,
+                "pss_gib": {"mean": resource_scale * 2, "p95": resource_scale * 3},
+                "chrome_pss_gib": {
+                    "mean": resource_scale * 0.5,
+                    "p95": resource_scale,
+                },
+                "memory_current_gib": {"p95": resource_scale * 4},
+                "memory_peak_kernel_gib": resource_scale * 5,
+            },
+        },
     }
 
 
 def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
     lexmount = {
         16: summary([1, 0, 1, 0], throughput=100),
-        32: summary([1, 1, 1, 0], throughput=160),
+        32: summary([1, 1, 1, 0], throughput=160, resource_scale=2),
     }
     local = {
         16: summary([1, 1, 0, 0], throughput=80),
-        32: summary([1, 0, 0, 0], throughput=120),
+        32: summary([1, 0, 0, 0], throughput=120, resource_scale=1.5),
     }
     sessions = {
         16: {
@@ -82,6 +100,26 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
     assert result["within_backend_scaling"]["c16_to_c32"]["throughput_ratio"] == {
         "lexmount": 1.6,
         "local": 1.5,
+    }
+    assert result["within_backend_scaling"]["c16_to_c32"]["resource_ratio"] == {
+        "lexmount": {
+            "cpu_cores_mean": 2.0,
+            "pss_gib_mean": 2.0,
+            "pss_gib_p95": 2.0,
+            "chrome_pss_gib_mean": 2.0,
+            "chrome_pss_gib_p95": 2.0,
+            "memory_current_gib_p95": 2.0,
+            "memory_peak_kernel_gib": 2.0,
+        },
+        "local": {
+            "cpu_cores_mean": 1.5,
+            "pss_gib_mean": 1.5,
+            "pss_gib_p95": 1.5,
+            "chrome_pss_gib_mean": 1.5,
+            "chrome_pss_gib_p95": 1.5,
+            "memory_current_gib_p95": 1.5,
+            "memory_peak_kernel_gib": 1.5,
+        },
     }
     assert result["sustainable"]["32"] == {"lexmount": True, "local": True}
     assert result["arms"]["32"]["lexmount_session_monitor"]["active_sessions"] == {

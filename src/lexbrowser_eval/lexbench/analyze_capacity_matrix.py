@@ -142,6 +142,39 @@ def _named_pair(
     }
 
 
+def _nested_number(value: dict[str, Any], *path: str) -> float | None:
+    current: Any = value
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return float(current) if isinstance(current, (int, float)) else None
+
+
+def _resource_ratio(higher: dict[str, Any], lower: dict[str, Any]) -> dict[str, float | None]:
+    higher_metrics = (higher.get("resource_summary") or {}).get("metrics") or {}
+    lower_metrics = (lower.get("resource_summary") or {}).get("metrics") or {}
+    paths = {
+        "cpu_cores_mean": ("cpu_cores_mean",),
+        "pss_gib_mean": ("pss_gib", "mean"),
+        "pss_gib_p95": ("pss_gib", "p95"),
+        "chrome_pss_gib_mean": ("chrome_pss_gib", "mean"),
+        "chrome_pss_gib_p95": ("chrome_pss_gib", "p95"),
+        "memory_current_gib_p95": ("memory_current_gib", "p95"),
+        "memory_peak_kernel_gib": ("memory_peak_kernel_gib",),
+    }
+    output: dict[str, float | None] = {}
+    for label, path in paths.items():
+        numerator = _nested_number(higher_metrics, *path)
+        denominator = _nested_number(lower_metrics, *path)
+        output[label] = (
+            round(numerator / denominator, 6)
+            if numerator is not None and denominator not in (None, 0)
+            else None
+        )
+    return output
+
+
 def analyze_capacity_matrix(
     lexmount_runs: dict[int, dict[str, Any]],
     local_runs: dict[int, dict[str, Any]],
@@ -217,6 +250,10 @@ def analyze_capacity_matrix(
                     ("lexmount", lexmount_runs),
                     ("local", local_runs),
                 )
+            },
+            "resource_ratio": {
+                "lexmount": _resource_ratio(lexmount_runs[higher], lexmount_runs[lower]),
+                "local": _resource_ratio(local_runs[higher], local_runs[lower]),
             },
         }
 
