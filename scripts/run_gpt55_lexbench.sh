@@ -212,7 +212,7 @@ GUARD_TRIGGERED=$(uv run --project "$ROOT_DIR" python -c \
 BENCHMARK_OUTPUT=$(<"$MARKER")
 TIMESTAMP=$(basename "$BENCHMARK_OUTPUT")
 
-if ((SKIP_EVAL == 0)); then
+run_eval() {
   (
     cd "$BENCHMARK_REPO"
     uv run --env-file "$ENV_FILE" scripts/eval.py \
@@ -223,13 +223,46 @@ if ((SKIP_EVAL == 0)); then
       --timestamp "$TIMESTAMP" \
       --num-worker 5 \
       --eval-strategy stepwise
-  ) | tee "$OUTPUT_DIR/eval.log"
-fi
+  ) | tee -a "$OUTPUT_DIR/eval.log"
+}
 
-uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
-  --run-dir "$BENCHMARK_OUTPUT" \
-  --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
-  --resource-summary "$OUTPUT_DIR/resource_summary.json" \
-  --output "$OUTPUT_DIR/benchmark_summary.json"
+summarize_run() {
+  uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
+    --run-dir "$BENCHMARK_OUTPUT" \
+    --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
+    --resource-summary "$OUTPUT_DIR/resource_summary.json" \
+    --output "$OUTPUT_DIR/benchmark_summary.json"
+}
+
+synthetic_judge_count() {
+  uv run --project "$ROOT_DIR" python -c \
+    'import json, sys; from lexbrowser_eval.lexbench.summarize_replays import synthetic_evaluation_ids; print(len(synthetic_evaluation_ids(json.load(open(sys.argv[1], encoding="utf-8")))))' \
+    "$OUTPUT_DIR/benchmark_summary.json"
+}
+
+if ((SKIP_EVAL == 0)); then
+  : > "$OUTPUT_DIR/eval.log"
+  run_eval
+fi
+summarize_run
+
+SYNTHETIC_JUDGE_FAILURES=0
+if ((SKIP_EVAL == 0)); then
+  SYNTHETIC_JUDGE_FAILURES=$(synthetic_judge_count)
+  for retry in 1 2; do
+    ((SYNTHETIC_JUDGE_FAILURES > 0)) || break
+    printf 'retrying %s synthetic Judge failure(s), attempt %s/2\n' \
+      "$SYNTHETIC_JUDGE_FAILURES" "$retry" | tee -a "$OUTPUT_DIR/eval.log"
+    run_eval
+    summarize_run
+    SYNTHETIC_JUDGE_FAILURES=$(synthetic_judge_count)
+  done
+fi
+printf '%s\n' "$SYNTHETIC_JUDGE_FAILURES" > "$OUTPUT_DIR/synthetic-judge-failures.txt"
+if ((SYNTHETIC_JUDGE_FAILURES > 0)); then
+  printf '%s synthetic Judge failure(s) remain after retries\n' \
+    "$SYNTHETIC_JUDGE_FAILURES" >&2
+  exit 1
+fi
 
 printf '%s\n' "$OUTPUT_DIR"
