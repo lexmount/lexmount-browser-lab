@@ -1,0 +1,935 @@
+{
+  "schema_version": 1,
+  "paired_tasks": 16,
+  "outcomes": {
+    "local_only": 6,
+    "lexmount_only": 8,
+    "both_failed": 1,
+    "both_success": 1
+  },
+  "discordant_tasks": 14,
+  "loser_evidence_buckets": {
+    "lexmount_only": {
+      "site_or_access_environment": 5,
+      "mixed": 3
+    },
+    "local_only": {
+      "agent_reasoning_or_evidence": 1,
+      "site_or_access_environment": 1,
+      "mixed": 4
+    }
+  },
+  "loser_primary_failure_categories": {
+    "lexmount_only": {
+      "E1": 4,
+      "E3": 4
+    },
+    "local_only": {
+      "M1": 3,
+      "E1": 1,
+      "H1": 1,
+      "M3": 1
+    }
+  },
+  "loser_error_signatures": {
+    "lexmount_only": {
+      "none": 8
+    },
+    "local_only": {
+      "none": 3,
+      "agent_stopped_without_done": 2,
+      "browser_state_handler_failure": 1
+    }
+  },
+  "judge_sensitivity_flags": {
+    "near_threshold_loser": 1,
+    "high_answer_similarity": 0,
+    "both": 0
+  },
+  "top_targets": {
+    "lexmount_only": {
+      "www.gamespot.com": 1,
+      "www.wanfangdata.com.cn": 1,
+      "www.bestbuy.com": 1,
+      "www.baidu.com": 1,
+      "vimeo.com": 1,
+      "www.cqvip.com": 1,
+      "movie.douban.com + imdb.com": 1,
+      "mod.3dmgame.com": 1
+    },
+    "local_only": {
+      "www.ign.com": 2,
+      "www.amazon.com": 1,
+      "kotaku.com": 1,
+      "finance.ifeng.com + tech.ifeng.com": 1,
+      "www.douban.com": 1
+    }
+  },
+  "discordant": [
+    {
+      "task_id": "17",
+      "outcome": "local_only",
+      "query": "Search for \"wireless headphones\" on Amazon, filter by price range $50-$100, and find the top 3 products with the highest ratings. List their names, prices, and average ratings.",
+      "target_website": "www.amazon.com",
+      "domain": "commerce",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 60,
+      "answer_similarity": 0.1357,
+      "near_threshold_loser": true,
+      "high_answer_similarity": false,
+      "evidence_bucket": "agent_reasoning_or_evidence",
+      "lexmount": {
+        "success": false,
+        "judge_score": 54,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 5,
+        "e2e_seconds": 62.608,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "M1",
+        "failure_codes": [
+          "M1",
+          "M3"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 1167,
+        "answer_sha256": "229b836cf68f2c2160b1fea07b76942d0fef171854552c9a5c4d82ba0474c4cd"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 90,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 7,
+        "e2e_seconds": 93.108,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 979,
+        "answer_sha256": "1acc9fc8c5ce407b56f77f2c5487a66a3b5e54963ef32cadcd0b1415737a8688"
+      }
+    },
+    {
+      "task_id": "45",
+      "outcome": "lexmount_only",
+      "query": "Search for \"The Legend of Zelda: Tears of the Kingdom\" review on GameSpot, find the review article, and tell me the final score, the reviewer's name, and the main pros and cons mentioned.",
+      "target_website": "www.gamespot.com",
+      "domain": "gaming",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.109,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 100,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 9,
+        "e2e_seconds": 62.914,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 563,
+        "answer_sha256": "e1b6c2bd4a906fadbb252949c148f4768c906245130255404a94b677d84ae189"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 28,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 30,
+        "e2e_seconds": 245.867,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "captcha_or_bot"
+        ],
+        "answer_length": 613,
+        "answer_sha256": "deb91f8979ef36883e25a815a8e2918986bd2a42cd8e72dfa6f61e99a7475412"
+      }
+    },
+    {
+      "task_id": "52",
+      "outcome": "lexmount_only",
+      "query": "在万方数据搜索关键词\"区块链技术\"的学位论文，筛选博士论文、2022-2024年发表，按被引量排序，找出前3篇论文的标题、作者、学位授予单位和被引量。",
+      "target_website": "www.wanfangdata.com.cn",
+      "domain": "education_research",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 60,
+      "answer_similarity": 0.1926,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": true,
+        "judge_score": 62,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 14,
+        "e2e_seconds": 102.889,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 374,
+        "answer_sha256": "f2afcfbc767f235537838c4bc7ff1f59f2ce045af9fc03d6fdd3c295e9b01dea"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 22,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 36,
+        "e2e_seconds": 208.967,
+        "signals": {
+          "timeout": true,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E3",
+        "failure_codes": [
+          "E3"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 477,
+        "answer_sha256": "4467bf40bca6ae4334823208dc57db614d2bb46053129ab9d9e460a1abed1659"
+      }
+    },
+    {
+      "task_id": "77",
+      "outcome": "lexmount_only",
+      "query": "Search for \"4K TV\" on Best Buy, filter by screen size 55-65 inches and brand Samsung or LG, sort by customer reviews, and find the top 3 TVs with their model names, prices, screen sizes, and average ratings.",
+      "target_website": "www.bestbuy.com",
+      "domain": "education_research",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 60,
+      "answer_similarity": 0.0144,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": true,
+        "judge_score": 84,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 12,
+        "e2e_seconds": 120.164,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 931,
+        "answer_sha256": "ff75b4e1430e410e43f8d3b43536b54ae9440d6794849377ef7aa1494c565f46"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 4,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 34,
+        "e2e_seconds": 415.388,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": true,
+          "unhandled_error": false
+        },
+        "failure_category": "E3",
+        "failure_codes": [
+          "E3",
+          "H1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "captcha_or_bot",
+          "network_navigation"
+        ],
+        "answer_length": 468,
+        "answer_sha256": "85cfe75e67e263ba796ef95ace425940d4003e5b0ee1427587892413134d2299"
+      }
+    },
+    {
+      "task_id": "105",
+      "outcome": "local_only",
+      "query": "Search for articles about \"indie game development\" on Kotaku, find the most recent feature article, and tell me the article title, author, publication date, and a summary of the key points discussed (3-5 points).",
+      "target_website": "kotaku.com",
+      "domain": "gaming",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 60,
+      "answer_similarity": 0.0103,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": false,
+        "judge_score": 6,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 7,
+        "e2e_seconds": 53.394,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "captcha_or_bot"
+        ],
+        "answer_length": 577,
+        "answer_sha256": "edc8073177aeac8d9343379c0ac8e5047fe2a971201ff228be4d6445bd83a28f"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 76,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 21,
+        "e2e_seconds": 163.376,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "captcha_or_bot"
+        ],
+        "answer_length": 1463,
+        "answer_sha256": "5c82f0856dcfc96a2ee27800018ca2c3d39b5cf6a3655da8ef992fb982cbf62b"
+      }
+    },
+    {
+      "task_id": "122",
+      "outcome": "lexmount_only",
+      "query": "使用百度搜索\"新能源汽车补贴政策2024\"，找到政府官方网站的政策文件，记录补贴标准、申请条件、有效期限和申请流程的关键信息。",
+      "target_website": "www.baidu.com",
+      "domain": "education_research",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.0803,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 98,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 6,
+        "e2e_seconds": 60.937,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 1288,
+        "answer_sha256": "4d1d4aec0a7f3c95226c7974c334895a35b5234a4cf36a4df69778ce17eac4c6"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 6,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 6,
+        "e2e_seconds": 53.079,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "captcha_or_bot"
+        ],
+        "answer_length": 345,
+        "answer_sha256": "d8bddefe4d47397242f5a6907e27739ce48288d11ddf4a4462a526d017e545b2"
+      }
+    },
+    {
+      "task_id": "125",
+      "outcome": "local_only",
+      "query": "Search for \"Baldur's Gate 3\" on IGN, find the game review, and provide the review score, review date, platform reviewed, the critic's verdict summary, and the main strengths and weaknesses mentioned.",
+      "target_website": "www.ign.com",
+      "domain": "gaming",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.0566,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": false,
+        "judge_score": 13,
+        "agent_done": "error",
+        "agent_success": null,
+        "env_status": "failed",
+        "steps": 6,
+        "e2e_seconds": 333.004,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": true
+        },
+        "failure_category": "M1",
+        "failure_codes": [
+          "M1"
+        ],
+        "error_signature": "agent_stopped_without_done",
+        "raw_log_indicators": [],
+        "answer_length": 83,
+        "answer_sha256": "6aa7bc1179d886c285a76904abe4f07c8563c44d7b5b677c57bd35d348ccceb2"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 88,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 9,
+        "e2e_seconds": 82.393,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 1644,
+        "answer_sha256": "2f5f2a988710e9855509351402c7846bc8247a8d4d866ac2ad87e8db7bd3f868"
+      }
+    },
+    {
+      "task_id": "155",
+      "outcome": "local_only",
+      "query": "Search for \"Resident Evil 4 Remake\" on IGN, find the game walkthrough guides section, and list the available chapter guides (at least first 5 chapters) with their titles and brief descriptions of what's covered in each chapter.",
+      "target_website": "www.ign.com",
+      "domain": "gaming",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.0138,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": false,
+        "judge_score": 50,
+        "agent_done": "error",
+        "agent_success": null,
+        "env_status": "failed",
+        "steps": 16,
+        "e2e_seconds": 326.923,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": true,
+          "unhandled_error": true
+        },
+        "failure_category": "H1",
+        "failure_codes": [
+          "H1",
+          "M3"
+        ],
+        "error_signature": "browser_state_handler_failure",
+        "raw_log_indicators": [
+          "network_navigation"
+        ],
+        "answer_length": 389,
+        "answer_sha256": "7c49bdf9d589bf5d2706940696c4ed3ea1b39b50a80d2489681426c72a69ecd3"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 91,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 11,
+        "e2e_seconds": 103.215,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 2179,
+        "answer_sha256": "db95b3c5587a61f7ac3b88c7632397785c33df64411ddebaeda419e56240ab16"
+      }
+    },
+    {
+      "task_id": "159",
+      "outcome": "lexmount_only",
+      "query": "Search for \"short films\" on Vimeo, filter by Staff Picks from this year, sort by most popular, and find the top 3 films with their titles, directors, durations, view counts, like counts, and comment counts.",
+      "target_website": "vimeo.com",
+      "domain": "media_entertainment",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.0189,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 92,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 16,
+        "e2e_seconds": 130.217,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 532,
+        "answer_sha256": "bc4cd4aa4bc82b1d0a3c5012bb14cf0fe7bf04aa29f5c1be618fc1d8815e0b4d"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 2,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 5,
+        "e2e_seconds": 26.634,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": true,
+          "unhandled_error": false
+        },
+        "failure_category": "E3",
+        "failure_codes": [
+          "E3"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "network_navigation"
+        ],
+        "answer_length": 476,
+        "answer_sha256": "ddbc79d60caa0819097cc0d2fed7ffdf118894628b4155f9271048517bad7d83"
+      }
+    },
+    {
+      "task_id": "172",
+      "outcome": "lexmount_only",
+      "query": "在维普网搜索主题为\"碳达峰碳中和\"的期刊论文，筛选核心期刊、2023-2024年发表的论文，按被引频次排序，找出前5篇论文的标题、作者、期刊名、发表年份和被引频次。",
+      "target_website": "www.cqvip.com",
+      "domain": "commerce",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.1251,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": true,
+        "judge_score": 67,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 22,
+        "e2e_seconds": 322.616,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 677,
+        "answer_sha256": "149fd583bed015ca0b4db4e96c834580b012e2390e5f36ae7dd38853ab118599"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 22,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 36,
+        "e2e_seconds": 303.712,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E3",
+        "failure_codes": [
+          "E3",
+          "M1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 642,
+        "answer_sha256": "ae9fd28f5569c78e35bf8a924033de00b5ef0e91f85ee776e9e0245d55dc7c32"
+      }
+    },
+    {
+      "task_id": "217",
+      "outcome": "lexmount_only",
+      "query": "对比电影《奥本海默》的中外口碑差异，在豆瓣电影和IMDb分别搜索\"奥本海默\"和\"Oppenheimer\"，记录两个平台的评分（豆瓣评分和IMDb评分），并各提取一条置顶或热门的短评内容，对比中外观众的评价差异。",
+      "target_website": "movie.douban.com + imdb.com",
+      "domain": "media_entertainment",
+      "language": "zh",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "medium",
+      "score_threshold": 70,
+      "answer_similarity": 0.1378,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 86,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 7,
+        "e2e_seconds": 64.895,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 740,
+        "answer_sha256": "bf4b3289d557254214a1fdb4cac4b278534a9d0c2e3ae579fab1d04e2601e51b"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 54,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 21,
+        "e2e_seconds": 142.815,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "http_access_denied"
+        ],
+        "answer_length": 759,
+        "answer_sha256": "47e8aba85cd57fbdcb57e165bb7eb46649f98cd436d8c4927572237b814e8358"
+      }
+    },
+    {
+      "task_id": "292",
+      "outcome": "local_only",
+      "query": "在凤凰网首页分别进入财经频道和科技频道，各记录当前头条文章的标题、发布时间和来源，并对比两个频道的报道内容和角度有何不同。",
+      "target_website": "finance.ifeng.com + tech.ifeng.com",
+      "domain": "education_research",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "medium",
+      "score_threshold": 65,
+      "answer_similarity": 0.0034,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": false,
+        "judge_score": 42,
+        "agent_done": "error",
+        "agent_success": null,
+        "env_status": "failed",
+        "steps": 12,
+        "e2e_seconds": 334.333,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": true
+        },
+        "failure_category": "M1",
+        "failure_codes": [
+          "M1",
+          "M2"
+        ],
+        "error_signature": "agent_stopped_without_done",
+        "raw_log_indicators": [],
+        "answer_length": 84,
+        "answer_sha256": "f4425790044c22030888e4f55c97c5a30df9cf9ba3cc26c6e08ba38c5823ea57"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 82,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 8,
+        "e2e_seconds": 58.494,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 547,
+        "answer_sha256": "f7e7f8c00eac9c09c57fb6dd624a043223ce324f2c8beec0a7fdbb0866714260"
+      }
+    },
+    {
+      "task_id": "3008",
+      "outcome": "lexmount_only",
+      "query": "Search for MODs on 3DM Mod站 for 10 popular games: (1) Elden Ring (艾尔登法环), (2) The Witcher 3 (巫师3), (3) Cyberpunk 2077 (赛博朋克2077), (4) Baldur's Gate 3 (博德之门3), (5) Starfield (星空), (6) Red Dead Redemption 2 (荒野大镖客2), (7) Grand Theft Auto V (侠盗猎车手5), (8) Fallout 4 (辐射4), (9) Skyrim (上古卷轴5), (10) Monster Hunter World (怪物猎人世界). For each game, search for MODs sorted by download count. After searching all 10 games, confirm that you have completed the search task.",
+      "target_website": "mod.3dmgame.com",
+      "domain": "gaming",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.1385,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 92,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 15,
+        "e2e_seconds": 109.818,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 601,
+        "answer_sha256": "bcae27b22aa768f2802f56ea766da2533bdaa84ea5867804e2716ffda7f04f5f"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 0,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 5,
+        "e2e_seconds": 45.81,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [
+          "http_access_denied"
+        ],
+        "answer_length": 423,
+        "answer_sha256": "bcbc7931c0bb68d592209409d8220a6ec9f5cb68175a68b9f71a0d2c1cea0f17"
+      }
+    },
+    {
+      "task_id": "3022",
+      "outcome": "local_only",
+      "query": "Get the detailed information and 100 reviews for the music album \"范特西\" (Fantasy) by 周杰伦 (Jay Chou) on Douban. The album URL is exactly: https://music.douban.com/subject/1403307/. Collect at least 100 reviews from the album. Save all the collected data to JSON files.",
+      "target_website": "www.douban.com",
+      "domain": "media_entertainment",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.656,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": false,
+        "judge_score": 47,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 19,
+        "e2e_seconds": 195.855,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "M3",
+        "failure_codes": [
+          "M3",
+          "H1"
+        ],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 3533,
+        "answer_sha256": "dc2c83fb82dc8d872454e0a629966d9e1781b68f016844032e6e715410ca58ff"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 98,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 9,
+        "e2e_seconds": 125.938,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "error_signature": null,
+        "raw_log_indicators": [],
+        "answer_length": 3460,
+        "answer_sha256": "5f9af05f2e97902d5d02b8dbd816c7eea666d5537c6441de46666d6d4ffb3570"
+      }
+    }
+  ]
+}

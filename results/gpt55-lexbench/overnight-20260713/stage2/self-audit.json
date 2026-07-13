@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "stage": 2,
+  "status": "complete_with_disclosed_judge_recovery",
+  "questions": [
+    {
+      "question": "Were the confirmation pairs held out from the task selection decision?",
+      "answer": "yes",
+      "evidence": "Pairs A/B selected the 16 tasks; Pairs C/D were executed afterward and were not used to change the set."
+    },
+    {
+      "question": "Did the holdout pairs reverse backend order on the same host?",
+      "answer": "yes",
+      "evidence": "Pair C ran Lexmount then Local; Pair D ran Local then Lexmount, both at c6 on the same Linux host."
+    },
+    {
+      "question": "Did every holdout arm produce 16 trajectories and 16 valid judge records?",
+      "answer": "yes, after one disclosed recovery",
+      "evidence": "All four holdout arms are 16 planned / 16 trajectory / 16 judged. Pair D Lexmount task 52 required an isolated GPT-5.4 text-only rejudge after a multimodal content-policy false positive."
+    },
+    {
+      "question": "Was a judge transport failure counted as a browser failure?",
+      "answer": "no",
+      "evidence": "The synthetic task 52 record was removed, 15 valid records were preserved, and only task 52 was rejudged with the same model and non-visual evidence. Synthetic failures remaining: 0."
+    },
+    {
+      "question": "Did the nine selected stable directional tasks all remain perfectly stable?",
+      "answer": "no",
+      "evidence": "Holdouts confirmed 16/18 expected directional observations. Task 217 became both-failed in Pair D; task 292 became both-success in Pair D."
+    },
+    {
+      "question": "Do the data support site-specific directional effects?",
+      "answer": "yes, for this diagnostic set",
+      "evidence": "Four tasks were Lexmount-only in all four repeats and three were Local-only in all four repeats; stable holdout confirmation was 90.0% and 87.5%, respectively."
+    },
+    {
+      "question": "Do the data prove Lexmount is generally more accurate than Local Chrome?",
+      "answer": "no",
+      "evidence": "The set was deliberately enriched using prior outcomes. The 38/64 versus 29/64 all-repeat total is selection-biased and is not a population estimate."
+    },
+    {
+      "question": "Do failure categories and log signatures prove the browser-level cause?",
+      "answer": "no",
+      "evidence": "They are diagnostic associations. They separate access/site symptoms from runner/control symptoms but do not isolate proxy, browser, website, model, or harness causality."
+    },
+    {
+      "question": "Was a fixed Lexmount session TTL demonstrated?",
+      "answer": "no",
+      "evidence": "Observed control failures varied in duration and the configured task timeout was 600 seconds. No session TTL was set by the provider configuration."
+    },
+    {
+      "question": "Did Lexmount leak sessions or fail session creation in the holdouts?",
+      "answer": "no",
+      "evidence": "Both Lexmount arms: baseline 0, observed max 6, final 0, residual 0, monitor errors 0, session_create signals 0."
+    },
+    {
+      "question": "Did Local Chrome trigger the cgroup or host-memory guard?",
+      "answer": "no",
+      "evidence": "Both Local arms had null guard_triggered; minimum host available memory remained above 53.5 GiB. Existing unrelated Chrome processes were not modified."
+    },
+    {
+      "question": "Are A/B and C/D operationally identical repeats?",
+      "answer": "no",
+      "evidence": "A/B were embedded in c10 64-task runs; C/D were focused c6 16-task runs. The task identities match, but workload context differs."
+    },
+    {
+      "question": "Could same-night website or model drift still affect results?",
+      "answer": "yes",
+      "evidence": "Counterbalancing reduces order bias but does not remove temporal changes in public websites, routing, or model sampling."
+    },
+    {
+      "question": "What is the strongest next falsification test?",
+      "answer": "capacity and concurrency separation",
+      "evidence": "Verify 64 simultaneous sessions directly, then run a c16/c32/c64 ladder while tracking quality, session lifecycle, runner resources, and Local Chrome guard behavior."
+    }
+  ]
+}
