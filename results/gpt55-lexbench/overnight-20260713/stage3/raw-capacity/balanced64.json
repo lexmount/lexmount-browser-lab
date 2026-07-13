@@ -1,0 +1,560 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    "en",
+    "zh"
+  ],
+  "requested": {
+    "en": 32,
+    "zh": 32
+  },
+  "requested_total": 64,
+  "hold_seconds": 30.0,
+  "poll_timeout_seconds": 180.0,
+  "sample_interval_seconds": 1.0,
+  "duration_seconds": 69.389,
+  "baseline_active_sessions": {
+    "en": 0,
+    "zh": 0,
+    "total": 0
+  },
+  "final_active_sessions": {
+    "en": 0,
+    "zh": 0,
+    "total": 0
+  },
+  "residual_active_sessions": {
+    "en": 0,
+    "zh": 0,
+    "total": 0
+  },
+  "residual_ok": true,
+  "active_sessions": {
+    "en": {
+      "mean": 20.783,
+      "p95": 32.0,
+      "max": 32
+    },
+    "zh": {
+      "mean": 19.435,
+      "p95": 32.0,
+      "max": 32
+    },
+    "total": {
+      "mean": 40.217,
+      "p95": 64.0,
+      "max": 64
+    },
+    "target": 64,
+    "target_sample_count": 35,
+    "first_target_elapsed_seconds": 21.383,
+    "last_target_elapsed_seconds": 55.396
+  },
+  "target_observed": true,
+  "monitor_errors": [],
+  "profile_results": {
+    "en": {
+      "profile": "en",
+      "requested": 32,
+      "created": 32,
+      "failed": 0,
+      "hold_seconds": 30.0,
+      "poll_timeout_seconds": 180.0,
+      "cleanup_grace_seconds": 0.0,
+      "cleanup_polls": 1,
+      "elapsed_seconds": 67.595,
+      "create_seconds": {
+        "mean": 18.805,
+        "p95": 21.274,
+        "max": 21.289
+      },
+      "sessions_before": {
+        "active": 0,
+        "total_records": 517,
+        "statuses": {
+          "active": 0,
+          "closed": 517
+        },
+        "page_size": 100,
+        "total_pages": 6
+      },
+      "sessions_after": {
+        "active": 0,
+        "total_records": 549,
+        "statuses": {
+          "active": 0,
+          "closed": 549
+        },
+        "page_size": 100,
+        "total_pages": 6
+      },
+      "failure_session_ids": [],
+      "late_sessions_cleaned": 0,
+      "late_session_ids_cleaned": [],
+      "remaining_new_session_ids": [],
+      "cleanup_errors": [],
+      "failures": [],
+      "success": true
+    },
+    "zh": {
+      "profile": "zh",
+      "requested": 32,
+      "created": 32,
+      "failed": 0,
+      "hold_seconds": 30.0,
+      "poll_timeout_seconds": 180.0,
+      "cleanup_grace_seconds": 0.0,
+      "cleanup_polls": 1,
+      "elapsed_seconds": 63.73,
+      "create_seconds": {
+        "mean": 18.172,
+        "p95": 19.36,
+        "max": 19.445
+      },
+      "sessions_before": {
+        "active": 0,
+        "total_records": 523,
+        "statuses": {
+          "active": 0,
+          "closed": 523
+        },
+        "page_size": 100,
+        "total_pages": 6
+      },
+      "sessions_after": {
+        "active": 0,
+        "total_records": 555,
+        "statuses": {
+          "active": 0,
+          "closed": 555
+        },
+        "page_size": 100,
+        "total_pages": 6
+      },
+      "failure_session_ids": [],
+      "late_sessions_cleaned": 0,
+      "late_session_ids_cleaned": [],
+      "remaining_new_session_ids": [],
+      "cleanup_errors": [],
+      "failures": [],
+      "success": true
+    }
+  },
+  "success": true,
+  "samples": [
+    {
+      "elapsed_seconds": 0.221,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 1.425,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 2.386,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 3.408,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 4.398,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 5.38,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 6.379,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 7.378,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 8.378,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    },
+    {
+      "elapsed_seconds": 9.379,
+      "en": 0,
+      "zh": 3,
+      "total": 3
+    },
+    {
+      "elapsed_seconds": 10.377,
+      "en": 0,
+      "zh": 3,
+      "total": 3
+    },
+    {
+      "elapsed_seconds": 11.384,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 12.376,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 13.385,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 14.383,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 15.383,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 16.38,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 17.383,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 18.385,
+      "en": 7,
+      "zh": 3,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 19.384,
+      "en": 7,
+      "zh": 32,
+      "total": 39
+    },
+    {
+      "elapsed_seconds": 20.382,
+      "en": 7,
+      "zh": 32,
+      "total": 39
+    },
+    {
+      "elapsed_seconds": 21.383,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 22.381,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 23.382,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 24.381,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 25.385,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 26.384,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 27.411,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 28.391,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 29.381,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 30.381,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 31.382,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 32.404,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 33.38,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 34.388,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 35.394,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 36.389,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 37.378,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 38.381,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 39.376,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 40.425,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 41.388,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 42.383,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 43.391,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 44.392,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 45.392,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 46.39,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 47.391,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 48.392,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 49.387,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 50.725,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 51.389,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 52.39,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 53.399,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 54.394,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 55.396,
+      "en": 32,
+      "zh": 32,
+      "total": 64
+    },
+    {
+      "elapsed_seconds": 56.388,
+      "en": 32,
+      "zh": 30,
+      "total": 62
+    },
+    {
+      "elapsed_seconds": 57.387,
+      "en": 32,
+      "zh": 22,
+      "total": 54
+    },
+    {
+      "elapsed_seconds": 58.398,
+      "en": 32,
+      "zh": 22,
+      "total": 54
+    },
+    {
+      "elapsed_seconds": 59.392,
+      "en": 31,
+      "zh": 17,
+      "total": 48
+    },
+    {
+      "elapsed_seconds": 60.394,
+      "en": 26,
+      "zh": 15,
+      "total": 41
+    },
+    {
+      "elapsed_seconds": 61.394,
+      "en": 24,
+      "zh": 12,
+      "total": 36
+    },
+    {
+      "elapsed_seconds": 62.391,
+      "en": 21,
+      "zh": 7,
+      "total": 28
+    },
+    {
+      "elapsed_seconds": 63.399,
+      "en": 18,
+      "zh": 2,
+      "total": 20
+    },
+    {
+      "elapsed_seconds": 64.324,
+      "en": 14,
+      "zh": 0,
+      "total": 14
+    },
+    {
+      "elapsed_seconds": 65.392,
+      "en": 10,
+      "zh": 0,
+      "total": 10
+    },
+    {
+      "elapsed_seconds": 66.394,
+      "en": 3,
+      "zh": 0,
+      "total": 3
+    },
+    {
+      "elapsed_seconds": 67.391,
+      "en": 1,
+      "zh": 0,
+      "total": 1
+    },
+    {
+      "elapsed_seconds": 68.392,
+      "en": 0,
+      "zh": 0,
+      "total": 0
+    }
+  ]
+}
