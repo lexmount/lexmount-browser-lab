@@ -31,7 +31,7 @@ def _percentile(values: list[float], fraction: float) -> float | None:
 
 
 def summarize_active_samples(
-    samples: list[dict[str, Any]], profiles: list[str], requested_total: int
+    samples: list[dict[str, Any]], profiles: list[str], target_total: int
 ) -> dict[str, Any]:
     def summarize(key: str) -> dict[str, float | int | None]:
         values = [float(sample[key]) for sample in samples if sample.get(key) is not None]
@@ -41,11 +41,15 @@ def summarize_active_samples(
             "max": int(max(values)) if values else None,
         }
 
-    target_samples = [sample for sample in samples if sample.get("total") == requested_total]
+    target_samples = [
+        sample
+        for sample in samples
+        if sample.get("total") is not None and sample["total"] >= target_total
+    ]
     return {
         **{profile: summarize(profile) for profile in profiles},
         "total": summarize("total"),
-        "target": requested_total,
+        "target": target_total,
         "target_sample_count": len(target_samples),
         "first_target_elapsed_seconds": (
             target_samples[0]["elapsed_seconds"] if target_samples else None
@@ -140,9 +144,16 @@ def run_multi_profile_probe(
         for key in [*profiles, "total"]
     }
     requested_total = sum(counts.values())
-    active = summarize_active_samples(samples, profiles, requested_total)
+    baseline_total = baseline.get("total")
+    target_total = (
+        int(baseline_total) + requested_total if baseline_total is not None else requested_total
+    )
+    active = summarize_active_samples(samples, profiles, target_total)
     residual_ok = all(value is not None and value <= 0 for value in residual.values())
-    target_observed = active["total"]["max"] == requested_total
+    target_observed = (
+        active["total"]["max"] is not None
+        and active["total"]["max"] >= target_total
+    )
     success = (
         all(result["success"] for result in profile_results.values())
         and target_observed

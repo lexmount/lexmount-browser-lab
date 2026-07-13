@@ -32,3 +32,18 @@ def test_summarize_active_samples_preserves_unknown_samples() -> None:
     assert result["en"] == {"mean": 3.0, "p95": 3.0, "max": 3}
     assert result["total"] == {"mean": 5.0, "p95": 5.0, "max": 5}
     assert result["target_sample_count"] == 0
+
+
+def test_summarize_active_samples_accepts_counts_above_target() -> None:
+    samples = [
+        {"elapsed_seconds": 0.0, "en": 2, "zh": 1, "total": 3},
+        {"elapsed_seconds": 1.0, "en": 5, "zh": 5, "total": 10},
+        {"elapsed_seconds": 2.0, "en": 6, "zh": 5, "total": 11},
+    ]
+
+    result = summarize_active_samples(samples, ["en", "zh"], 10)
+
+    assert result["target"] == 10
+    assert result["target_sample_count"] == 2
+    assert result["first_target_elapsed_seconds"] == 1.0
+    assert result["last_target_elapsed_seconds"] == 2.0
