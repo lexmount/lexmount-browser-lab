@@ -24,7 +24,7 @@ def selection() -> dict:
 
 def test_analyze_mechanism_repeats_tracks_followup_retention() -> None:
     lexmount = [
-        summary({"1": 1, "2": 0}),
+        summary({"1": 1, "2": 0, "99": 1}),
         summary({"1": 1, "2": 0}),
         summary({"1": 1, "2": 1}),
         summary({"1": 0, "2": 0}),

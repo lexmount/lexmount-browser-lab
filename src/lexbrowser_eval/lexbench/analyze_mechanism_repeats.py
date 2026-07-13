@@ -153,8 +153,11 @@ def analyze_mechanism_repeats(
         *[(f"Lexmount {label}", run) for label, run in zip(labels, lexmount_runs, strict=True)],
         *[(f"Local {label}", run) for label, run in zip(labels, local_runs, strict=True)],
     ]:
-        if set(run) != expected:
-            raise ValueError(f"{name}: task coverage differs from selection")
+        missing = expected - set(run)
+        if missing:
+            raise ValueError(
+                f"{name}: missing selected tasks {','.join(sorted(missing, key=int))}"
+            )
 
     audit_by_task: dict[str, list[dict[str, Any]]] = {task_id: [] for task_id in task_ids}
     evidence: dict[str, Any] | None = None
@@ -170,8 +173,8 @@ def analyze_mechanism_repeats(
             counts[OUTCOME_CODES[(lexmount_runs[index][task_id], local_runs[index][task_id])]] += 1
         per_replicate[label] = {
             "outcomes": dict(counts),
-            "lexmount_success": sum(lexmount_runs[index].values()),
-            "local_success": sum(local_runs[index].values()),
+            "lexmount_success": sum(lexmount_runs[index][task_id] for task_id in task_ids),
+            "local_success": sum(local_runs[index][task_id] for task_id in task_ids),
         }
 
     for task_id in task_ids:
@@ -233,8 +236,8 @@ def analyze_mechanism_repeats(
         category_summary[category] = item
 
     attempts = len(task_ids) * len(labels)
-    lexmount_successes = sum(sum(run.values()) for run in lexmount_runs)
-    local_successes = sum(sum(run.values()) for run in local_runs)
+    lexmount_successes = sum(run[task_id] for run in lexmount_runs for task_id in task_ids)
+    local_successes = sum(run[task_id] for run in local_runs for task_id in task_ids)
     return {
         "schema_version": 1,
         "purpose": "diagnostic mechanism repeat analysis; not a population estimate",
