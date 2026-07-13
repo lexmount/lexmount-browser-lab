@@ -134,6 +134,15 @@ class VLLMOpenAIClient:
             raise
 
         choice_dict = response_dict["choices"][0]
+        # vLLM uses the non-OpenAI finish reason "abort" when an engine-side
+        # request is length/cancel terminated.  The OpenAI SDK's ChatCompletion
+        # schema rejects it before the agent can return a bounded trajectory.
+        # Map it to the standard length terminal state; this preserves the
+        # generated tokens/logprobs and makes the failure auditable downstream.
+        if choice_dict.get("finish_reason") == "abort":
+            logger.warning("vLLM finish_reason=abort mapped to length for bounded rollout")
+            choice_dict["finish_reason"] = "length"
+            choice_dict.setdefault("message", {}).setdefault("content", "")
         message_dict = choice_dict.get("message", {})
 
         prompt_token_ids = message_dict.pop("prompt_token_ids", [])
@@ -363,6 +372,11 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
             "act_calls": 0.0,
             "extract_calls": 0.0,
             "tool_errors": 0.0,
+            "infrastructure_failures": 0.0,
+            "policy_failures": 0.0,
+            "tool_timeouts": 0.0,
+            "valid_trajectory": 1.0,
+            "episode_terminated": 0.0,
             "generation_tokens": 0.0,
         }
         for step in state.get("trajectory") or []:
@@ -390,8 +404,28 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                         counts[key] += 1.0
             elif role == "tool":
                 counts["tool_results"] += 1.0
-                if self._text(message.get("content")).lstrip().lower().startswith("error"):
+                tool_text = self._text(message.get("content")).lstrip().lower()
+                if tool_text.startswith("error"):
                     counts["tool_errors"] += 1.0
+                if tool_text.startswith("error_infrastructure"):
+                    counts["infrastructure_failures"] += 1.0
+                if tool_text.startswith("error_policy"):
+                    counts["policy_failures"] += 1.0
+        guard = state.get("trajectory_guard")
+        if guard is not None:
+            counts["infrastructure_failures"] = float(
+                getattr(guard, "infrastructure_failures", counts["infrastructure_failures"])
+            )
+            counts["policy_failures"] = float(
+                getattr(guard, "policy_failures", counts["policy_failures"])
+            )
+            counts["tool_timeouts"] = float(getattr(guard, "timeouts", 0))
+            counts["episode_terminated"] = float(bool(getattr(guard, "terminated", False)))
+        if counts["infrastructure_failures"] > 0:
+            # Keep the numeric reward contract required by GRPO, but clearly
+            # separate invalid infrastructure episodes from policy reward in
+            # logs/reports rather than silently treating them as ordinary 0s.
+            counts["valid_trajectory"] = 0.0
         counts["no_tool_call"] = 1.0 if counts["tool_calls"] == 0 else 0.0
         return counts
 

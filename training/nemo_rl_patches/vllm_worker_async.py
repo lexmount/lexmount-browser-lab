@@ -506,6 +506,16 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
             # use their own sampling parameters (usually lower temperature).
             is_policy_request = request.required_prefix_token_ids is not None
 
+            # Keep the RL policy path exactly on-policy (including Qwen's
+            # thinking/tool-call template).  Stagehand's private DOM helper is
+            # an environment-side OpenAI request: it must emit its strict JSON
+            # protocol directly, so disable thinking only for that request.
+            # This is template selection, not post-generation string cleanup.
+            if not is_policy_request:
+                helper_template_kwargs = dict(request.chat_template_kwargs or {})
+                helper_template_kwargs["enable_thinking"] = False
+                request.chat_template_kwargs = helper_template_kwargs
+
             # This needs to match the behavior in nemo_rl/models/generation/vllm/vllm_worker.py::BaseVllmGenerationWorker::_build_sampling_params
             # Right now we explicitly assert set this to -1.
             if is_policy_request:
@@ -1163,6 +1173,12 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
 
         gc.collect()
         torch.cuda.empty_cache()
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        print(
+            "[LEX_PHASE] vLLM sleep complete "
+            f"free_gib={free_bytes / 2**30:.2f} total_gib={total_bytes / 2**30:.2f}",
+            flush=True,
+        )
 
     async def wake_up_async(self, **kwargs):
         """Async version of wake_up."""
@@ -1182,6 +1198,12 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
             wake_up_args["tags"] = tags
 
         await self.llm.wake_up(**wake_up_args)
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        print(
+            "[LEX_PHASE] vLLM wake complete "
+            f"free_gib={free_bytes / 2**30:.2f} total_gib={total_bytes / 2**30:.2f}",
+            flush=True,
+        )
 
     async def shutdown(self) -> bool:
         """Clean up vLLM resources."""

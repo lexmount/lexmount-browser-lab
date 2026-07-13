@@ -11,6 +11,8 @@ import json
 import logging
 import os
 import re
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,7 @@ LOGGER = logging.getLogger(__name__)
 
 EXPECTED_DATASET_ROWS = 600
 EXPECTED_DATASET_SHA256 = "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097"
-TOOL_RESULT_CHAR_LIMIT = 500
+TOOL_RESULT_CHAR_LIMIT = 160
 TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 
@@ -199,6 +201,51 @@ async def judge_task_completion(
     return 1.0 if re.match(r"^\s*yes\b", judge_response, flags=re.IGNORECASE) else 0.0
 
 
+@dataclass
+class TrajectoryGuard:
+    """Per-episode circuit breaker and auditable failure classification."""
+
+    per_tool_timeout_s: float
+    episode_timeout_s: float
+    max_repeated_tool_calls: int
+    started_at: float = field(default_factory=time.monotonic)
+    last_signature: str = ""
+    repeated_tool_calls: int = 0
+    policy_failures: int = 0
+    infrastructure_failures: int = 0
+    timeouts: int = 0
+    terminated: bool = False
+    termination_reason: str = ""
+
+    def before_tool(self, name: str, payload: str) -> str | None:
+        if self.terminated:
+            return self.termination_reason
+        if time.monotonic() - self.started_at > self.episode_timeout_s:
+            self.infrastructure_failures += 1
+            self.timeouts += 1
+            self.terminated = True
+            self.termination_reason = "infrastructure_episode_timeout"
+            return self.termination_reason
+        signature = f"{name}:{payload.strip()}"
+        self.repeated_tool_calls = (
+            self.repeated_tool_calls + 1 if signature == self.last_signature else 0
+        )
+        self.last_signature = signature
+        if self.repeated_tool_calls >= self.max_repeated_tool_calls:
+            self.policy_failures += 1
+            self.terminated = True
+            self.termination_reason = "policy_no_progress_repeated_tool_call"
+            return self.termination_reason
+        return None
+
+    def infrastructure_timeout(self, name: str) -> str:
+        self.infrastructure_failures += 1
+        self.timeouts += 1
+        self.terminated = True
+        self.termination_reason = f"infrastructure_{name}_timeout"
+        return self.termination_reason
+
+
 def load_webvoyager_dataset(num_examples: int = -1, web_filter: str | None = None) -> Dataset:
     dataset_path = Path(__file__).parent / "datasets" / "WebVoyager_data_clean.jsonl"
     digest = hashlib.sha256(dataset_path.read_bytes()).hexdigest()
@@ -252,6 +299,9 @@ class LexmountDOMMode:
         official_proxy: bool,
         max_concurrent_sessions: int,
         stagehand_ready_timeout_s: float,
+        per_tool_timeout_s: float,
+        episode_timeout_s: float,
+        max_repeated_tool_calls: int,
     ) -> None:
         self.lexmount = Lexmount(api_key=api_key, project_id=project_id)
         self.stagehand_model = stagehand_model
@@ -260,6 +310,9 @@ class LexmountDOMMode:
         self.browser_mode = browser_mode
         self.official_proxy = official_proxy
         self.stagehand_ready_timeout_s = stagehand_ready_timeout_s
+        self.per_tool_timeout_s = per_tool_timeout_s
+        self.episode_timeout_s = episode_timeout_s
+        self.max_repeated_tool_calls = max_repeated_tool_calls
         self.stagehand_client: AsyncStagehand | None = None
         self._client_lock = asyncio.Lock()
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
@@ -267,10 +320,10 @@ class LexmountDOMMode:
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
         self.logger = env.logger
-        env.add_tool(self.navigate, args_to_skip=["session"])
-        env.add_tool(self.observe, args_to_skip=["session", "llm_config"])
-        env.add_tool(self.act, args_to_skip=["session", "llm_config"])
-        env.add_tool(self.extract, args_to_skip=["session", "llm_config"])
+        env.add_tool(self.navigate, args_to_skip=["session", "guard"])
+        env.add_tool(self.observe, args_to_skip=["session", "llm_config", "guard"])
+        env.add_tool(self.act, args_to_skip=["session", "llm_config", "guard"])
+        env.add_tool(self.extract, args_to_skip=["session", "llm_config", "guard"])
 
     async def _get_stagehand_client(self) -> AsyncStagehand:
         async with self._client_lock:
@@ -286,6 +339,11 @@ class LexmountDOMMode:
     async def setup_state(self, state: vf.State) -> vf.State:
         await self._slots.acquire()
         state["lexbrowser_slot_acquired"] = True
+        state["trajectory_guard"] = TrajectoryGuard(
+            per_tool_timeout_s=self.per_tool_timeout_s,
+            episode_timeout_s=self.episode_timeout_s,
+            max_repeated_tool_calls=self.max_repeated_tool_calls,
+        )
         lexmount_session = None
         try:
             lexmount_session = await asyncio.to_thread(
@@ -344,6 +402,7 @@ class LexmountDOMMode:
         updated = dict(tool_args)
         if tool_name in {"navigate", "observe", "act", "extract"}:
             updated["session"] = state["stagehand_session"]
+            updated["guard"] = state["trajectory_guard"]
         if tool_name in {"observe", "act", "extract"}:
             updated["llm_config"] = self._llm_config(state)
         return updated
@@ -373,23 +432,39 @@ class LexmountDOMMode:
             await self.stagehand_client.close()
             self.stagehand_client = None
 
-    async def navigate(self, url: str, session: Any) -> str:
+    async def navigate(self, url: str, session: Any, guard: TrajectoryGuard) -> str:
         """Navigate the browser directly to a URL."""
+        blocked = guard.before_tool("navigate", url)
+        if blocked:
+            return f"ERROR_{blocked.upper()}: trajectory terminated"
         try:
-            await session.navigate(url=url)
+            await asyncio.wait_for(
+                session.navigate(url=url), timeout=guard.per_tool_timeout_s
+            )
             return f"Navigated to {url}"
+        except asyncio.TimeoutError:
+            return f"ERROR_{guard.infrastructure_timeout('navigate').upper()}: retryable browser timeout"
         except Exception as exc:
-            return f"Error navigating to {url}: {exc}"
+            guard.infrastructure_failures += 1
+            return f"ERROR_INFRASTRUCTURE_NAVIGATE: {exc}"
 
-    async def observe(self, instruction: str, session: Any, llm_config: Any = None) -> str:
+    async def observe(
+        self, instruction: str, session: Any, llm_config: Any = None, guard: TrajectoryGuard | None = None
+    ) -> str:
         """Find possible page actions matching an instruction."""
+        assert guard is not None
+        blocked = guard.before_tool("observe", instruction)
+        if blocked:
+            return f"ERROR_{blocked.upper()}: trajectory terminated"
         try:
             if llm_config:
-                response = await session.observe(
+                response = await asyncio.wait_for(session.observe(
                     instruction=instruction, options={"model": llm_config}
-                )
+                ), timeout=guard.per_tool_timeout_s)
             else:
-                response = await session.observe(instruction=instruction)
+                response = await asyncio.wait_for(
+                    session.observe(instruction=instruction), timeout=guard.per_tool_timeout_s
+                )
             actions = [
                 {
                     "description": action.description,
@@ -399,22 +474,36 @@ class LexmountDOMMode:
                 for action in response.data.result
             ]
             return json.dumps(actions, indent=2) if actions else "No matching elements found"
+        except asyncio.TimeoutError:
+            return f"ERROR_{guard.infrastructure_timeout('observe').upper()}: retryable browser timeout"
         except Exception as exc:
-            return f"Error observing page: {exc}"
+            guard.infrastructure_failures += 1
+            return f"ERROR_INFRASTRUCTURE_OBSERVE: {exc}"
 
-    async def act(self, instruction: str, session: Any, llm_config: Any = None) -> str:
+    async def act(
+        self, instruction: str, session: Any, llm_config: Any = None, guard: TrajectoryGuard | None = None
+    ) -> str:
         """Perform one natural-language action on the current page."""
+        assert guard is not None
+        blocked = guard.before_tool("act", instruction)
+        if blocked:
+            return f"ERROR_{blocked.upper()}: trajectory terminated"
         try:
             if llm_config:
-                response = await session.act(
+                response = await asyncio.wait_for(session.act(
                     input=instruction, options={"model": llm_config}
-                )
+                ), timeout=guard.per_tool_timeout_s)
             else:
-                response = await session.act(input=instruction)
+                response = await asyncio.wait_for(
+                    session.act(input=instruction), timeout=guard.per_tool_timeout_s
+                )
             result = response.data.result
             return f"{'Success' if result.success else 'Failed'}: {result.message}"
+        except asyncio.TimeoutError:
+            return f"ERROR_{guard.infrastructure_timeout('act').upper()}: retryable browser timeout"
         except Exception as exc:
-            return f"Error executing action: {exc}"
+            guard.infrastructure_failures += 1
+            return f"ERROR_INFRASTRUCTURE_ACT: {exc}"
 
     async def extract(
         self,
@@ -422,26 +511,34 @@ class LexmountDOMMode:
         schema_json: str,
         session: Any,
         llm_config: Any = None,
+        guard: TrajectoryGuard | None = None,
     ) -> str:
         """Extract structured data from the current page using a JSON schema."""
+        assert guard is not None
+        blocked = guard.before_tool("extract", instruction)
+        if blocked:
+            return f"ERROR_{blocked.upper()}: trajectory terminated"
         try:
             schema = json.loads(schema_json)
             if llm_config:
-                response = await session.extract(
+                response = await asyncio.wait_for(session.extract(
                     instruction=instruction,
                     schema=schema,
                     options={"model": llm_config},
-                )
+                ), timeout=guard.per_tool_timeout_s)
             else:
-                response = await session.extract(
-                    instruction=instruction,
-                    schema=schema,
-                )
+                response = await asyncio.wait_for(session.extract(
+                    instruction=instruction, schema=schema
+                ), timeout=guard.per_tool_timeout_s)
             return json.dumps(response.data.result, indent=2)
         except json.JSONDecodeError as exc:
+            guard.policy_failures += 1
             return f"Error parsing schema JSON: {exc}"
+        except asyncio.TimeoutError:
+            return f"ERROR_{guard.infrastructure_timeout('extract').upper()}: retryable browser timeout"
         except Exception as exc:
-            return f"Error extracting data: {exc}"
+            guard.infrastructure_failures += 1
+            return f"ERROR_INFRASTRUCTURE_EXTRACT: {exc}"
 
 
 class LexBrowserEnv(vf.StatefulToolEnv):
@@ -490,7 +587,7 @@ def _required_env(name: str) -> str:
 
 def load_environment(
     mode: str = "dom",
-    max_turns: int = 100,
+    max_turns: int = 30,
     judge_model: str = "glm-5.2",
     num_examples: int = -1,
     web_filter: str | None = None,
@@ -501,6 +598,9 @@ def load_environment(
     official_proxy: bool = False,
     max_concurrent_sessions: int = 20,
     stagehand_ready_timeout_s: float = 60.0,
+    per_tool_timeout_s: float = 25.0,
+    episode_timeout_s: float = 180.0,
+    max_repeated_tool_calls: int = 3,
     **kwargs: Any,
 ) -> vf.Environment:
     if mode != "dom":
@@ -531,6 +631,9 @@ def load_environment(
         official_proxy=official_proxy,
         max_concurrent_sessions=max_concurrent_sessions,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,
+        per_tool_timeout_s=per_tool_timeout_s,
+        episode_timeout_s=episode_timeout_s,
+        max_repeated_tool_calls=max_repeated_tool_calls,
     )
     return LexBrowserEnv(
         mode_impl=mode_impl,

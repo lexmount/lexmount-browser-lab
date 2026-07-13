@@ -12,8 +12,8 @@ GYM_DIR="/opt/nemo-rl/3rdparty/Gym-workspace/Gym/responses_api_agents/verifiers_
 GYM_MODEL_DIR="/opt/nemo-rl/3rdparty/Gym-workspace/Gym/responses_api_models/vllm_model"
 GYM_CACHE_DIR="$WORKSPACE/.cache/nemo-rl/gym-venvs"
 
-if [[ "$MODE" != "train" && "$MODE" != "smoke" ]]; then
-  echo "usage: $0 [train|smoke]" >&2
+if [[ "$MODE" != "train" && "$MODE" != "smoke" && "$MODE" != "stage1" ]]; then
+  echo "usage: $0 [train|smoke|stage1]" >&2
   exit 2
 fi
 
@@ -97,6 +97,24 @@ if [[ "$MODE" == "smoke" ]]; then
   )
 fi
 
+if [[ "$MODE" == "stage1" ]]; then
+  # Stage 1 acceptance: one GRPO group of eight real WebVoyager trajectories.
+  # train_global_batch_size=8 is the effective batch used for the one optimizer
+  # update. train_micro_batch_size remains 1 in the base config; NeMo/FSDP
+  # accumulates packed microbatches until this global batch is complete.
+  overrides=(
+    grpo.num_prompts_per_step=1
+    grpo.num_generations_per_prompt=8
+    grpo.max_num_steps=1
+    grpo.max_num_epochs=1
+    policy.train_global_batch_size=8
+    policy.train_micro_batch_size=1
+    policy.logprob_batch_size=1
+    data.train.data_path=/workspace/LexBrowserEnv/training/data/webvoyager/smoke.jsonl
+    checkpointing.enabled=false
+  )
+fi
+
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file="$ROOT/logs/lexbrowser-grpo/${MODE}-${timestamp}.log"
 
@@ -122,6 +140,7 @@ log_file="$ROOT/logs/lexbrowser-grpo/${MODE}-${timestamp}.log"
   -v "$ROOT/training/nemo_gym/lexbrowser_webvoyager.yaml:$GYM_DIR/configs/lexbrowser_webvoyager.yaml:ro" \
   -v "$ROOT/training/nemo_rl_patches/vllm_worker.py:/opt/nemo-rl/nemo_rl/models/generation/vllm/vllm_worker.py:ro" \
   -v "$ROOT/training/nemo_rl_patches/vllm_worker_async.py:/opt/nemo-rl/nemo_rl/models/generation/vllm/vllm_worker_async.py:ro" \
+  -v "$ROOT/training/nemo_rl_patches/grpo.py:/opt/nemo-rl/nemo_rl/algorithms/grpo.py:ro" \
   -v "$ROOT/training/configs/grpo_lexbrowser_webvoyager_qwen3_1_7b_2x5090.yaml:/workspace/config.yaml:ro" \
   -w /opt/nemo-rl \
   "$IMAGE" \
