@@ -1,0 +1,1018 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="helm:title" content="GPT-5.5 × LexBench：Lexmount 稳定性与并发复核">
+    <meta name="helm:type" content="report">
+    <meta name="helm:summary" content="在 210 条配对任务、5090 failure-only 复测和 Lexmount c10/c64 容量实验基础上，界定 Lexmount 的稳定性优势、因果边界与高并发代价。">
+    <meta name="helm:tags" content="lexbench, lexmount, browser-use, gpt-5.5, stability, capacity, evidence">
+    <title>GPT-5.5 × LexBench：Lexmount 稳定性与并发复核</title>
+    <style>
+      :root {
+        --paper: #f3f5f2;
+        --surface: #ffffff;
+        --surface-muted: #eaeeea;
+        --ink: #18221d;
+        --muted: #596860;
+        --line: #d5ddd7;
+        --green: #17684b;
+        --green-soft: #e2efe8;
+        --blue: #2e6384;
+        --blue-soft: #e5eef4;
+        --gold: #85611b;
+        --gold-soft: #f3ecd9;
+        --red: #9a4141;
+        --red-soft: #f5e7e5;
+        --charcoal: #2e3933;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: min(100%, 1120px);
+        margin: 0 auto;
+        padding: 64px 36px 96px;
+      }
+
+      header {
+        padding-bottom: 36px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .kicker,
+      .eyebrow,
+      .meta-label {
+        margin: 0;
+        color: var(--green);
+        font: 700 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 500;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 900px;
+        margin: 16px 0 0;
+        font-size: 56px;
+        line-height: 1.08;
+      }
+
+      h2 {
+        margin: 0 0 18px;
+        font-size: 31px;
+        line-height: 1.2;
+      }
+
+      h3 {
+        margin: 0 0 9px;
+        font-size: 17px;
+        line-height: 1.4;
+      }
+
+      p,
+      li {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.75;
+      }
+
+      strong { color: var(--ink); }
+
+      a {
+        color: var(--green);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+
+      code {
+        padding: 2px 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #f8faf8;
+        color: #284136;
+        font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .lede {
+        max-width: 850px;
+        margin: 22px 0 0;
+        color: #4f6057;
+        font-size: 18px;
+        line-height: 1.8;
+      }
+
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        margin-top: 30px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--line);
+      }
+
+      .status-grid > div {
+        min-width: 0;
+        padding: 17px 18px;
+        background: var(--surface);
+      }
+
+      .status-grid span,
+      .metric span {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 750;
+        line-height: 1.4;
+        text-transform: uppercase;
+      }
+
+      .status-grid strong {
+        display: block;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 22px;
+        padding: 18px 0 0;
+      }
+
+      nav a {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+      }
+
+      nav a:hover { color: var(--green); border-bottom-color: var(--green); }
+
+      section {
+        min-width: 0;
+        padding: 44px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      section:last-of-type { border-bottom: 0; }
+
+      .section-intro {
+        max-width: 800px;
+        margin: -7px 0 22px;
+      }
+
+      .verdict {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr;
+        gap: 24px;
+        padding: 24px;
+        border-left: 4px solid var(--green);
+        background: var(--green-soft);
+      }
+
+      .verdict p { margin: 0; color: #294c3a; }
+
+      .verdict .boundary {
+        padding-left: 22px;
+        border-left: 1px solid #bdd4c7;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .metric {
+        min-height: 124px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+
+      .metric strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 27px;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.15;
+      }
+
+      .metric p { margin: 0; font-size: 13px; line-height: 1.55; }
+
+      .metric.good { border-top: 3px solid var(--green); }
+      .metric.info { border-top: 3px solid var(--blue); }
+      .metric.caution { border-top: 3px solid var(--gold); }
+      .metric.risk { border-top: 3px solid var(--red); }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1.08fr 0.92fr;
+        gap: 28px;
+        align-items: start;
+        margin-top: 24px;
+      }
+
+      .split > *,
+      .verdict > *,
+      .metric-grid > *,
+      .evidence-grid > *,
+      .decision-grid > * { min-width: 0; }
+
+      .panel {
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+
+      .panel > :first-child { margin-top: 0; }
+      .panel > :last-child { margin-bottom: 0; }
+
+      .bar-chart { margin-top: 18px; }
+
+      .bar-row { margin: 17px 0; }
+
+      .bar-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 7px;
+        color: var(--charcoal);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .bar-head strong { font-variant-numeric: tabular-nums; }
+
+      .track {
+        height: 12px;
+        overflow: hidden;
+        border-radius: 3px;
+        background: var(--surface-muted);
+      }
+
+      .fill { height: 100%; border-radius: 3px; }
+      .fill.lexmount { background: var(--green); }
+      .fill.local { background: var(--blue); }
+      .fill.sensitivity { background: var(--gold); }
+      .fill.capacity { background: var(--red); }
+      .fill.neutral { background: #78847d; }
+
+      .table-wrap {
+        width: 100%;
+        max-width: 100%;
+        margin-top: 20px;
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+
+      table {
+        width: 100%;
+        min-width: 720px;
+        border-collapse: collapse;
+      }
+
+      caption {
+        padding: 13px 16px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th,
+      td {
+        padding: 13px 15px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      tr:last-child td { border-bottom: 0; }
+
+      th {
+        color: #435149;
+        background: #edf1ee;
+        font-weight: 750;
+      }
+
+      td { color: var(--muted); font-variant-numeric: tabular-nums; }
+      td:first-child { color: var(--ink); font-weight: 700; }
+
+      .tag {
+        display: inline-block;
+        padding: 3px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 800;
+        line-height: 1.4;
+        white-space: nowrap;
+      }
+
+      .tag.good { color: var(--green); background: var(--green-soft); }
+      .tag.info { color: var(--blue); background: var(--blue-soft); }
+      .tag.caution { color: var(--gold); background: var(--gold-soft); }
+      .tag.risk { color: var(--red); background: var(--red-soft); }
+
+      .evidence-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .evidence-grid article {
+        padding: 20px;
+        border-top: 3px solid var(--line);
+        background: var(--surface);
+      }
+
+      .evidence-grid article.supported { border-top-color: var(--green); }
+      .evidence-grid article.mixed { border-top-color: var(--gold); }
+      .evidence-grid article.reverse { border-top-color: var(--blue); }
+      .evidence-grid p { margin: 7px 0 0; font-size: 13px; }
+
+      .note,
+      .warning {
+        margin-top: 22px;
+        padding: 18px 20px;
+        border-radius: 6px;
+      }
+
+      .note { border: 1px solid #c7d9e5; background: var(--blue-soft); }
+      .note p { margin: 0; color: #35566d; }
+      .warning { border: 1px solid #e3c3bf; background: var(--red-soft); }
+      .warning p { margin: 0; color: #71443f; }
+
+      .ci {
+        margin-top: 22px;
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+      }
+
+      .ci-scale {
+        position: relative;
+        height: 44px;
+        margin: 16px 4px 0;
+      }
+
+      .ci-axis {
+        position: absolute;
+        top: 20px;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--line);
+      }
+
+      .ci-zero {
+        position: absolute;
+        top: 8px;
+        bottom: 6px;
+        left: 60%;
+        width: 2px;
+        background: var(--charcoal);
+      }
+
+      .ci-band {
+        position: absolute;
+        top: 16px;
+        left: 3.75%;
+        width: 87.5%;
+        height: 10px;
+        border-radius: 3px;
+        background: var(--gold);
+      }
+
+      .ci-point {
+        position: absolute;
+        top: 11px;
+        left: 47.5%;
+        width: 20px;
+        height: 20px;
+        margin-left: -10px;
+        border: 4px solid var(--surface);
+        border-radius: 50%;
+        background: var(--red);
+        box-shadow: 0 0 0 1px var(--red);
+      }
+
+      .ci-labels {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      details {
+        margin-top: 18px;
+        border-top: 1px solid var(--line);
+        padding-top: 14px;
+      }
+
+      summary {
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 750;
+        cursor: pointer;
+      }
+
+      .decision-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 22px;
+      }
+
+      .decision-grid article {
+        padding: 20px 0 0;
+        border-top: 3px solid var(--line);
+      }
+
+      .decision-grid article:nth-child(1) { border-top-color: var(--green); }
+      .decision-grid article:nth-child(2) { border-top-color: var(--red); }
+      .decision-grid article:nth-child(3) { border-top-color: var(--blue); }
+      .decision-grid p { margin: 8px 0 0; }
+
+      .provenance-list { margin: 14px 0 0; padding-left: 20px; }
+      .provenance-list li { margin: 8px 0; overflow-wrap: anywhere; }
+
+      footer {
+        padding-top: 28px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.75;
+      }
+
+      @media (max-width: 820px) {
+        main { padding: 42px 20px 72px; }
+        h1 { font-size: 40px; }
+        .status-grid,
+        .verdict,
+        .metric-grid,
+        .split,
+        .evidence-grid,
+        .decision-grid { grid-template-columns: 1fr; }
+        .verdict .boundary { padding: 20px 0 0; border-top: 1px solid #bdd4c7; border-left: 0; }
+        section { padding: 36px 0; }
+      }
+
+      @media (max-width: 460px) {
+        main { padding: 32px 14px 60px; }
+        h1 { font-size: 34px; }
+        h2 { font-size: 26px; }
+        .lede { font-size: 16px; }
+        .panel,
+        .metric,
+        .verdict { padding: 16px; }
+      }
+
+      @media print {
+        body { background: #fff; }
+        main { width: 100%; padding: 24px; }
+        nav { display: none; }
+        a { color: inherit; }
+        .metric,
+        .panel,
+        .table-wrap,
+        .ci,
+        .evidence-grid article { break-inside: avoid; }
+      }
+    </style>
+    <script type="application/json" data-helm-manifest>
+      {
+        "schema_version": "HDOC/1.0",
+        "id": "gpt55-lexbench-stability-capacity-2026-07-13",
+        "title": "GPT-5.5 × LexBench：Lexmount 稳定性与并发复核",
+        "type": "report",
+        "tags": ["lexbench", "lexmount", "browser-use", "gpt-5.5", "stability", "capacity", "evidence"],
+        "summary": "在 210 条配对任务、5090 failure-only 复测和 Lexmount c10/c64 容量实验基础上，界定 Lexmount 的稳定性优势、因果边界与高并发代价。",
+        "created_at": "2026-07-13T12:28:14Z",
+        "updated_at": "2026-07-13T12:28:14Z",
+        "provenance": {
+          "author": "Codex for lexmount/LexBrowserEnv",
+          "sources": [
+            {
+              "label": "GPT-5.5 × LexBench paired report",
+              "url": "https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/report.md",
+              "accessed_at": "2026-07-13"
+            },
+            {
+              "label": "Paired metrics",
+              "url": "https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/metrics.json",
+              "accessed_at": "2026-07-13"
+            },
+            {
+              "label": "Log and mechanism audit",
+              "url": "https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/log-audit.md",
+              "accessed_at": "2026-07-13"
+            },
+            {
+              "label": "5090 and concurrency follow-up data",
+              "url": "https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/followup.json",
+              "accessed_at": "2026-07-13"
+            }
+          ]
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main data-document-root>
+      <header>
+        <p class="kicker">Evidence dossier / 2026-07-13</p>
+        <h1>GPT-5.5 × LexBench：Lexmount 稳定性与并发复核</h1>
+        <p class="lede">
+          这份报告把全量配对、5090 失败任务复测和 c10/c64 容量实验放在同一证据框架中。
+          核心判断是：Lexmount 在本实验里有清晰的端到端优势，但优势主要属于完整 browser backend，
+          不能被解释为 Chromium 内核本身更强。
+        </p>
+        <div class="status-grid" aria-label="实验完成状态">
+          <div>
+            <span>全量配对</span>
+            <strong>210 / 210 双端均形成轨迹并完成 Judge</strong>
+          </div>
+          <div>
+            <span>波动复核</span>
+            <strong>88 条原始 Local failure 已在 5090 全部重跑</strong>
+          </div>
+          <div>
+            <span>并发复核</span>
+            <strong>请求 c64，实际 active session 峰值 39</strong>
+          </div>
+        </div>
+        <nav aria-label="报告章节">
+          <a href="#decision">结论</a>
+          <a href="#paired">全量配对</a>
+          <a href="#mechanism">机制审计</a>
+          <a href="#rerun">5090 复测</a>
+          <a href="#capacity">c64 容量</a>
+          <a href="#resources">资源成本</a>
+          <a href="#method">方法与来源</a>
+        </nav>
+      </header>
+
+      <section id="decision">
+        <p class="eyebrow">Decision</p>
+        <h2>可以下的结论，比“远端浏览器更强”更具体</h2>
+        <div class="verdict">
+          <div>
+            <h3>证据支持</h3>
+            <p>
+              在固定模型、任务集、Agent 版本和 Judge 的 210 条配对实验中，
+              <strong>Lexmount 完整 browser backend 的成功率高于 Mac 本地 Chrome 13.33 个百分点</strong>。
+              对原始 Local failure 做偏向 Local 的 5090 敏感性分析后，优势仍为 8.57 个百分点。
+            </p>
+          </div>
+          <div class="boundary">
+            <h3>证据不支持</h3>
+            <p>
+              不能说远端 Chromium 内核“更聪明”，也不能说持续 64 并发已经跑满。
+              当前实验同时改变了出口、地区、指纹、会话运行时与宿主资源。
+            </p>
+          </div>
+        </div>
+        <div class="metric-grid">
+          <article class="metric good">
+            <span>Lexmount</span>
+            <strong>71.43%</strong>
+            <p>150 / 210 Judge 成功</p>
+          </article>
+          <article class="metric info">
+            <span>Local Chrome</span>
+            <strong>58.10%</strong>
+            <p>122 / 210 Judge 成功</p>
+          </article>
+          <article class="metric good">
+            <span>配对差值</span>
+            <strong>+13.33pp</strong>
+            <p>95% CI：+6.19 至 +20.48pp</p>
+          </article>
+          <article class="metric caution">
+            <span>Local-favoring 复核</span>
+            <strong>+8.57pp</strong>
+            <p>95% CI：+1.43 至 +15.71pp</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="paired">
+        <p class="eyebrow">Paired quality</p>
+        <h2>同一批 210 条任务，差异不是由任务构成造成</h2>
+        <p class="section-intro">
+          两端使用同一任务 ID、GPT-5.5、browser-use 0.13.4、并发 10、40 steps、600 秒限制，
+          并由同一 GPT-5.4 stepwise Judge 判定。Bootstrap 使用任务级配对重采样。
+        </p>
+        <div class="split">
+          <div class="panel">
+            <h3>Judge 成功率</h3>
+            <div class="bar-chart" role="img" aria-label="Lexmount 成功率 71.43%，Local Chrome 成功率 58.10%">
+              <div class="bar-row">
+                <div class="bar-head"><span>Lexmount</span><strong>150 / 210 · 71.43%</strong></div>
+                <div class="track"><div class="fill lexmount" style="width: 71.43%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>Local Chrome</span><strong>122 / 210 · 58.10%</strong></div>
+                <div class="track"><div class="fill local" style="width: 58.10%"></div></div>
+              </div>
+            </div>
+            <p>
+              净差为 28 条任务。由于两端都完整产生 210 条轨迹，这不是样本缺失造成的分母差异。
+            </p>
+          </div>
+          <div class="panel">
+            <h3>配对结果矩阵</h3>
+            <div class="table-wrap">
+              <table>
+                <caption>每个任务在两个 backend 上的联合结果</caption>
+                <thead><tr><th>结果</th><th>任务数</th><th>占比</th></tr></thead>
+                <tbody>
+                  <tr><td>双方成功</td><td>104</td><td>49.52%</td></tr>
+                  <tr><td>仅 Lexmount 成功</td><td>46</td><td>21.90%</td></tr>
+                  <tr><td>仅 Local 成功</td><td>18</td><td>8.57%</td></tr>
+                  <tr><td>双方失败</td><td>42</td><td>20.00%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>语言与任务类型分层；T2 每种语言只有 8 条，不能单独外推</caption>
+            <thead>
+              <tr><th>分层</th><th>Lexmount</th><th>Local Chrome</th><th>差值</th><th>解释</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>en / T1</td><td>55/84 · 65.48%</td><td>34/84 · 40.48%</td><td>+25.00pp</td><td><span class="tag good">主要优势来源</span></td></tr>
+              <tr><td>en / T2</td><td>7/8 · 87.50%</td><td>7/8 · 87.50%</td><td>0.00pp</td><td><span class="tag caution">样本很小</span></td></tr>
+              <tr><td>zh / T1</td><td>81/110 · 73.64%</td><td>73/110 · 66.36%</td><td>+7.27pp</td><td><span class="tag info">温和优势</span></td></tr>
+              <tr><td>zh / T2</td><td>7/8 · 87.50%</td><td>8/8 · 100.00%</td><td>-12.50pp</td><td><span class="tag caution">样本很小</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="mechanism">
+        <p class="eyebrow">Mechanism audit</p>
+        <h2>优势主要落在站点可达性，不在 Agent 推理</h2>
+        <p class="section-intro">
+          64 条单边成功任务逐条读取 Agent action/result、原始错误信号与 Judge 归因。
+          总净差 28 条中，站点或访问环境分类贡献同方向净差 26 条；去掉 E 类后净差只剩 2 条。
+        </p>
+        <div class="metric-grid">
+          <article class="metric good">
+            <span>Lexmount-only</span>
+            <strong>46</strong>
+            <p>其中 Local loser 的 E1/E2/E3 为 31 条</p>
+          </article>
+          <article class="metric info">
+            <span>Local-only</span>
+            <strong>18</strong>
+            <p>其中 Lexmount loser 的 E1/E2/E3 为 5 条</p>
+          </article>
+          <article class="metric good">
+            <span>环境类净不对称</span>
+            <strong>+26</strong>
+            <p>31 - 5，与总净差 +28 同方向</p>
+          </article>
+          <article class="metric caution">
+            <span>原始信号确认</span>
+            <strong>25 / 31</strong>
+            <p>出现 captcha、HTTP denial 或 net::ERR_* 信号</p>
+          </article>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>单边成功任务的 loser 主分类</caption>
+            <thead><tr><th>Loser 分类</th><th>Lexmount-only</th><th>Local-only</th><th>净差</th></tr></thead>
+            <tbody>
+              <tr><td>E1/E2/E3 站点或访问环境</td><td>31</td><td>5</td><td>+26</td></tr>
+              <tr><td>M1-M4 Agent 规划或证据</td><td>15</td><td>10</td><td>+5</td></tr>
+              <tr><td>H1 Harness</td><td>0</td><td>3</td><td>-3</td></tr>
+              <tr><td>合计</td><td>46</td><td>18</td><td>+28</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="evidence-grid">
+          <article class="supported">
+            <h3>稳定正向案例</h3>
+            <p><strong>ASOS task 97</strong> 与 <strong>3DM task 3008</strong>：Lexmount 3/3，Local 0/3；Local 分别持续收到 Access Denied 与 HTTP 403。</p>
+          </article>
+          <article class="mixed">
+            <h3>轮次翻转案例</h3>
+            <p>Google Scholar、Crunchyroll、GameSpot 等在三轮中出现变化，说明站点状态、Agent 路径和 Judge 仍有随机性。</p>
+          </article>
+          <article class="reverse">
+            <h3>稳定反向案例</h3>
+            <p><strong>58.com task 180</strong>：Lexmount 0/3，Local 3/3。Lexmount 不是所有站点都占优。</p>
+          </article>
+        </div>
+        <div class="note">
+          <p>
+            <strong>因果边界：</strong>E 分类来自事后 Judge 归因，原始日志只为其中一部分提供直接信号。
+            它支持“完整 backend 的站点访问环境不同”，不构成“浏览器内核因果效应”的随机化证明。
+          </p>
+        </div>
+      </section>
+
+      <section id="rerun">
+        <p class="eyebrow">5090 failure-only rerun</p>
+        <h2>更强本地机器能恢复一些任务，但解释不了原始优势</h2>
+        <p class="section-intro">
+          原始 Mac Local 的 88 条失败任务在 Ubuntu 22.04、Chrome 140、i9-14900K、125.6 GiB
+          内存与双 RTX 5090 机器上以 c10 全部重跑。该设计刻意只复测 failure，因此不能当作第二轮独立成功率。
+        </p>
+        <div class="split">
+          <div class="panel">
+            <h3>偏向 Local 的敏感性分析</h3>
+            <div class="bar-chart" role="img" aria-label="Lexmount 150 条成功，原始 Local 122 条，加入 5090 恢复后的 Local 132 条">
+              <div class="bar-row">
+                <div class="bar-head"><span>Lexmount 原始全量</span><strong>150 · 71.43%</strong></div>
+                <div class="track"><div class="fill lexmount" style="width: 71.43%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>Local 原始全量</span><strong>122 · 58.10%</strong></div>
+                <div class="track"><div class="fill local" style="width: 58.10%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>Local + 5090 恢复项</span><strong>132 · 62.86%</strong></div>
+                <div class="track"><div class="fill sensitivity" style="width: 62.86%"></div></div>
+              </div>
+            </div>
+            <p>保留 Local 原有全部成功，只追加本轮恢复的 10 条，不扣除任何可能翻为失败的原始成功。</p>
+          </div>
+          <div class="panel">
+            <h3>波动与恢复</h3>
+            <div class="metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 14px">
+              <article class="metric caution"><span>总恢复</span><strong>10 / 88</strong><p>全部为中文 T1</p></article>
+              <article class="metric risk"><span>英文恢复</span><strong>0 / 51</strong><p>原始英文 failure 全部仍失败</p></article>
+              <article class="metric caution"><span>E 类恢复</span><strong>2 / 31</strong><p>29 条访问环境 loser 仍失败</p></article>
+              <article class="metric risk"><span>Smoke 重复成功</span><strong>0 / 12</strong><p>小样本成功没有连续复现</p></article>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>5090 failure-only 复测资源与执行指标</caption>
+            <thead><tr><th>指标</th><th>数值</th><th>口径</th></tr></thead>
+            <tbody>
+              <tr><td>Planned / trajectory / judged / success</td><td>88 / 88 / 88 / 10</td><td>完整重跑并重新 Judge</td></tr>
+              <tr><td>E2E mean / P50 / P95</td><td>133.85 / 93.36 / 408.95 秒</td><td>任务端到端</td></tr>
+              <tr><td>Timeout / network / unhandled</td><td>6 / 16 / 1</td><td>信号可在同一任务重叠</td></tr>
+              <tr><td>CPU cores mean</td><td>1.00</td><td>Linux cgroup</td></tr>
+              <tr><td>PSS mean / P95 / max</td><td>3.96 / 5.56 / 6.25 GiB</td><td>进程树 PSS</td></tr>
+              <tr><td>Chrome PSS mean / P95 / max</td><td>1.73 / 2.74 / 3.39 GiB</td><td>本地 Chrome 子树</td></tr>
+              <tr><td>memory.current mean / P95 / max</td><td>5.25 / 7.20 / 8.01 GiB</td><td>Linux cgroup</td></tr>
+              <tr><td>memory.peak</td><td>8.05 GiB</td><td>Kernel peak</td></tr>
+              <tr><td>Host available 最小值</td><td>71.62 GiB</td><td>整机</td></tr>
+              <tr><td>吞吐</td><td>204.1 task/h</td><td>88 条批次</td></tr>
+              <tr><td>Agent token / cost</td><td>11.80M / $52.13</td><td>远端 GPT-5.5</td></tr>
+              <tr><td>Judge token</td><td>0.714M</td><td>远端 GPT-5.4</td></tr>
+              <tr><td>GPU util / idle / memory / power</td><td>4.29% / 95.71% / 22,255 MiB / 30.49 W</td><td>整机，被其他 workload 污染</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning">
+          <p>
+            <strong>IP 检查：</strong>复测当下，Mac 与 5090 实测为同一公网出口、同一 ASN 与同一地区；具体 IP 不进入报告。
+            原始全量运行没有保存出口快照，因此不能倒推原始夜间运行也一定相同。
+          </p>
+        </div>
+        <details>
+          <summary>查看 5090 恢复任务与 smoke 翻转</summary>
+          <p>
+            恢复任务：18、22、24、82、124、288、298、302、3014、3020。
+            Smoke 中 task 114、3017 成功，但在完整 88 条复测中再次失败；task 22 则从 smoke 失败翻为成功。
+          </p>
+        </details>
+      </section>
+
+      <section id="capacity">
+        <p class="eyebrow">Concurrency</p>
+        <h2>c64 提高批量吞吐，但本轮只观测到 39 个同时 active session</h2>
+        <p class="section-intro">
+          在同一台 5090 runner、同一组 64 条分层任务上顺序运行 Lexmount c10 与 c64。
+          两轮都 64/64 形成轨迹，session 创建失败为 0，结束后两个 project 的 active session 均归零。
+        </p>
+        <div class="metric-grid">
+          <article class="metric good"><span>吞吐提升</span><strong>+64.7%</strong><p>194.3 → 319.9 task/h</p></article>
+          <article class="metric caution"><span>Active 峰值</span><strong>39 / 64</strong><p>请求 c64，不等于持续跑满 64</p></article>
+          <article class="metric risk"><span>memory.peak</span><strong>3.47×</strong><p>4.31 → 14.94 GiB</p></article>
+          <article class="metric info"><span>Judge 差值</span><strong>-3.13pp</strong><p>95% CI：-14.06 至 +7.81pp</p></article>
+        </div>
+        <div class="split">
+          <div class="panel">
+            <h3>吞吐、并发与内存</h3>
+            <div class="bar-chart">
+              <div class="bar-row">
+                <div class="bar-head"><span>c10 吞吐</span><strong>194.3 task/h</strong></div>
+                <div class="track"><div class="fill neutral" style="width: 60.73%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>c64 吞吐</span><strong>319.9 task/h</strong></div>
+                <div class="track"><div class="fill lexmount" style="width: 100%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>实际 active / 请求</span><strong>39 / 64</strong></div>
+                <div class="track"><div class="fill sensitivity" style="width: 60.94%"></div></div>
+              </div>
+              <div class="bar-row">
+                <div class="bar-head"><span>c64 memory.peak / 16 GiB</span><strong>14.94 GiB</strong></div>
+                <div class="track"><div class="fill capacity" style="width: 93.38%"></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="ci" role="img" aria-label="c64 减 c10 的成功率差为负 3.13 个百分点，95% 置信区间从负 14.06 到正 7.81 个百分点，区间跨越零">
+            <h3>配对质量差值：c64 - c10</h3>
+            <p><strong>-3.13pp</strong>，100,000 次 bootstrap 95% CI <strong>[-14.06, +7.81]pp</strong>。</p>
+            <div class="ci-scale" aria-hidden="true">
+              <div class="ci-axis"></div>
+              <div class="ci-zero"></div>
+              <div class="ci-band"></div>
+              <div class="ci-point"></div>
+            </div>
+            <div class="ci-labels"><span>-15pp</span><span>0pp</span><span>+10pp</span></div>
+            <p>区间跨越 0：没有清晰质量退化证据，也不足以证明 c64 与 c10 等价。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>同一 64 任务集的 c10 / c64 容量对照</caption>
+            <thead><tr><th>指标</th><th>c10</th><th>c64</th><th>变化或解释</th></tr></thead>
+            <tbody>
+              <tr><td>请求并发</td><td>10</td><td>64</td><td>6.4× 配置</td></tr>
+              <tr><td>实际 active session</td><td>运行中快照 10</td><td>mean 16.04 / P95 36 / max 39</td><td><span class="tag caution">峰值未到 64</span></td></tr>
+              <tr><td>Judge 成功</td><td>43/64 · 67.19%</td><td>41/64 · 64.06%</td><td>-3.13pp，CI 含 0</td></tr>
+              <tr><td>同题单方成功</td><td>c10-only 8</td><td>c64-only 6</td><td>净 -2</td></tr>
+              <tr><td>E2E mean / P50 / P95</td><td>130.58 / 92.52 / 417.49 秒</td><td>173.40 / 132.56 / 482.71 秒</td><td>单任务延迟上升</td></tr>
+              <tr><td>Timeout / network / unhandled</td><td>0 / 3 / 3</td><td>1 / 3 / 4</td><td>session create 均为 0</td></tr>
+              <tr><td>Rollout 时长</td><td>19.77 min</td><td>12.00 min</td><td>-39.27%</td></tr>
+              <tr><td>吞吐</td><td>194.3 task/h</td><td>319.9 task/h</td><td>+64.7%</td></tr>
+              <tr><td>CPU cores mean</td><td>0.48</td><td>0.70</td><td>+47.1%</td></tr>
+              <tr><td>PSS mean / P95 / max</td><td>2.55 / 3.80 / 4.00 GiB</td><td>6.24 / 14.30 / 14.71 GiB</td><td>P95 +276%</td></tr>
+              <tr><td>memory.current mean / P95 / max</td><td>2.95 / 4.11 / 4.29 GiB</td><td>6.75 / 14.47 / 14.91 GiB</td><td>max +248%</td></tr>
+              <tr><td>memory.peak</td><td>4.31 GiB</td><td>14.94 GiB</td><td>+247%</td></tr>
+              <tr><td>Host available 最小值</td><td>79.46 GiB</td><td>68.43 GiB</td><td>-11.03 GiB</td></tr>
+              <tr><td>Agent token / cost</td><td>9.67M / $41.89</td><td>8.68M / $40.75</td><td>受单轮轨迹差异影响</td></tr>
+              <tr><td>Judge token</td><td>0.556M</td><td>0.549M</td><td>基本一致</td></tr>
+              <tr><td>GPU util / idle</td><td>2.83% / 97.17%</td><td>0.01% / 99.99%</td><td>整机数据，不作因果解释</td></tr>
+              <tr><td>GPU memory / power</td><td>22,859 MiB / 29.83 W</td><td>21,892 MiB / 13.17 W</td><td>被其他 workload 污染</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>单 project 原始 c64 session 创建探针；180 秒窗口</caption>
+            <thead><tr><th>Project</th><th>请求</th><th>窗口内创建</th><th>失败或超时</th><th>创建 P95</th></tr></thead>
+            <tbody>
+              <tr><td>en</td><td>64</td><td>25</td><td>39</td><td>153.18 秒</td></tr>
+              <tr><td>zh</td><td>64</td><td>48</td><td>16</td><td>157.77 秒</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning">
+          <p>
+            <strong>容量表述：</strong>当前可以说“配置允许请求 c64，端到端吞吐提高 64.7%”；
+            不能说“已经验证持续 64 个 active session”。要验证后者，需要预创建或分项目调度，
+            并以 sampler 观测到稳定 active=64 为准。
+          </p>
+        </div>
+      </section>
+
+      <section id="resources">
+        <p class="eyebrow">Resource and cost</p>
+        <h2>Lexmount 降低 runner 压力，但没有证明总资源更低</h2>
+        <p class="section-intro">
+          原始全量实验中，Lexmount 列只采集本机 runner 控制进程，不包含远端浏览器宿主机；
+          Local 列包含 runner、Agent 与本地 Chrome 进程树。两列适合回答“本机压力是否被移出”，不适合比较服务端总成本。
+        </p>
+        <div class="table-wrap">
+          <table>
+            <caption>原始 210 条全量运行的资源、时间与模型成本</caption>
+            <thead><tr><th>指标</th><th>Lexmount runner</th><th>Local runner + Chrome</th><th>解释</th></tr></thead>
+            <tbody>
+              <tr><td>CPU cores mean</td><td>0.37</td><td>1.72</td><td>本机 runner 侧</td></tr>
+              <tr><td>RSS mean / P95 / max</td><td>3.74 / 4.61 / 5.14 GiB</td><td>13.87 / 16.95 / 23.20 GiB</td><td>macOS 进程树 RSS</td></tr>
+              <tr><td>Chrome RSS mean / P95 / max</td><td>0 / 0 / 0 GiB</td><td>10.79 / 13.72 / 19.73 GiB</td><td>远端 Chrome 不在 Lexmount runner 上</td></tr>
+              <tr><td>Host available 最小值</td><td>12.69 GiB</td><td>9.06 GiB</td><td>同一 Mac</td></tr>
+              <tr><td>Rollout 时长</td><td>52.25 min</td><td>36.59 min</td><td>Lexmount 更慢</td></tr>
+              <tr><td>吞吐</td><td>241.2 task/h</td><td>344.3 task/h</td><td>Local +42.8%</td></tr>
+              <tr><td>E2E mean / P50 / P95</td><td>129.83 / 93.72 / 381.50 秒</td><td>96.73 / 62.10 / 271.73 秒</td><td>Local 单任务更快</td></tr>
+              <tr><td>Agent tokens / cost</td><td>26.55M / $119.94</td><td>24.31M / $104.55</td><td>GPT-5.5 API</td></tr>
+              <tr><td>Judge tokens / cost</td><td>1.76M / $7.34</td><td>1.74M / $7.35</td><td>GPT-5.4 API</td></tr>
+              <tr><td>Session 创建失败</td><td>0</td><td>0</td><td>两端均无 session 层创建失败</td></tr>
+              <tr><td>资源护栏触发</td><td>0</td><td>0</td><td>两端均未触发</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <p>
+            GPT-5.5 与 GPT-5.4 均由远端 API 提供。5090 上采到的 GPU 利用率、显存和功耗是整机指标，
+            同时受到其他 workload 污染，仅为指标完整性保留，不能归因于浏览器或模型推理。
+          </p>
+        </div>
+      </section>
+
+      <section id="boundaries">
+        <p class="eyebrow">Decision boundary</p>
+        <h2>下一步该验证什么</h2>
+        <div class="decision-grid">
+          <article>
+            <h3>现在可以用于产品结论</h3>
+            <p>
+              “在 GPT-5.5 × LexBench 的固定配置中，Lexmount 完整 browser backend 提供了更好的站点可达性与端到端结果；
+              优势在偏向 Local 的 5090 failure-only 敏感性分析后仍存在。”
+            </p>
+          </article>
+          <article>
+            <h3>现在不能用于产品结论</h3>
+            <p>
+              “Lexmount 的 Chromium 内核更强”“所有站点都更稳定”“c64 已持续跑满”“Lexmount 服务端总资源低于 Local”。
+            </p>
+          </article>
+          <article>
+            <h3>最小下一轮实验</h3>
+            <p>
+              让两端共享同一出口，记录 UA、browser build、IP/ASN/geo；全量至少两轮交叉顺序；
+              对 discordant 与阈值附近任务重复 Judge；c64 采用预创建并要求稳定 active=64。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="method">
+        <p class="eyebrow">Method and provenance</p>
+        <h2>实验身份、假设与来源</h2>
+        <div class="table-wrap">
+          <table>
+            <caption>固定实验身份</caption>
+            <thead><tr><th>项目</th><th>值</th></tr></thead>
+            <tbody>
+              <tr><td>Dataset</td><td>LexBench-Browser / All / 210；SHA-256 <code>b2e8626...e2f6b90fe</code></td></tr>
+              <tr><td>Agent</td><td>browser-use 0.13.4 / GPT-5.5 / max 40 steps / timeout 600 秒</td></tr>
+              <tr><td>Judge</td><td>GPT-5.4 / per-task threshold stepwise</td></tr>
+              <tr><td>Runner commit</td><td><code>bce2c2a17dc2bcf3062b56df4946230c94426cd6</code></td></tr>
+              <tr><td>原始顺序</td><td>Lexmount 后 Local；并发 10；按 task ID 配对</td></tr>
+              <tr><td>Local 原始机器</td><td>Apple M4 Pro 14 核 / 48 GB / macOS 15.7.3 / Chrome 150</td></tr>
+              <tr><td>Follow-up 机器</td><td>i9-14900K / 32 logical CPUs / 125.6 GiB / Ubuntu 22.04 / Chrome 140 / 2× RTX 5090</td></tr>
+              <tr><td>数据日期</td><td>2026-07-12 至 2026-07-13</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <h3 style="margin-top: 26px">主要限制</h3>
+        <ul>
+          <li>原始 210 条总体结果仍是单次顺序运行；12 条机制复测按机制选样，不能替代全量多轮。</li>
+          <li>Agent 没有固定 seed；Judge temperature 为 1.0 且每条只判一次。</li>
+          <li>5090 只重跑原始 Local failure，132/210 是偏向 Local 的敏感性分析，不是独立总体估计。</li>
+          <li>c10 session sampler 的完整曲线缺失，只保留运行中 API 快照；c64 sampler 有 144 个样本且无采样错误。</li>
+          <li>资源指标跨 macOS RSS、Linux PSS/cgroup 与远端浏览器宿主边界，必须按表中口径阅读。</li>
+        </ul>
+        <h3 style="margin-top: 26px">可核对来源</h3>
+        <ul class="provenance-list">
+          <li><a href="https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/report.md">全量配对与 follow-up Markdown 报告</a></li>
+          <li><a href="https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/metrics.json">原始全量机读指标 metrics.json</a></li>
+          <li><a href="https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/log-audit.md">配对日志与机制复测审计 log-audit.md</a></li>
+          <li><a href="https://github.com/lexmount/LexBrowserEnv/blob/main/results/gpt55-lexbench/20260713/followup.json">5090 与 c10/c64 机读数据 followup.json</a></li>
+        </ul>
+      </section>
+
+      <footer>
+        HDOC/1.0 · 生成于 2026-07-13 · 来源为 LexBrowserEnv 中已提交的实验摘要、逐题审计与资源采样。
+        原始轨迹、截图与日志未嵌入本文件；报告中的具体公网 IP 与任何凭据均被省略。
+      </footer>
+    </main>
+  </body>
+</html>
