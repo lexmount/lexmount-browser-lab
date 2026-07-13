@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "experiment_id": "gpt55-lexbench-overnight-stage3-20260713",
+  "status": "complete",
+  "question": "Is the 64-session Lexmount quota actually attainable, and what is the highest concurrency with complete paired quality, lifecycle, and runner-resource evidence tonight?",
+  "runner": {
+    "repository": "lexmount/browseruse-agent-bench",
+    "commit": "bce2c2a17dc2bcf3062b56df4946230c94426cd6",
+    "browser_use_version": "0.13.4"
+  },
+  "dataset": {
+    "name": "LexBench-Browser",
+    "split": "All",
+    "population_tasks": 210,
+    "sample_tasks": 64,
+    "selection": "deterministic website-region/task-type stratified sample",
+    "language_distribution": {
+      "en": 28,
+      "zh": 36
+    },
+    "task_set_sha256": "8806a9686ed3b2a46f20da479ac07ceb31ee5f452aba5b18b471ae8801650047"
+  },
+  "agent": {
+    "name": "browser-use",
+    "model": "gpt-5.5",
+    "max_steps": 40,
+    "timeout_seconds": 600
+  },
+  "judge": {
+    "model": "gpt-5.4",
+    "method": "per-task threshold stepwise",
+    "synthetic_failures_remaining": 0
+  },
+  "design": {
+    "host": "Ubuntu 22.04 / Intel Core i9-14900K / 125.6 GiB RAM",
+    "local_browser": "Google Chrome 140.0.7339.185",
+    "paired_by_task_id": true,
+    "formal_concurrencies": [16, 32],
+    "orders": [
+      "c16: Lexmount then Local",
+      "c32: Local then Lexmount"
+    ],
+    "bootstrap_samples": 100000,
+    "sustainable_lexmount_requires_observed_target_concurrency": true
+  },
+  "capacity_admission": {
+    "balanced_64": {
+      "requested": "32 EN + 32 ZH",
+      "active_max": 64,
+      "target_sample_count": 35,
+      "success": true
+    },
+    "task_shaped_64": {
+      "requested": "28 EN + 36 ZH",
+      "attempts": 2,
+      "successes": 0,
+      "active_maxima": [49, 46]
+    },
+    "formal_c64_launched": false,
+    "reason": "The task-shaped admission gate failed twice; a named c64 run could misrepresent configured concurrency as observed concurrency."
+  },
+  "runs": {
+    "c16": {
+      "lexmount": "audit-lexmount-c16-20260713T185022Z",
+      "local": "audit-local-c16-20260713T192446Z"
+    },
+    "c32": {
+      "local": "audit-local-c32-20260713T195912Z",
+      "lexmount": "audit-lexmount-c32-20260713T202858Z"
+    },
+    "excluded_launch": "audit-lexmount-c16-20260713T184924Z"
+  },
+  "primary_results": {
+    "formal_boundary": 32,
+    "c16_success": {
+      "lexmount": 45,
+      "local": 38,
+      "lexmount_minus_local": 0.109375,
+      "bootstrap_95_ci": [0.0, 0.21875]
+    },
+    "c32_success": {
+      "lexmount": 40,
+      "local": 41,
+      "lexmount_minus_local": -0.015625,
+      "bootstrap_95_ci": [-0.140625, 0.109375]
+    },
+    "c32_local_over_lexmount": {
+      "throughput": 1.214213,
+      "cpu_cores_mean": 4.04622,
+      "pss_gib_mean": 2.086311,
+      "pss_gib_p95": 2.185212,
+      "memory_peak_kernel_gib": 2.475791
+    }
+  },
+  "resource_scope": {
+    "local": "runner, agent and local Chrome cgroup",
+    "lexmount": "runner and agent controller cgroup; excludes remote browser hosts",
+    "gpu": "collected as shared-host context but excluded from causal interpretation because the model was remote and unrelated GPU workloads were present",
+    "rollout_only": "resource duration and throughput exclude the later sequential Judge"
+  },
+  "files": {
+    "report": "report.html",
+    "report_sha256": "29d2168273ff7d14986b1f0279ce14360efc20bb01765e2914cfdeda46b7e6ae",
+    "helm_document_id": "gpt55-lexbench-stage3-capacity-2026-07-14",
+    "capacity_matrix": "capacity-matrix.json",
+    "self_audit": "self-audit.json",
+    "launch_recovery": "launch-recovery.json",
+    "formal_arm_summaries": "arms/",
+    "raw_session_probes": "raw-capacity/"
+  }
+}

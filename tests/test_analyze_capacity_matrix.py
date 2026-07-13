@@ -59,7 +59,7 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
         32: {
             "residual_ok": True,
             "errors": [],
-            "active_sessions": {"total": {"max": 31}},
+            "active_sessions": {"total": {"max": 32}},
         },
     }
 
@@ -97,6 +97,30 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
         "lexmount": 3,
         "local": 1,
     }
+    assert result["backend_resource_comparison"]["16"] == {
+        "throughput_ratio_local_over_lexmount": 0.8,
+        "resource_ratio_local_over_lexmount": {
+            "cpu_cores_mean": 1.0,
+            "pss_gib_mean": 1.0,
+            "pss_gib_p95": 1.0,
+            "chrome_pss_gib_mean": 1.0,
+            "chrome_pss_gib_p95": 1.0,
+            "memory_current_gib_p95": 1.0,
+            "memory_peak_kernel_gib": 1.0,
+        },
+    }
+    assert result["backend_resource_comparison"]["32"] == {
+        "throughput_ratio_local_over_lexmount": 0.75,
+        "resource_ratio_local_over_lexmount": {
+            "cpu_cores_mean": 0.75,
+            "pss_gib_mean": 0.75,
+            "pss_gib_p95": 0.75,
+            "chrome_pss_gib_mean": 0.75,
+            "chrome_pss_gib_p95": 0.75,
+            "memory_current_gib_p95": 0.75,
+            "memory_peak_kernel_gib": 0.75,
+        },
+    }
     assert result["within_backend_scaling"]["c16_to_c32"]["throughput_ratio"] == {
         "lexmount": 1.6,
         "local": 1.5,
@@ -123,7 +147,7 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
     }
     assert result["sustainable"]["32"] == {"lexmount": True, "local": True}
     assert result["arms"]["32"]["lexmount_session_monitor"]["active_sessions"] == {
-        "total": {"max": 31}
+        "total": {"max": 32}
     }
     assert result["raw_session_probes"]["balanced64"]["active_sessions"] == {"total": {"max": 64}}
     assert result["raw_session_probes"]["balanced64"]["profile_results"]["en"] == {
@@ -153,3 +177,33 @@ def test_analyze_capacity_matrix_marks_guarded_arm_unsustainable() -> None:
     result = analyze_capacity_matrix(lexmount, local, bootstrap_samples=10)
 
     assert result["sustainable"]["16"]["local"] is False
+
+
+def test_analyze_capacity_matrix_requires_observed_lexmount_concurrency() -> None:
+    lexmount = {16: summary([1, 0], throughput=100)}
+    local = {16: summary([1, 0], throughput=100)}
+    sessions = {
+        16: {
+            "residual_ok": True,
+            "errors": [],
+            "active_sessions": {"total": {"max": 15}},
+        }
+    }
+
+    result = analyze_capacity_matrix(
+        lexmount,
+        local,
+        lexmount_sessions=sessions,
+        bootstrap_samples=10,
+    )
+
+    assert result["sustainable"]["16"]["lexmount"] is False
+
+
+def test_analyze_capacity_matrix_requires_lexmount_session_monitor() -> None:
+    lexmount = {16: summary([1, 0], throughput=100)}
+    local = {16: summary([1, 0], throughput=100)}
+
+    result = analyze_capacity_matrix(lexmount, local, bootstrap_samples=10)
+
+    assert result["sustainable"]["16"]["lexmount"] is False

@@ -85,7 +85,12 @@ def _compact_probe(probe: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _sustainable(summary: dict[str, Any], monitor: dict[str, Any] | None) -> bool:
+def _sustainable(
+    summary: dict[str, Any],
+    monitor: dict[str, Any] | None,
+    *,
+    expected_concurrency: int | None = None,
+) -> bool:
     counts = summary.get("counts") or {}
     resources = summary.get("resource_summary") or {}
     complete = (
@@ -99,11 +104,22 @@ def _sustainable(summary: dict[str, Any], monitor: dict[str, Any] | None) -> boo
     monitor_ok = monitor is None or (
         monitor.get("residual_ok") is True and not (monitor.get("errors") or [])
     )
+    observed_max = (
+        _nested_number(monitor, "active_sessions", "total", "max")
+        if monitor is not None
+        else None
+    )
+    observed_target = expected_concurrency is None or (
+        monitor is not None
+        and observed_max is not None
+        and observed_max >= expected_concurrency
+    )
     return bool(
         complete
         and no_session_create_failures
         and resources.get("guard_triggered") is None
         and monitor_ok
+        and observed_target
     )
 
 
@@ -200,6 +216,7 @@ def analyze_capacity_matrix(
 
     arms: dict[str, Any] = {}
     paired_backend_quality: dict[str, Any] = {}
+    backend_resource_comparison: dict[str, Any] = {}
     sustainability: dict[str, Any] = {}
     for concurrency in concurrencies:
         monitor = (lexmount_sessions or {}).get(concurrency)
@@ -217,8 +234,22 @@ def analyze_capacity_matrix(
             local_runs[concurrency],
             bootstrap_samples=bootstrap_samples,
         )
+        backend_resource_comparison[str(concurrency)] = {
+            "throughput_ratio_local_over_lexmount": round(
+                local_runs[concurrency]["throughput_task_per_hour"]
+                / lexmount_runs[concurrency]["throughput_task_per_hour"],
+                6,
+            ),
+            "resource_ratio_local_over_lexmount": _resource_ratio(
+                local_runs[concurrency], lexmount_runs[concurrency]
+            ),
+        }
         sustainability[str(concurrency)] = {
-            "lexmount": _sustainable(lexmount_runs[concurrency], monitor),
+            "lexmount": _sustainable(
+                lexmount_runs[concurrency],
+                monitor,
+                expected_concurrency=concurrency,
+            ),
             "local": _sustainable(local_runs[concurrency], None),
         }
 
@@ -264,6 +295,7 @@ def analyze_capacity_matrix(
         "concurrencies": concurrencies,
         "arms": arms,
         "paired_backend_quality": paired_backend_quality,
+        "backend_resource_comparison": backend_resource_comparison,
         "within_backend_scaling": scaling,
         "sustainable": sustainability,
     }
