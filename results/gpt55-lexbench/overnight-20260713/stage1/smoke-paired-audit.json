@@ -1,0 +1,466 @@
+{
+  "schema_version": 1,
+  "paired_tasks": 16,
+  "outcomes": {
+    "both_success": 5,
+    "lexmount_only": 6,
+    "both_failed": 4,
+    "local_only": 1
+  },
+  "discordant_tasks": 7,
+  "loser_evidence_buckets": {
+    "lexmount_only": {
+      "site_or_access_environment": 5,
+      "mixed": 1
+    },
+    "local_only": {
+      "mixed": 1
+    }
+  },
+  "loser_primary_failure_categories": {
+    "lexmount_only": {
+      "E3": 1,
+      "E1": 4,
+      "E2": 1
+    },
+    "local_only": {
+      "M1": 1
+    }
+  },
+  "judge_sensitivity_flags": {
+    "near_threshold_loser": 0,
+    "high_answer_similarity": 0,
+    "both": 0
+  },
+  "top_targets": {
+    "lexmount_only": {
+      "www.bestbuy.com": 1,
+      "www.baidu.com": 1,
+      "www.cqvip.com": 1,
+      "movie.douban.com + imdb.com": 1,
+      "mod.3dmgame.com": 1,
+      "www.douban.com": 1
+    },
+    "local_only": {
+      "finance.ifeng.com + tech.ifeng.com": 1
+    }
+  },
+  "discordant": [
+    {
+      "task_id": "77",
+      "outcome": "lexmount_only",
+      "query": "Search for \"4K TV\" on Best Buy, filter by screen size 55-65 inches and brand Samsung or LG, sort by customer reviews, and find the top 3 TVs with their model names, prices, screen sizes, and average ratings.",
+      "target_website": "www.bestbuy.com",
+      "domain": "education_research",
+      "language": "en",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 60,
+      "answer_similarity": 0.0588,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 92,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 12,
+        "e2e_seconds": 124.43,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 882,
+        "answer_sha256": "d803d7f29c4aa84961f3695f04affbfcfbae089fe0591ea883628bcda4e422e5"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 10,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 30,
+        "e2e_seconds": 353.692,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": true,
+          "unhandled_error": false
+        },
+        "failure_category": "E3",
+        "failure_codes": [
+          "E3"
+        ],
+        "raw_log_indicators": [
+          "network_navigation"
+        ],
+        "answer_length": 624,
+        "answer_sha256": "cdd37115baf5905cc5ab8dc596443a3fcabc5ff4adee8695cc661e1465ac7dff"
+      }
+    },
+    {
+      "task_id": "122",
+      "outcome": "lexmount_only",
+      "query": "使用百度搜索\"新能源汽车补贴政策2024\"，找到政府官方网站的政策文件，记录补贴标准、申请条件、有效期限和申请流程的关键信息。",
+      "target_website": "www.baidu.com",
+      "domain": "education_research",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.0543,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 70,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 8,
+        "e2e_seconds": 98.991,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 1691,
+        "answer_sha256": "ad0d912e06141eb03b70f8f4a982c09dfc2ff95b6c33de023ab8eb9bafb541b9"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 4,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 6,
+        "e2e_seconds": 54.255,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "raw_log_indicators": [
+          "captcha_or_bot"
+        ],
+        "answer_length": 219,
+        "answer_sha256": "4609a8d95997d8920c5e0d39ee6e524d9d295a9d7a08e88bcef93c70fb7393a7"
+      }
+    },
+    {
+      "task_id": "172",
+      "outcome": "lexmount_only",
+      "query": "在维普网搜索主题为\"碳达峰碳中和\"的期刊论文，筛选核心期刊、2023-2024年发表的论文，按被引频次排序，找出前5篇论文的标题、作者、期刊名、发表年份和被引频次。",
+      "target_website": "www.cqvip.com",
+      "domain": "commerce",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 65,
+      "answer_similarity": 0.0962,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 75,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 27,
+        "e2e_seconds": 299.042,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 756,
+        "answer_sha256": "890361765af5e400af4acf52a5748d9220e4ccce9590eacd23f4f0e34e400ec6"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 6,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 23,
+        "e2e_seconds": 210.24,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "raw_log_indicators": [],
+        "answer_length": 406,
+        "answer_sha256": "327a428bb1614f8d41c793ee14888dcb057b1fbb829a16e7315018b0efd38f60"
+      }
+    },
+    {
+      "task_id": "217",
+      "outcome": "lexmount_only",
+      "query": "对比电影《奥本海默》的中外口碑差异，在豆瓣电影和IMDb分别搜索\"奥本海默\"和\"Oppenheimer\"，记录两个平台的评分（豆瓣评分和IMDb评分），并各提取一条置顶或热门的短评内容，对比中外观众的评价差异。",
+      "target_website": "movie.douban.com + imdb.com",
+      "domain": "media_entertainment",
+      "language": "zh",
+      "website_region": "en",
+      "task_type": "T1",
+      "difficulty": "medium",
+      "score_threshold": 70,
+      "answer_similarity": 0.2186,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 92,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 11,
+        "e2e_seconds": 94.96,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 961,
+        "answer_sha256": "677f8019da41c5f15169666f40ec98010a15fe1f45caa27cb2e220a90b0d77da"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 55,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 31,
+        "e2e_seconds": 196.536,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1"
+        ],
+        "raw_log_indicators": [
+          "http_access_denied"
+        ],
+        "answer_length": 774,
+        "answer_sha256": "33bdaa44ad83593aed8306ab032f5797dd3e10159e690dba644c623672f4e152"
+      }
+    },
+    {
+      "task_id": "292",
+      "outcome": "local_only",
+      "query": "在凤凰网首页分别进入财经频道和科技频道，各记录当前头条文章的标题、发布时间和来源，并对比两个频道的报道内容和角度有何不同。",
+      "target_website": "finance.ifeng.com + tech.ifeng.com",
+      "domain": "education_research",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "medium",
+      "score_threshold": 65,
+      "answer_similarity": 0.0031,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": false,
+        "judge_score": 20,
+        "agent_done": "error",
+        "agent_success": null,
+        "env_status": "failed",
+        "steps": 2,
+        "e2e_seconds": 225.368,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": true
+        },
+        "failure_category": "M1",
+        "failure_codes": [
+          "M1"
+        ],
+        "raw_log_indicators": [],
+        "answer_length": 83,
+        "answer_sha256": "9db03db940d876b7f8b9f3d1297d7735445de1abd47513d208e64255aaea2b14"
+      },
+      "local": {
+        "success": true,
+        "judge_score": 80,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 13,
+        "e2e_seconds": 87.559,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 633,
+        "answer_sha256": "288627e340548a24dd6ad601fdf6bd6b7010b8d58ed8330379ed5647f5080877"
+      }
+    },
+    {
+      "task_id": "3008",
+      "outcome": "lexmount_only",
+      "query": "Search for MODs on 3DM Mod站 for 10 popular games: (1) Elden Ring (艾尔登法环), (2) The Witcher 3 (巫师3), (3) Cyberpunk 2077 (赛博朋克2077), (4) Baldur's Gate 3 (博德之门3), (5) Starfield (星空), (6) Red Dead Redemption 2 (荒野大镖客2), (7) Grand Theft Auto V (侠盗猎车手5), (8) Fallout 4 (辐射4), (9) Skyrim (上古卷轴5), (10) Monster Hunter World (怪物猎人世界). For each game, search for MODs sorted by download count. After searching all 10 games, confirm that you have completed the search task.",
+      "target_website": "mod.3dmgame.com",
+      "domain": "gaming",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.0567,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "site_or_access_environment",
+      "lexmount": {
+        "success": true,
+        "judge_score": 90,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 15,
+        "e2e_seconds": 116.786,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 207,
+        "answer_sha256": "a5e14502f7f745e1dc8f5dd7b6249a5fc6242a60ea3f7c07514d8d50d5cd2e9e"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 0,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 7,
+        "e2e_seconds": 57.5,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E1",
+        "failure_codes": [
+          "E1",
+          "E3"
+        ],
+        "raw_log_indicators": [
+          "http_access_denied"
+        ],
+        "answer_length": 767,
+        "answer_sha256": "f28f421091d972a8b0cd5a6550144b75586698e06439ae4da9e6fba6c451bd2d"
+      }
+    },
+    {
+      "task_id": "3022",
+      "outcome": "lexmount_only",
+      "query": "Get the detailed information and 100 reviews for the music album \"范特西\" (Fantasy) by 周杰伦 (Jay Chou) on Douban. The album URL is exactly: https://music.douban.com/subject/1403307/. Collect at least 100 reviews from the album. Save all the collected data to JSON files.",
+      "target_website": "www.douban.com",
+      "domain": "media_entertainment",
+      "language": "zh",
+      "website_region": "zh",
+      "task_type": "T1",
+      "difficulty": "easy",
+      "score_threshold": 70,
+      "answer_similarity": 0.3694,
+      "near_threshold_loser": false,
+      "high_answer_similarity": false,
+      "evidence_bucket": "mixed",
+      "lexmount": {
+        "success": true,
+        "judge_score": 81,
+        "agent_done": "done",
+        "agent_success": true,
+        "env_status": "success",
+        "steps": 19,
+        "e2e_seconds": 251.678,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": null,
+        "failure_codes": [],
+        "raw_log_indicators": [],
+        "answer_length": 4719,
+        "answer_sha256": "af792b7fcfa3a1373448579dcfff69e663df91a53c01adc24bcf98f5b7d3c335"
+      },
+      "local": {
+        "success": false,
+        "judge_score": 50,
+        "agent_done": "done",
+        "agent_success": false,
+        "env_status": "success",
+        "steps": 36,
+        "e2e_seconds": 413.197,
+        "signals": {
+          "timeout": false,
+          "session_create": false,
+          "network_navigation": false,
+          "unhandled_error": false
+        },
+        "failure_category": "E2",
+        "failure_codes": [
+          "E2",
+          "M3"
+        ],
+        "raw_log_indicators": [],
+        "answer_length": 8975,
+        "answer_sha256": "467b631c5f1b4ee74589c04ab57252410b4a75adeb4d282fa42dac3d33beae3c"
+      }
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "purpose": "diagnostic crossover set; not a population success-rate sample",
+  "source_repetitions": [
+    "pair-a-local-first",
+    "pair-b-lexmount-first"
+  ],
+  "outcome_codes": {
+    "B": "both backends succeeded",
+    "F": "both backends failed",
+    "X": "Lexmount-only success",
+    "L": "Local-only success"
+  },
+  "selection": {
+    "stable_lexmount_only": [
+      {"task_id": "45", "pair_outcomes": "XX", "language": "en"},
+      {"task_id": "52", "pair_outcomes": "XX", "language": "zh"},
+      {"task_id": "159", "pair_outcomes": "XX", "language": "en"},
+      {"task_id": "217", "pair_outcomes": "XX", "language": "zh"},
+      {"task_id": "3008", "pair_outcomes": "XX", "language": "zh"}
+    ],
+    "stable_local_only": [
+      {"task_id": "125", "pair_outcomes": "LL", "language": "en"},
+      {"task_id": "155", "pair_outcomes": "LL", "language": "en"},
+      {"task_id": "292", "pair_outcomes": "LL", "language": "zh"},
+      {"task_id": "3022", "pair_outcomes": "LL", "language": "zh"}
+    ],
+    "direction_flip": [
+      {"task_id": "17", "pair_outcomes": "LX", "language": "en"},
+      {"task_id": "236", "pair_outcomes": "LX", "language": "zh"},
+      {"task_id": "2012", "pair_outcomes": "XL", "language": "zh"}
+    ],
+    "partial_flip": [
+      {"task_id": "77", "pair_outcomes": "BX", "language": "en"},
+      {"task_id": "105", "pair_outcomes": "BL", "language": "en"},
+      {"task_id": "122", "pair_outcomes": "LB", "language": "zh"},
+      {"task_id": "172", "pair_outcomes": "XF", "language": "zh"}
+    ]
+  },
+  "coverage": {
+    "tasks": 16,
+    "en": 7,
+    "zh": 9,
+    "T1": 15,
+    "T2": 1
+  },
+  "execution_order": {
+    "seed": "gpt55-overnight-stage2-v1",
+    "method": "ascending SHA-256(seed:task_id)",
+    "task_ids": [
+      "172", "52", "125", "45", "3008", "2012", "159", "105",
+      "155", "217", "292", "17", "236", "122", "77", "3022"
+    ]
+  }
+}
