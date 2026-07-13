@@ -45,6 +45,9 @@
   },
   "files": {
     "report": "report.md",
-    "metrics": "metrics.json"
+    "metrics": "metrics.json",
+    "causal_audit": "log-audit.md",
+    "paired_log_audit": "paired-log-audit.json",
+    "mechanism_replays": "mechanism12-replays.json"
   }
 }
