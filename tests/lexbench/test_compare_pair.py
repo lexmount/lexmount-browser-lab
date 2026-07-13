@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.compare_pair import compare_pair
+from lexbrowser_eval.lexbench.compare_pair import compare_pair
 
 
 def test_compare_pair_builds_paired_table() -> None:
