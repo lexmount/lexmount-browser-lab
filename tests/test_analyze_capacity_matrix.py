@@ -49,6 +49,28 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
         lexmount,
         local,
         lexmount_sessions=sessions,
+        probes={
+            "balanced64": {
+                "requested": {"en": 32, "zh": 32},
+                "requested_total": 64,
+                "target_observed": True,
+                "active_sessions": {"total": {"max": 64}},
+                "residual_active_sessions": {"total": 0},
+                "residual_ok": True,
+                "monitor_errors": [],
+                "profile_results": {
+                    profile: {
+                        "requested": 32,
+                        "created": 32,
+                        "failed": 0,
+                        "cleanup_errors": [],
+                        "success": True,
+                    }
+                    for profile in ("en", "zh")
+                },
+                "success": True,
+            }
+        },
         bootstrap_samples=100,
     )
 
@@ -64,6 +86,17 @@ def test_analyze_capacity_matrix_compares_backends_and_scaling() -> None:
     assert result["sustainable"]["32"] == {"lexmount": True, "local": True}
     assert result["arms"]["32"]["lexmount_session_monitor"]["active_sessions"] == {
         "total": {"max": 31}
+    }
+    assert result["raw_session_probes"]["balanced64"]["active_sessions"] == {"total": {"max": 64}}
+    assert result["raw_session_probes"]["balanced64"]["profile_results"]["en"] == {
+        "requested": 32,
+        "created": 32,
+        "failed": 0,
+        "late_sessions_cleaned": None,
+        "remaining_new_session_ids": None,
+        "cleanup_error_count": 0,
+        "create_seconds": None,
+        "success": True,
     }
 
 

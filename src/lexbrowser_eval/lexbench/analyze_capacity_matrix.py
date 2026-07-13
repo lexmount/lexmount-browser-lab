@@ -50,6 +50,41 @@ def _compact_session_monitor(monitor: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compact_probe(probe: dict[str, Any]) -> dict[str, Any]:
+    profile_results = probe.get("profile_results")
+    compact_profiles = None
+    if isinstance(profile_results, dict):
+        compact_profiles = {
+            profile: {
+                "requested": result.get("requested"),
+                "created": result.get("created"),
+                "failed": result.get("failed"),
+                "late_sessions_cleaned": result.get("late_sessions_cleaned"),
+                "remaining_new_session_ids": result.get("remaining_new_session_ids"),
+                "cleanup_error_count": len(result.get("cleanup_errors") or []),
+                "create_seconds": result.get("create_seconds"),
+                "success": result.get("success"),
+            }
+            for profile, result in profile_results.items()
+        }
+    return {
+        "profile": probe.get("profile"),
+        "requested": probe.get("requested"),
+        "requested_total": probe.get("requested_total"),
+        "created": probe.get("created"),
+        "failed": probe.get("failed"),
+        "create_seconds": probe.get("create_seconds"),
+        "active_sessions": probe.get("active_sessions"),
+        "target_observed": probe.get("target_observed"),
+        "profile_results": compact_profiles,
+        "residual_active_sessions": probe.get("residual_active_sessions"),
+        "residual_ok": probe.get("residual_ok"),
+        "monitor_error_count": len(probe.get("monitor_errors") or []),
+        "cleanup_error_count": len(probe.get("cleanup_errors") or []),
+        "success": probe.get("success"),
+    }
+
+
 def _sustainable(summary: dict[str, Any], monitor: dict[str, Any] | None) -> bool:
     counts = summary.get("counts") or {}
     resources = summary.get("resource_summary") or {}
@@ -112,6 +147,7 @@ def analyze_capacity_matrix(
     local_runs: dict[int, dict[str, Any]],
     *,
     lexmount_sessions: dict[int, dict[str, Any]] | None = None,
+    probes: dict[str, dict[str, Any]] | None = None,
     bootstrap_samples: int = 100_000,
 ) -> dict[str, Any]:
     if not lexmount_runs or set(lexmount_runs) != set(local_runs):
@@ -184,7 +220,7 @@ def analyze_capacity_matrix(
             },
         }
 
-    return {
+    result = {
         "schema_version": 1,
         "task_count": len(reference_ids),
         "same_task_set": True,
@@ -194,6 +230,11 @@ def analyze_capacity_matrix(
         "within_backend_scaling": scaling,
         "sustainable": sustainability,
     }
+    if probes:
+        result["raw_session_probes"] = {
+            label: _compact_probe(probe) for label, probe in sorted(probes.items())
+        }
+    return result
 
 
 def _parse_paths(values: list[str], argument: str) -> dict[int, Path]:
@@ -216,11 +257,28 @@ def _load_paths(paths: dict[int, Path]) -> dict[int, dict[str, Any]]:
     }
 
 
+def _parse_named_paths(values: list[str], argument: str) -> dict[str, Path]:
+    output: dict[str, Path] = {}
+    for value in values:
+        label, separator, raw_path = value.partition("=")
+        if not separator or not label or not raw_path:
+            raise ValueError(f"{argument}: expected LABEL=PATH")
+        if label in output:
+            raise ValueError(f"{argument}: duplicate label {label}")
+        output[label] = Path(raw_path)
+    return output
+
+
+def _load_named_paths(paths: dict[str, Path]) -> dict[str, dict[str, Any]]:
+    return {label: json.loads(path.read_text(encoding="utf-8")) for label, path in paths.items()}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze a paired browser capacity matrix")
     parser.add_argument("--lexmount", action="append", required=True, metavar="N=PATH")
     parser.add_argument("--local", action="append", required=True, metavar="N=PATH")
     parser.add_argument("--lexmount-session", action="append", default=[], metavar="N=PATH")
+    parser.add_argument("--probe", action="append", default=[], metavar="LABEL=PATH")
     parser.add_argument("--bootstrap-samples", type=int, default=100_000)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -229,6 +287,7 @@ def main() -> int:
         _load_paths(_parse_paths(args.lexmount, "--lexmount")),
         _load_paths(_parse_paths(args.local, "--local")),
         lexmount_sessions=_load_paths(_parse_paths(args.lexmount_session, "--lexmount-session")),
+        probes=_load_named_paths(_parse_named_paths(args.probe, "--probe")),
         bootstrap_samples=args.bootstrap_samples,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
