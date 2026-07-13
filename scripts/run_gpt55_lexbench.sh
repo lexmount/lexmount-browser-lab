@@ -122,6 +122,11 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   PROFILER_ARGS=(--min-host-available-gib 6)
   MACHINE_ID=${MACHINE_ID:-macos-${BACKEND}}
 else
+  USER_RUNTIME_DIR="/run/user/$(id -u)"
+  export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-$USER_RUNTIME_DIR}
+  if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "$USER_RUNTIME_DIR/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_RUNTIME_DIR/bus"
+  fi
   PROFILER_MODULE="lexbrowser_eval.resources.cgroup_profiler"
   PROFILER_ARGS=()
   MACHINE_ID=${MACHINE_ID:-linux-${BACKEND}}
