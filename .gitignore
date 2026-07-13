@@ -1,5 +1,6 @@
 .DS_Store
 .env
+secrets.env
 .venv/
 __pycache__/
 .pytest_cache/
@@ -13,3 +14,9 @@ dist/
 artifacts/
 results/**/raw/
 results/**/samples.csv
+
+# NeMo RL / NeMo Gym runtime products.
+training/data/
+training/.cache/
+logs/lexbrowser-grpo/
+results/lexbrowser-grpo/

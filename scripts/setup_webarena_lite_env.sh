@@ -7,11 +7,15 @@ SETUP_REPO="${ROOT}/webarena-setup"
 SETUP_DIR="${SETUP_REPO}/webarena"
 ARCHIVES="${ROOT}/webarena_archives"
 ENV_DIR="${ROOT}/webarena_env"
+CACHE_DIR="${ROOT}/webarena_cache"
 DOCKER_DIR="${ROOT}/webarena_docker"
 DOCKER_SOCK="${DOCKER_DIR}/docker.sock"
 CONTAINERD_DIR="${ROOT}/webarena_containerd"
 CONTAINERD_SOCK="${CONTAINERD_DIR}/containerd.sock"
 export DOCKER_HOST="unix://${DOCKER_SOCK}"
+export PIP_CACHE_DIR="${CACHE_DIR}/pip"
+export TMPDIR="${CACHE_DIR}/tmp"
+export XDG_CACHE_HOME="${CACHE_DIR}/xdg"
 
 SHOPPING_PORT="${SHOPPING_PORT:-7770}"
 SHOPPING_ADMIN_PORT="${SHOPPING_ADMIN_PORT:-7780}"
@@ -140,6 +144,7 @@ SHOPPING_ADMIN=http://${SERVER}:${SHOPPING_ADMIN_PORT}/admin
 REDDIT=http://${SERVER}:${REDDIT_PORT}
 GITLAB=http://${SERVER}:${GITLAB_PORT}
 MAP=http://${SERVER}:${MAP_PORT}
+MAP_TILE=http://${SERVER}:8080/tile/10/284/385.png
 WIKIPEDIA=http://${SERVER}:${WIKIPEDIA_PORT}/wikipedia_en_all_maxi_2022-05/A/User:The_other_Kiwix_guy/Landing
 HOMEPAGE=http://${SERVER}:${HOMEPAGE_PORT}
 CLASSIFIEDS=http://${SERVER}:9980
@@ -239,10 +244,61 @@ create_start_patch() {
   export OSTYPE="${OSTYPE:-linux-gnu}"
   bash 03_docker_create_containers.sh
   bash 04_docker_start_containers.sh
-  bash 05_docker_patch_containers.sh
+
+  wait_for_http SHOPPING "http://${SERVER}:${SHOPPING_PORT}" 120
+  wait_for_http SHOPPING_ADMIN "http://${SERVER}:${SHOPPING_ADMIN_PORT}/admin" 120
+
+  local attempt
+  for attempt in $(seq 1 6); do
+    if bash 05_docker_patch_containers.sh; then
+      break
+    fi
+    if [[ "${attempt}" == 6 ]]; then
+      log "container patching failed after ${attempt} attempts"
+      return 1
+    fi
+    log "container patching attempt ${attempt} failed; retrying in 20 seconds"
+    sleep 20
+  done
+
+  configure_magento
+}
+
+wait_for_http() {
+  local name="$1" url="$2" attempts="${3:-60}" code attempt
+  for attempt in $(seq 1 "${attempts}"); do
+    code=$(curl -sS -o /dev/null --connect-timeout 2 --max-time 10 -w '%{http_code}' "${url}" || true)
+    if [[ "${code}" =~ ^[23][0-9][0-9]$ ]]; then
+      log "${name} is ready (${code})"
+      return
+    fi
+    sleep 5
+  done
+  log "${name} did not become ready: ${url}"
+  return 1
+}
+
+configure_magento() {
+  log "configuring Magento base URLs"
+  docker exec shopping /var/www/magento2/bin/magento setup:store-config:set \
+    --base-url="http://${SERVER}:${SHOPPING_PORT}"
+  docker exec shopping mysql -u magentouser -pMyPassword magentodb -e \
+    "UPDATE core_config_data SET value='http://${SERVER}:${SHOPPING_PORT}/' WHERE path IN ('web/unsecure/base_url','web/secure/base_url');"
+  docker exec shopping /var/www/magento2/bin/magento cache:flush
+
+  docker exec shopping_admin php /var/www/magento2/bin/magento config:set \
+    admin/security/password_is_forced 0
+  docker exec shopping_admin php /var/www/magento2/bin/magento config:set \
+    admin/security/password_lifetime 0
+  docker exec shopping_admin /var/www/magento2/bin/magento setup:store-config:set \
+    --base-url="http://${SERVER}:${SHOPPING_ADMIN_PORT}"
+  docker exec shopping_admin mysql -u magentouser -pMyPassword magentodb -e \
+    "UPDATE core_config_data SET value='http://${SERVER}:${SHOPPING_ADMIN_PORT}/' WHERE path IN ('web/unsecure/base_url','web/secure/base_url');"
+  docker exec shopping_admin /var/www/magento2/bin/magento cache:flush
 }
 
 serve_homepage() {
+  mkdir -p "${PIP_CACHE_DIR}" "${TMPDIR}" "${XDG_CACHE_HOME}"
   cd "${SETUP_DIR}"
   python3 -m venv homepage-venv
   homepage-venv/bin/pip install -q flask
@@ -266,6 +322,7 @@ health_check() {
     "REDDIT http://${SERVER}:${REDDIT_PORT}"
     "GITLAB http://${SERVER}:${GITLAB_PORT}/explore"
     "MAP http://${SERVER}:${MAP_PORT}"
+    "MAP_TILE http://${SERVER}:8080/tile/10/284/385.png"
     "WIKIPEDIA http://${SERVER}:${WIKIPEDIA_PORT}/wikipedia_en_all_maxi_2022-05/A/User:The_other_Kiwix_guy/Landing"
     "HOMEPAGE http://${SERVER}:${HOMEPAGE_PORT}"
   )

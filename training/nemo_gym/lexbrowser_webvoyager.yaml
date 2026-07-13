@@ -1,0 +1,31 @@
+lexbrowser_webvoyager:
+  responses_api_agents:
+    verifiers_agent:
+      entrypoint: app.py
+      domain: agent
+      description: WebVoyager-no-anti-bot with Lexmount Browser as the Chrome/CDP backend.
+      value: Train browser navigation with the upstream BrowserEnv task and reward contract.
+      model_server:
+        type: responses_api_models
+        name: policy_model
+      # API alias only: vLLM serves Qwen3-1.7B under this legacy OpenAI name so
+      # Stagehand uses Chat Completions instead of the unsupported Responses API.
+      model_name: gpt-4o
+      vf_env_id: lexbrowser-webvoyager-no-anti-bot
+      vf_env_args:
+        mode: dom
+        max_turns: 100
+        judge_model: glm-5.2
+        stagehand_model: openai/glm-5.2
+        policy_model: gpt-4o
+        proxy_model_to_stagehand: true
+        browser_mode: normal
+        official_proxy: false
+        max_concurrent_sessions: 20
+        stagehand_ready_timeout_s: 90.0
+      group_size: 1
+      max_concurrent_generation: 20
+      max_concurrent_scoring: 20
+      max_tokens: 1024
+      temperature: 1.0
+      top_p: 1.0

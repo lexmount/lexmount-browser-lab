@@ -2,12 +2,12 @@
 """
 One-command runner for glm-5.2 on VAB-WebArena-Lite.
 
-Expected external usage:
+Expected external usage from /data/wf/sxh:
 
     export OPENAI_API_KEY=...
     export OPENAI_BASE_URL=https://litellm.local.lexmount.net/v1
     export OPENAI_MODEL=glm-5.2
-    ./scripts/run_webarena_lite.sh --env-file /path/to/eval.env --backend playwright
+    python run_webarena_lite.py
 
 The script bootstraps the VAB-WebArena-Lite harness, prepares the Python
 environment, generates task configs, refreshes login cookies, runs the WebRL
@@ -16,6 +16,7 @@ text-mode benchmark, scores it, and writes a compact report.
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
@@ -42,6 +43,7 @@ SITE_ENV_KEYS = {
     "REDDIT",
     "GITLAB",
     "MAP",
+    "MAP_TILE",
     "WIKIPEDIA",
     "HOMEPAGE",
     "CLASSIFIEDS",
@@ -49,6 +51,19 @@ SITE_ENV_KEYS = {
 }
 WEBRL_ACTION_LOOKUP = 'action_type = action["action"].lower()'
 WEBRL_SAFE_ACTION_LOOKUP = 'action_type = str(action.get("action", "")).lower()'
+AUTO_LOGIN_PAGE = "    page = context.new_page()"
+AUTO_LOGIN_TIMEOUT_BLOCK = (
+    f"{AUTO_LOGIN_PAGE}\n"
+    "    page.set_default_timeout(120_000)\n"
+    "    page.set_default_navigation_timeout(120_000)"
+)
+REQUIRED_AUTH_COMBINATIONS = (
+    ("gitlab",),
+    ("reddit",),
+    ("shopping_admin",),
+    ("shopping",),
+    ("gitlab", "reddit"),
+)
 RUNTIME_REQUIREMENTS = (
     "lxml==4.9.3",
     "dashscope==1.14.1",
@@ -181,6 +196,8 @@ def environ_with_site_env(runtime_root: pathlib.Path, environ: Mapping[str, str]
     merged = dict(environ)
     file_values = parse_site_env(runtime_root / "webarena_env" / "site_env.sh")
     for key, value in file_values.items():
+        if merged.get("WEBARENA_SERVER") and key != "CLASSIFIEDS_RESET_TOKEN":
+            continue
         if not merged.get(key):
             merged[key] = value
     return merged
@@ -196,6 +213,7 @@ def build_harness_env(
     model = require_env(environ, "OPENAI_MODEL")
     map_host = map_server or server
 
+    map_url = site_url(environ, "MAP", f"http://{map_host}:3000")
     env = dict(os.environ)
     env.update(
         {
@@ -215,7 +233,12 @@ def build_harness_env(
             "SHOPPING_ADMIN": site_url(environ, "SHOPPING_ADMIN", f"http://{server}:7780/admin"),
             "REDDIT": site_url(environ, "REDDIT", f"http://{server}:9999"),
             "GITLAB": site_url(environ, "GITLAB", f"http://{server}:8023"),
-            "MAP": site_url(environ, "MAP", f"http://{map_host}:3000"),
+            "MAP": map_url,
+            "MAP_TILE": site_url(
+                environ,
+                "MAP_TILE",
+                f"{normalize_base_url(map_url)}/tile/10/284/385.png",
+            ),
             "WIKIPEDIA": site_url(environ, "WIKIPEDIA", f"http://{server}:8888/{WIKI_PATH}"),
             "HOMEPAGE": site_url(environ, "HOMEPAGE", f"http://{server}:4399"),
         }
@@ -296,6 +319,47 @@ def patch_webrl_action_parser(harness_dir: pathlib.Path) -> None:
     )
 
 
+def patch_auto_login_timeout(harness_dir: pathlib.Path) -> None:
+    auto_login_path = harness_dir / "browser_env" / "auto_login.py"
+    source = auto_login_path.read_text(encoding="utf-8")
+    if AUTO_LOGIN_TIMEOUT_BLOCK in source:
+        return
+    page_count = source.count(AUTO_LOGIN_PAGE)
+    if page_count != 2:
+        die(f"Expected two login page initializers in {auto_login_path}, found {page_count}")
+    auto_login_path.write_text(
+        source.replace(AUTO_LOGIN_PAGE, AUTO_LOGIN_TIMEOUT_BLOCK),
+        encoding="utf-8",
+    )
+
+
+def runtime_dependencies_ready(
+    python_bin: pathlib.Path, runtime_env: Mapping[str, str]
+) -> bool:
+    probe = textwrap.dedent(
+        """
+        import pathlib
+
+        import anthropic
+        import dashscope
+        import lxml
+        from playwright.sync_api import sync_playwright
+
+        playwright = sync_playwright().start()
+        try:
+            executable = pathlib.Path(playwright.chromium.executable_path)
+            raise SystemExit(0 if executable.is_file() else 1)
+        finally:
+            playwright.stop()
+        """
+    )
+    return capture(
+        [str(python_bin), "-c", probe],
+        env=runtime_env,
+        check=False,
+    ).returncode == 0
+
+
 def ensure_venv(harness_dir: pathlib.Path, python_bin: str, skip_install: bool) -> pathlib.Path:
     venv_dir = harness_dir / ".venv-walite"
     py = venv_python(venv_dir)
@@ -309,8 +373,31 @@ def ensure_venv(harness_dir: pathlib.Path, python_bin: str, skip_install: bool) 
             shutil.rmtree(str(venv_dir), ignore_errors=True)
             run([python_bin, "-m", "venv", str(venv_dir)])
 
-    if not skip_install:
-        run([str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+    runtime_env = dict(os.environ)
+    runtime_env.update(
+        {
+            "PIP_CACHE_DIR": str(harness_dir / ".cache" / "pip"),
+            "PLAYWRIGHT_BROWSERS_PATH": str(harness_dir / ".playwright-browsers"),
+            "TMPDIR": str(harness_dir / ".tmp"),
+        }
+    )
+    for path in (
+        runtime_env["PIP_CACHE_DIR"],
+        runtime_env["PLAYWRIGHT_BROWSERS_PATH"],
+        runtime_env["TMPDIR"],
+    ):
+        pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+
+    dependencies_ready = runtime_dependencies_ready(py, runtime_env)
+    if skip_install:
+        log("Skipping runtime installation by request")
+    elif dependencies_ready:
+        log("Runtime dependencies and Chromium are already ready")
+    else:
+        run(
+            [str(py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+            env=runtime_env,
+        )
         run(
             [
                 str(py),
@@ -322,8 +409,9 @@ def ensure_venv(harness_dir: pathlib.Path, python_bin: str, skip_install: bool) 
                 "requirements.txt",
             ],
             cwd=harness_dir,
+            env=runtime_env,
         )
-        run([str(py), "-m", "pip", "install", *RUNTIME_REQUIREMENTS])
+        run([str(py), "-m", "pip", "install", *RUNTIME_REQUIREMENTS], env=runtime_env)
         run(
             [
                 str(py),
@@ -332,12 +420,22 @@ def ensure_venv(harness_dir: pathlib.Path, python_bin: str, skip_install: bool) 
                 "-d",
                 str(venv_dir / "nltk_data"),
                 "punkt",
-            ]
+            ],
+            env=runtime_env,
         )
-        run([str(py), "-m", "playwright", "install", "chromium"], cwd=harness_dir)
-        run([str(py), "-m", "pip", "install", "-e", "."], cwd=harness_dir)
+        run(
+            [str(py), "-m", "playwright", "install", "chromium"],
+            cwd=harness_dir,
+            env=runtime_env,
+        )
+        run(
+            [str(py), "-m", "pip", "install", "-e", "."],
+            cwd=harness_dir,
+            env=runtime_env,
+        )
 
     patch_webrl_action_parser(harness_dir)
+    patch_auto_login_timeout(harness_dir)
     return py
 
 
@@ -347,6 +445,10 @@ def env_with_venv_python(env: Mapping[str, str], python_bin: pathlib.Path) -> di
     old_path = updated.get("PATH", "")
     updated["PATH"] = bin_dir if not old_path else f"{bin_dir}{os.pathsep}{old_path}"
     updated["NLTK_DATA"] = str(python_bin.parent.parent / "nltk_data")
+    harness_dir = python_bin.parent.parent.parent
+    updated["PLAYWRIGHT_BROWSERS_PATH"] = str(harness_dir / ".playwright-browsers")
+    updated["PIP_CACHE_DIR"] = str(harness_dir / ".cache" / "pip")
+    updated["TMPDIR"] = str(harness_dir / ".tmp")
     return updated
 
 
@@ -409,25 +511,107 @@ def build_run_command(python_bin: str, config: RunConfig) -> list[str]:
     ]
 
 
+def task_config_fingerprint(env: Mapping[str, str]) -> str:
+    keys = ("SHOPPING", "SHOPPING_ADMIN", "REDDIT", "GITLAB", "MAP", "WIKIPEDIA", "HOMEPAGE")
+    payload = json.dumps({key: env.get(key, "") for key in keys}, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def generate_test_data(
     harness_dir: pathlib.Path, python_bin: pathlib.Path, env: Mapping[str, str]
 ) -> None:
     out_dir = harness_dir / "config_files" / "wa" / "test_webarena_lite"
+    fingerprint_path = out_dir / ".site_fingerprint"
+    expected_fingerprint = task_config_fingerprint(env)
     existing = list(out_dir.glob("*.json")) if out_dir.exists() else []
-    if len(existing) == TASK_COUNT:
+    existing_fingerprint = (
+        fingerprint_path.read_text(encoding="utf-8").strip()
+        if fingerprint_path.exists()
+        else ""
+    )
+    if len(existing) == TASK_COUNT and existing_fingerprint == expected_fingerprint:
         log("Task configs already exist")
         return
+    if out_dir.exists():
+        for path in out_dir.glob("*.json"):
+            path.unlink()
     run([str(python_bin), "scripts/generate_test_data.py"], cwd=harness_dir, env=env)
     generated = list(out_dir.glob("*.json"))
     if len(generated) != TASK_COUNT:
         die(f"Expected {TASK_COUNT} task configs, found {len(generated)} in {out_dir}")
+    fingerprint_path.write_text(expected_fingerprint + "\n", encoding="utf-8")
 
 
 def prepare_login(harness_dir: pathlib.Path, env: Mapping[str, str], skip: bool) -> None:
     if skip:
         log("Skipping prepare.sh by request")
         return
-    run(["bash", "prepare.sh"], cwd=harness_dir, env=env)
+
+    auth_dir = harness_dir / ".auth"
+    refresh_dir = harness_dir / ".auth.refresh"
+    shutil.rmtree(refresh_dir, ignore_errors=True)
+    refresh_dir.mkdir(parents=True)
+
+    for combination in REQUIRED_AUTH_COMBINATIONS:
+        log(f"Refreshing login state: {'.'.join(combination)}")
+        run(
+            [
+                "python",
+                "browser_env/auto_login.py",
+                "--auth_folder",
+                str(refresh_dir),
+                "--site_list",
+                *combination,
+            ],
+            cwd=harness_dir,
+            env=env,
+        )
+
+    expected = {
+        f"{'.'.join(combination)}_state.json"
+        for combination in REQUIRED_AUTH_COMBINATIONS
+    }
+    generated = {path.name for path in refresh_dir.glob("*_state.json")}
+    if generated != expected:
+        die(
+            "Login state set mismatch: "
+            f"expected {sorted(expected)}, found {sorted(generated)}"
+        )
+
+    validator = textwrap.dedent(
+        """
+        import sys
+        from pathlib import Path
+
+        from browser_env.auto_login import (
+            EXACT_MATCH,
+            KEYWORDS,
+            SITES,
+            URLS,
+            get_site_comb_from_filepath,
+            is_expired,
+        )
+
+        for state_path in sorted(Path(sys.argv[1]).glob("*_state.json")):
+            for site in get_site_comb_from_filepath(str(state_path)):
+                index = SITES.index(site)
+                if is_expired(
+                    state_path,
+                    URLS[index],
+                    KEYWORDS[index],
+                    EXACT_MATCH[index],
+                ):
+                    raise SystemExit(f"expired login state: {state_path.name} ({site})")
+        """
+    )
+    run(["python", "-c", validator, str(refresh_dir)], cwd=harness_dir, env=env)
+
+    if auth_dir.exists():
+        backup = harness_dir / f".auth.before-{time.time_ns()}"
+        auth_dir.rename(backup)
+        log(f"Previous login state saved at {backup}")
+    refresh_dir.rename(auth_dir)
+    log("Fresh login states validated and installed")
 
 
 def http_status(url: str, timeout: float) -> tuple[bool, str]:
@@ -436,9 +620,7 @@ def http_status(url: str, timeout: float) -> tuple[bool, str]:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return True, str(response.status)
     except urllib.error.HTTPError as exc:
-        if exc.code < 500:
-            return True, str(exc.code)
-        return False, str(exc.code)
+        return 200 <= exc.code < 400, str(exc.code)
     except Exception as exc:
         return False, exc.__class__.__name__
 
@@ -450,6 +632,7 @@ def check_sites(env: Mapping[str, str], timeout: float = 5.0) -> list[tuple[str,
         ("REDDIT", env["REDDIT"]),
         ("GITLAB", env["GITLAB"]),
         ("MAP", env["MAP"]),
+        ("MAP_TILE", env["MAP_TILE"]),
         ("WIKIPEDIA", env["WIKIPEDIA"]),
         ("HOMEPAGE", env["HOMEPAGE"]),
     ]
@@ -502,6 +685,34 @@ def action_files(result_dir: pathlib.Path) -> Iterable[pathlib.Path]:
     return sorted((result_dir / "actions").glob("*.json"))
 
 
+def validate_results(result_dir: pathlib.Path, expected_task_ids: Iterable[int]) -> None:
+    expected = set(expected_task_ids)
+    seen: dict[int, float] = {}
+    problems = []
+    for path in action_files(result_dir):
+        try:
+            item = load_json(path)
+            task_id = int(item.get("task_id", path.stem))
+            score = float(item["score"])
+        except Exception as exc:
+            problems.append(f"{path.name}: unreadable result ({exc.__class__.__name__})")
+            continue
+        if task_id in seen:
+            problems.append(f"task {task_id}: duplicate action result")
+        seen[task_id] = score
+        if score < 0:
+            problems.append(f"task {task_id}: invalid environment score {score}")
+
+    missing = sorted(expected - set(seen))
+    unexpected = sorted(set(seen) - expected)
+    if missing:
+        problems.append(f"missing task results: {missing}")
+    if unexpected:
+        problems.append(f"unexpected task results: {unexpected}")
+    if problems:
+        die("Result set is incomplete or invalid:\n  - " + "\n  - ".join(problems))
+
+
 def report_site_name(sites) -> str:
     if isinstance(sites, str):
         sites = [sites]
@@ -520,7 +731,11 @@ def write_report(
     result_dir: pathlib.Path,
     model: str,
     score_path: pathlib.Path,
+    expected_task_ids: Iterable[int] = range(TASK_COUNT),
 ) -> pathlib.Path:
+    expected_ids = list(expected_task_ids)
+    expected_set = set(expected_ids)
+    total_expected = len(expected_ids)
     config_raw = harness_dir / "config_files" / "wa" / "test_webarena_lite.raw.json"
     raw_configs = load_json(config_raw) if config_raw.exists() else []
     by_task = {int(item["task_id"]): item for item in raw_configs}
@@ -533,6 +748,8 @@ def write_report(
         except Exception:
             continue
         task_id = int(item.get("task_id", path.stem))
+        if task_id not in expected_set:
+            continue
         score = float(item.get("score", -1))
         if score >= 0:
             scores[task_id] = score
@@ -541,7 +758,7 @@ def write_report(
     success = sum(1 for score in scores.values() if score >= 1)
     finished = len(scores)
     per_site = {}
-    for task_id in range(TASK_COUNT):
+    for task_id in expected_ids:
         raw = by_task.get(task_id, {})
         site = report_site_name(raw.get("sites", ["unknown"]))
         per_site.setdefault(site, []).append(scores.get(task_id, 0))
@@ -555,9 +772,9 @@ def write_report(
         "- Observation: `webrl` simplified HTML text",
         "- Action space: `webrl_id`",
         "- Prompt: `agent/prompts/jsons/p_webrl_chat.json`",
-        f"- Finished tasks: {finished}/{TASK_COUNT}",
-        f"- Successful tasks: {success}/{TASK_COUNT}",
-        f"- Overall SR: **{success / TASK_COUNT * 100:.2f}%**",
+        f"- Finished tasks: {finished}/{total_expected}",
+        f"- Successful tasks: {success}/{total_expected}",
+        f"- Overall SR: **{success / total_expected * 100:.2f}%**",
         "",
         "## Per-site SR",
         "",
@@ -597,24 +814,20 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
               export OPENAI_API_KEY=...
               export OPENAI_BASE_URL=https://litellm.local.lexmount.net/v1
               export OPENAI_MODEL=glm-5.2
-              ./scripts/run_webarena_lite.sh --env-file /path/to/eval.env --backend playwright
+              python run_webarena_lite.py
 
             Useful overrides:
-              ./scripts/run_webarena_lite.sh \
-                --env-file /path/to/eval.env --backend playwright --smoke
-              ./scripts/run_webarena_lite.sh \
-                --env-file /path/to/eval.env --backend playwright \
-                --server webarena-hostname
+              python run_webarena_lite.py --smoke
+              python run_webarena_lite.py --server webarena-hostname
               SHOPPING=http://host:7770 REDDIT=http://host:9999 \
-                ./scripts/run_webarena_lite.sh \
-                --env-file /path/to/eval.env --backend playwright
+                python run_webarena_lite.py
             """
         ),
     )
     parser.add_argument("--work-dir", type=pathlib.Path, default=None)
     parser.add_argument("--result-dir", type=pathlib.Path, default=None)
     parser.add_argument("--runtime-root", type=pathlib.Path, default=None)
-    parser.add_argument("--server", default=os.environ.get("WEBARENA_SERVER", DEFAULT_SERVER))
+    parser.add_argument("--server", default=None)
     parser.add_argument("--map-server", default=os.environ.get("WEBARENA_MAP_SERVER"))
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--end", type=int, default=TASK_COUNT)
@@ -632,16 +845,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     script_root = pathlib.Path(__file__).resolve().parent
     runtime_root = args.runtime_root or default_runtime_root(script_root)
     work_dir = args.work_dir or runtime_root / ".webarena_lite"
-    user_env = environ_with_site_env(runtime_root, os.environ)
+    process_env = dict(os.environ)
+    if args.server:
+        process_env["WEBARENA_SERVER"] = args.server
+    server = args.server or process_env.get("WEBARENA_SERVER", DEFAULT_SERVER)
+    user_env = environ_with_site_env(runtime_root, process_env)
 
     model = require_env(user_env, "OPENAI_MODEL")
-    result_dir = args.result_dir or default_result_dir(runtime_root, model)
+    result_dir = (args.result_dir or default_result_dir(runtime_root, model)).resolve()
     if args.smoke:
         args.start, args.end = 0, 1
         if args.result_dir is None:
             result_dir = runtime_root / "results" / f"{slug_model(model)}_webarena_lite_smoke"
 
-    env = build_harness_env(user_env, server=args.server, map_server=args.map_server)
+    if not 0 <= args.start < args.end <= TASK_COUNT:
+        die(f"Task range must satisfy 0 <= start < end <= {TASK_COUNT}")
+    expected_task_ids = list(range(args.start, args.end))
+
+    env = build_harness_env(user_env, server=server, map_server=args.map_server)
     log(f"Using model: {model}")
     log(f"Using work dir: {work_dir}")
     log(f"Using result dir: {result_dir}")
@@ -679,8 +900,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         run(command, cwd=harness_dir, env=env)
         log(f"Evaluation command finished in {(time.time() - started_at) / 60:.1f} minutes")
 
+    validate_results(result_dir, expected_task_ids)
     score_path = score_result(harness_dir, python_bin, result_dir, env)
-    report_path = write_report(harness_dir, result_dir, model, score_path)
+    report_path = write_report(
+        harness_dir,
+        result_dir,
+        model,
+        score_path,
+        expected_task_ids=expected_task_ids,
+    )
     log(f"Score written to {score_path}")
     log(f"Report written to {report_path}")
     return 0
