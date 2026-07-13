@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "paired_tasks": 16,
+  "success": {
+    "lexmount": 11,
+    "local": 6
+  },
+  "paired_table": {
+    "both_success": 3,
+    "lexmount_only": 8,
+    "local_only": 3,
+    "both_failed": 2
+  },
+  "success_rate_difference": {
+    "lexmount_minus_local": 0.3125,
+    "bootstrap_95_ci": [
+      -0.0625,
+      0.6875
+    ],
+    "bootstrap_samples": 100000
+  },
+  "noninferiority": {
+    "margin": 0.05,
+    "passed": false,
+    "rule": "lower bootstrap CI >= -margin"
+  }
+}

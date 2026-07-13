@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "purpose": "Mechanism-enriched diagnostic repeats; not a LexBench population estimate.",
+  "design": {
+    "tasks": 16,
+    "selection_replicates": ["pair-a", "pair-b"],
+    "holdout_replicates": ["pair-c", "pair-d"],
+    "holdout_attempts_per_backend": 32,
+    "all_replicates": 4,
+    "all_attempts_per_backend": 64,
+    "concurrency": 6,
+    "orders": [
+      "Pair C: Lexmount then Local",
+      "Pair D: Local then Lexmount"
+    ],
+    "task_set_sha256": "7c8de23e69fa4f33daf27a19fd886f08c8111ab32a76d3211f214c756a4c450d"
+  },
+  "holdout_result": {
+    "success_attempts": {
+      "lexmount": 20,
+      "local": 13
+    },
+    "success_rates": {
+      "lexmount": 0.625,
+      "local": 0.40625
+    },
+    "lexmount_minus_local": 0.21875,
+    "task_cluster_bootstrap_95_ci": [-0.1875, 0.59375],
+    "bootstrap_samples": 100000,
+    "stable_direction_checks": {
+      "expected_observations": 18,
+      "confirmed_observations": 16,
+      "confirmation_rate": 0.888889,
+      "stable_lexmount_only": {
+        "expected": 10,
+        "confirmed": 9,
+        "rate": 0.9
+      },
+      "stable_local_only": {
+        "expected": 8,
+        "confirmed": 7,
+        "rate": 0.875
+      }
+    }
+  },
+  "all_four_replicates_context": {
+    "success_attempts": {
+      "lexmount": 38,
+      "local": 29
+    },
+    "success_rates": {
+      "lexmount": 0.59375,
+      "local": 0.453125
+    },
+    "same_pair_outcome_all_four": 7,
+    "tasks_containing_both_single_backend_directions": 5,
+    "stable_patterns": {
+      "lexmount_only_all_four": 4,
+      "local_only_all_four": 3,
+      "selected_stable_task_count": 9
+    }
+  },
+  "replicates": {
+    "pair_a": {
+      "selection_role": "selection",
+      "lexmount_success": 9,
+      "local_success": 9,
+      "outcomes": {"both_success": 2, "lexmount_only": 7, "local_only": 7, "both_failed": 0}
+    },
+    "pair_b": {
+      "selection_role": "selection",
+      "lexmount_success": 9,
+      "local_success": 7,
+      "outcomes": {"both_success": 1, "lexmount_only": 8, "local_only": 6, "both_failed": 1}
+    },
+    "pair_c": {
+      "selection_role": "holdout",
+      "order": "Lexmount then Local",
+      "lexmount_success": 9,
+      "local_success": 7,
+      "outcomes": {"both_success": 1, "lexmount_only": 8, "local_only": 6, "both_failed": 1},
+      "difference": 0.125,
+      "bootstrap_95_ci": [-0.3125, 0.5625]
+    },
+    "pair_d": {
+      "selection_role": "holdout",
+      "order": "Local then Lexmount",
+      "lexmount_success": 11,
+      "local_success": 6,
+      "outcomes": {"both_success": 3, "lexmount_only": 8, "local_only": 3, "both_failed": 2},
+      "difference": 0.3125,
+      "bootstrap_95_ci": [-0.0625, 0.6875]
+    }
+  },
+  "mechanism_evidence": {
+    "discordant_observations": 53,
+    "lexmount_only_observations": 31,
+    "local_only_observations": 22,
+    "local_loser_when_lexmount_only": {
+      "site_or_access_environment": 23,
+      "mixed": 6,
+      "agent_reasoning_or_evidence": 2,
+      "raw_indicators": {
+        "captcha_or_bot": 8,
+        "http_access_denied": 7,
+        "network_navigation": 6
+      }
+    },
+    "lexmount_loser_when_local_only": {
+      "agent_stopped_without_done": 8,
+      "browser_state_handler_failure": 2,
+      "navigation_failure": 1,
+      "no_runtime_signature": 11,
+      "evidence_buckets": {
+        "mixed": 15,
+        "agent_reasoning_or_evidence": 4,
+        "site_or_access_environment": 2,
+        "runtime_or_harness": 1
+      }
+    },
+    "near_threshold_loser": 6,
+    "high_answer_similarity": 0
+  },
+  "holdout_arms": {
+    "pair_c_lexmount": {
+      "success": 9,
+      "agent_done": 13,
+      "agent_success": 11,
+      "throughput_task_per_hour": 109.875436,
+      "cpu_cores_mean": 0.2809,
+      "pss_gib": {"mean": 1.6868, "p95": 2.084, "max": 2.1472},
+      "memory_peak_kernel_gib": 2.2226,
+      "host_available_gib_min": 54.9985,
+      "errors": {"timeout": 0, "session_create": 0, "network_navigation": 1, "unhandled_error": 3},
+      "agent_tokens": 2156285,
+      "agent_cost": 9.106694,
+      "judge_tokens": 130954
+    },
+    "pair_c_local": {
+      "success": 7,
+      "agent_done": 16,
+      "agent_success": 7,
+      "throughput_task_per_hour": 112.011917,
+      "cpu_cores_mean": 0.6057,
+      "pss_gib": {"mean": 2.5693, "p95": 3.7579, "max": 3.9322},
+      "chrome_pss_gib": {"mean": 1.2825, "p95": 2.0008, "max": 2.1261},
+      "memory_peak_kernel_gib": 4.2392,
+      "host_available_gib_min": 54.436,
+      "errors": {"timeout": 1, "session_create": 0, "network_navigation": 2, "unhandled_error": 0},
+      "agent_tokens": 2567266,
+      "agent_cost": 9.604831,
+      "judge_tokens": 122718
+    },
+    "pair_d_local": {
+      "success": 6,
+      "agent_done": 16,
+      "agent_success": 6,
+      "throughput_task_per_hour": 141.79369,
+      "cpu_cores_mean": 0.6282,
+      "pss_gib": {"mean": 2.2859, "p95": 3.341, "max": 3.5532},
+      "chrome_pss_gib": {"mean": 1.084, "p95": 1.7407, "max": 1.8636},
+      "memory_peak_kernel_gib": 3.7461,
+      "host_available_gib_min": 53.5225,
+      "errors": {"timeout": 1, "session_create": 0, "network_navigation": 1, "unhandled_error": 0},
+      "agent_tokens": 1845131,
+      "agent_cost": 6.2409,
+      "judge_tokens": 118993
+    },
+    "pair_d_lexmount": {
+      "success": 11,
+      "agent_done": 14,
+      "agent_success": 12,
+      "throughput_task_per_hour": 125.155086,
+      "cpu_cores_mean": 0.2601,
+      "pss_gib": {"mean": 1.4735, "p95": 2.0378, "max": 2.1211},
+      "memory_peak_kernel_gib": 2.1606,
+      "host_available_gib_min": 54.9454,
+      "errors": {"timeout": 0, "session_create": 0, "network_navigation": 0, "unhandled_error": 2},
+      "agent_tokens": 2109475,
+      "agent_cost": 9.154009,
+      "judge_tokens": 127563
+    }
+  },
+  "lexmount_session_lifecycle": {
+    "pair_c": {"baseline": 0, "max": 6, "final": 0, "residual": 0, "monitor_errors": 0},
+    "pair_d": {"baseline": 0, "max": 6, "final": 0, "residual": 0, "monitor_errors": 0}
+  },
+  "resource_scope": {
+    "local": "runner, agent and local Chrome cgroup",
+    "lexmount": "runner and agent controller cgroup; excludes remote browser hosts",
+    "gpu": "host context only; unrelated workloads were present"
+  }
+}
