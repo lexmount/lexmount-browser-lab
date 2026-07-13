@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import re
 import statistics
 import threading
 import time
@@ -21,6 +22,9 @@ PROFILE_ENV = {
     "en": ("LEXMOUNT_API_KEY", "LEXMOUNT_PROJECT_ID", "LEXMOUNT_BASE_URL"),
     "zh": ("LEXMOUNT_CN_API_KEY", "LEXMOUNT_CN_PROJECT_ID", "LEXMOUNT_CN_BASE_URL"),
 }
+
+SESSION_ID_RE = re.compile(r"\bsession_[A-Za-z0-9_-]+\b")
+INACTIVE_SESSION_STATUSES = {"closed", "deleted", "failed", "stopped", "terminated"}
 
 
 @dataclass
@@ -64,6 +68,22 @@ def _session_id(session: Any) -> str:
     return str(getattr(session, "session_id", None) or getattr(session, "id", None) or "")
 
 
+def _session_status(session: Any) -> str:
+    return (
+        str(getattr(session, "status", None) or getattr(session, "state", None) or "unknown")
+        .strip()
+        .lower()
+    )
+
+
+def _active_session_ids(client: Lexmount) -> set[str]:
+    return {
+        _session_id(item)
+        for item in (_session_items(client) or [])
+        if _session_id(item) and _session_status(item) not in INACTIVE_SESSION_STATUSES
+    }
+
+
 def _session_counts(client: Lexmount) -> dict[str, Any] | None:
     response = client.sessions.list()
     pagination = getattr(response, "pagination", None)
@@ -81,13 +101,11 @@ def _session_counts(client: Lexmount) -> dict[str, Any] | None:
     if items is None:
         return None
     statuses: dict[str, int] = {}
-    inactive = {"closed", "deleted", "failed", "stopped", "terminated"}
     active = 0
     for item in items:
-        status = str(getattr(item, "status", None) or getattr(item, "state", None) or "unknown")
-        status = status.strip().lower()
+        status = _session_status(item)
         statuses[status] = statuses.get(status, 0) + 1
-        if status not in inactive:
+        if status not in INACTIVE_SESSION_STATUSES:
             active += 1
     return {"active": active, "total_records": len(items), "statuses": statuses}
 
@@ -128,17 +146,76 @@ def _cleanup_one(handle: SessionHandle) -> str | None:
     return "; ".join(errors) or None
 
 
-def _cleanup_session_record(client: Lexmount, session: Any) -> str | None:
-    session_id = _session_id(session)
-    if not session_id:
-        return "session record has no id"
+def _cleanup_session_id(client: Lexmount, session_id: str) -> tuple[bool, str | None]:
     try:
         client.sessions.delete(session_id=session_id)
     except SessionNotFoundError:
-        return None
+        return False, None
     except (LexmountError, OSError, RuntimeError, TimeoutError, ValueError) as exc:
-        return f"delete: {type(exc).__name__}: {exc}"
-    return None
+        return False, f"delete {session_id}: {type(exc).__name__}: {exc}"
+    return True, None
+
+
+def _session_ids_from_error(message: str) -> set[str]:
+    return set(SESSION_ID_RE.findall(message))
+
+
+def _reconcile_new_sessions(
+    client: Lexmount,
+    before_ids: set[str],
+    known_session_ids: set[str],
+    successful_session_ids: set[str],
+    grace_seconds: float,
+    poll_seconds: float,
+) -> dict[str, Any]:
+    if grace_seconds < 0:
+        raise ValueError("cleanup grace seconds must be non-negative")
+    if poll_seconds <= 0:
+        raise ValueError("cleanup poll seconds must be positive")
+
+    deadline = time.monotonic() + grace_seconds
+    observed_new_ids: set[str] = set()
+    cleanup_errors: set[str] = set()
+    pending_known_ids = set(known_session_ids)
+    polls = 0
+
+    # Retry known IDs for the whole grace period. A timed-out create may not be
+    # visible in sessions.list yet, but its ID is still present in the SDK error.
+    while True:
+        polls += 1
+        current_ids = _active_session_ids(client) - before_ids
+        observed_new_ids.update(current_ids)
+
+        candidates = pending_known_ids | current_ids
+        for session_id in sorted(candidates):
+            deleted, error = _cleanup_session_id(client, session_id)
+            if deleted:
+                pending_known_ids.discard(session_id)
+            if error:
+                cleanup_errors.add(error)
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_seconds, remaining))
+
+    # One final list/delete/list pass closes the race at the grace boundary.
+    final_new_ids = _active_session_ids(client) - before_ids
+    observed_new_ids.update(final_new_ids)
+    for session_id in sorted(pending_known_ids | final_new_ids):
+        deleted, error = _cleanup_session_id(client, session_id)
+        if deleted:
+            pending_known_ids.discard(session_id)
+        if error:
+            cleanup_errors.add(error)
+    remaining_new_ids = _active_session_ids(client) - before_ids
+
+    return {
+        "polls": polls,
+        "cleanup_errors": sorted(cleanup_errors),
+        "late_session_ids_cleaned": sorted(observed_new_ids - successful_session_ids),
+        "remaining_new_session_ids": sorted(remaining_new_ids),
+    }
 
 
 def _percentile(values: list[float], fraction: float) -> float | None:
@@ -158,19 +235,30 @@ def _redact_error(message: str, creds: dict[str, str]) -> str:
 
 
 def run_probe(
-    profile: str, count: int, hold_seconds: float, poll_timeout_seconds: float
+    profile: str,
+    count: int,
+    hold_seconds: float,
+    poll_timeout_seconds: float,
+    cleanup_grace_seconds: float = 120.0,
+    cleanup_poll_seconds: float = 5.0,
 ) -> dict[str, Any]:
     if count < 1 or count > 200:
         raise ValueError("count must be between 1 and 200")
     creds = _required_env(profile)
     control_client = Lexmount(**creds)
-    before_items = _session_items(control_client) or []
-    before_ids = {_session_id(item) for item in before_items if _session_id(item)}
+    before_ids = _active_session_ids(control_client)
     before = _session_counts(control_client)
     barrier = threading.Barrier(count)
     handles: list[SessionHandle] = []
     failures: list[dict[str, str]] = []
+    failure_session_ids: set[str] = set()
     cleanup_errors: list[str] = []
+    reconciliation: dict[str, Any] = {
+        "polls": 0,
+        "cleanup_errors": [],
+        "late_session_ids_cleaned": [],
+        "remaining_new_session_ids": [],
+    }
     started = time.monotonic()
 
     try:
@@ -183,10 +271,13 @@ def run_probe(
                 try:
                     handles.append(future.result())
                 except (LexmountError, OSError, RuntimeError, TimeoutError, ValueError) as exc:
+                    message = _redact_error(str(exc), creds)
+                    session_ids = _session_ids_from_error(message)
+                    failure_session_ids.update(session_ids)
                     failures.append(
                         {
                             "type": type(exc).__name__,
-                            "message": _redact_error(str(exc), creds),
+                            "message": message,
                         }
                     )
         if handles and hold_seconds > 0:
@@ -196,25 +287,25 @@ def run_probe(
             for error in executor.map(_cleanup_one, handles):
                 if error:
                     cleanup_errors.append(_redact_error(error, creds))
-        # Timed-out async creates already have server-side IDs that the SDK does
-        # not return to this caller. Reconcile by list diff so saturation probes
-        # cannot leave queued or active sessions behind.
-        new_records = [
-            item
-            for item in (_session_items(control_client) or [])
-            if _session_id(item) and _session_id(item) not in before_ids
-        ]
-        with ThreadPoolExecutor(max_workers=max(1, min(len(new_records), 32))) as executor:
-            for error in executor.map(
-                lambda item: _cleanup_session_record(control_client, item), new_records
-            ):
-                if error:
-                    cleanup_errors.append(_redact_error(error, creds))
+        effective_grace_seconds = cleanup_grace_seconds if failures else 0.0
+        reconciliation = _reconcile_new_sessions(
+            control_client,
+            before_ids,
+            failure_session_ids,
+            {handle.session_id for handle in handles},
+            effective_grace_seconds,
+            cleanup_poll_seconds,
+        )
+        cleanup_errors.extend(
+            _redact_error(error, creds) for error in reconciliation["cleanup_errors"]
+        )
 
     elapsed = time.monotonic() - started
     after = _session_counts(control_client)
     latencies = [handle.create_seconds for handle in handles]
-    residual_ok = before is None or after is None or int(after["active"]) <= int(before["active"])
+    residual_ok = (
+        before is None or after is None or int(after["active"]) <= int(before["active"])
+    ) and not reconciliation["remaining_new_session_ids"]
     return {
         "profile": profile,
         "requested": count,
@@ -222,6 +313,8 @@ def run_probe(
         "failed": len(failures),
         "hold_seconds": hold_seconds,
         "poll_timeout_seconds": poll_timeout_seconds,
+        "cleanup_grace_seconds": cleanup_grace_seconds if failures else 0.0,
+        "cleanup_polls": reconciliation["polls"],
         "elapsed_seconds": round(elapsed, 3),
         "create_seconds": {
             "mean": round(statistics.fmean(latencies), 3) if latencies else None,
@@ -230,6 +323,10 @@ def run_probe(
         },
         "sessions_before": before,
         "sessions_after": after,
+        "failure_session_ids": sorted(failure_session_ids),
+        "late_sessions_cleaned": len(reconciliation["late_session_ids_cleaned"]),
+        "late_session_ids_cleaned": reconciliation["late_session_ids_cleaned"],
+        "remaining_new_session_ids": reconciliation["remaining_new_session_ids"],
         "cleanup_errors": cleanup_errors,
         "failures": failures,
         "success": len(handles) == count and not cleanup_errors and residual_ok,
@@ -243,6 +340,8 @@ def main() -> int:
     parser.add_argument("--count", type=int, required=True)
     parser.add_argument("--hold-seconds", type=float, default=5.0)
     parser.add_argument("--poll-timeout-seconds", type=float, default=120.0)
+    parser.add_argument("--cleanup-grace-seconds", type=float, default=120.0)
+    parser.add_argument("--cleanup-poll-seconds", type=float, default=5.0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -252,6 +351,8 @@ def main() -> int:
         args.count,
         args.hold_seconds,
         args.poll_timeout_seconds,
+        args.cleanup_grace_seconds,
+        args.cleanup_poll_seconds,
     )
     payload = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:

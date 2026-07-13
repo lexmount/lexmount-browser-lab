@@ -1,0 +1,391 @@
+{
+  "schema_version": 1,
+  "local_5090_failure_rerun": {
+    "original_local_failures": 88,
+    "rerun": {
+      "run_id": "20260713_133447",
+      "counts": {
+        "planned": 88,
+        "trajectory": 88,
+        "judged": 88,
+        "success": 10,
+        "agent_done": 87,
+        "agent_success": 21
+      },
+      "rates": {
+        "trajectory_per_planned": 1.0,
+        "success_per_planned": 0.113636,
+        "success_per_judged": 0.113636
+      },
+      "steps": {
+        "mean": 13.806818,
+        "p50": 9.5,
+        "p95": 35.0
+      },
+      "e2e_seconds": {
+        "mean": 133.847091,
+        "p50": 93.362,
+        "p95": 408.952
+      },
+      "throughput_task_per_hour": 204.087154,
+      "error_task_counts": {
+        "timeout": 6,
+        "session_create": 0,
+        "network_navigation": 16,
+        "unhandled_error": 1
+      },
+      "agent_usage": {
+        "total_tokens": 11795227,
+        "total_cost": 52.125975
+      },
+      "judge_usage": {
+        "total_tokens": 713760
+      },
+      "resource": {
+        "duration_seconds": 1552.278,
+        "return_code": 0,
+        "guard_triggered": null,
+        "metrics": {
+          "cpu_cores_mean": 0.997,
+          "pss_gib": {
+            "mean": 3.958,
+            "p95": 5.5631,
+            "max": 6.2522
+          },
+          "chrome_pss_gib": {
+            "mean": 1.731,
+            "p95": 2.7384,
+            "max": 3.3888
+          },
+          "memory_current_gib": {
+            "mean": 5.2486,
+            "p95": 7.1986,
+            "max": 8.0102
+          },
+          "memory_peak_kernel_gib": 8.0472,
+          "host_available_gib_min": 71.6162,
+          "gpu_utilization_percent_mean": 4.2925,
+          "gpu_idle_percent_mean": 95.7075,
+          "gpu_memory_mib_mean": 22255.491,
+          "gpu_power_w_mean": 30.4895,
+          "vllm_running_nonzero_fraction": null,
+          "vllm_waiting_nonzero_fraction": null
+        }
+      }
+    },
+    "recovered_count": 10,
+    "recovered_task_ids": [
+      "18",
+      "22",
+      "24",
+      "82",
+      "124",
+      "288",
+      "298",
+      "302",
+      "3014",
+      "3020"
+    ],
+    "recovered_from_original_state": {
+      "lexmount_only": [
+        "22",
+        "24",
+        "124",
+        "302",
+        "3014",
+        "3020"
+      ],
+      "both_failed": [
+        "18",
+        "82",
+        "288",
+        "298"
+      ]
+    },
+    "smoke_repeatability": {
+      "tasks": 12,
+      "smoke_success_task_ids": [
+        "114",
+        "3017"
+      ],
+      "full_rerun_success_task_ids": [
+        "22"
+      ],
+      "success_in_both_task_ids": [],
+      "flipped_task_ids": [
+        "22",
+        "114",
+        "3017"
+      ]
+    },
+    "local_favoring_sensitivity": {
+      "method": "keep every original local success and replace only original failures that succeeded in the 5090 rerun",
+      "comparison": {
+        "schema_version": 1,
+        "paired_tasks": 210,
+        "success": {
+          "lexmount": 150,
+          "local": 132
+        },
+        "paired_table": {
+          "both_success": 110,
+          "lexmount_only": 40,
+          "local_only": 22,
+          "both_failed": 38
+        },
+        "success_rate_difference": {
+          "lexmount_minus_local": 0.085714,
+          "bootstrap_95_ci": [
+            0.014286,
+            0.157143
+          ],
+          "bootstrap_samples": 100000
+        },
+        "noninferiority": {
+          "margin": 0.05,
+          "passed": true,
+          "rule": "lower bootstrap CI >= -margin"
+        }
+      }
+    },
+    "original_environment_loser_followup": {
+      "tasks": 31,
+      "recovered": 2,
+      "still_failed": 29,
+      "recovered_task_ids": [
+        "124",
+        "3014"
+      ],
+      "source": "original Judge primary category E1/E2/E3"
+    }
+  },
+  "lexmount_concurrency": {
+    "same_task_set": true,
+    "task_count": 64,
+    "arms": {
+      "c10": {
+        "run_id": "20260713_145015",
+        "counts": {
+          "planned": 64,
+          "trajectory": 64,
+          "judged": 64,
+          "success": 43,
+          "agent_done": 61,
+          "agent_success": 45
+        },
+        "rates": {
+          "trajectory_per_planned": 1.0,
+          "success_per_planned": 0.671875,
+          "success_per_judged": 0.671875
+        },
+        "steps": {
+          "mean": 12.453125,
+          "p50": 11.0,
+          "p95": 31.0
+        },
+        "e2e_seconds": {
+          "mean": 130.579578,
+          "p50": 92.5235,
+          "p95": 417.487
+        },
+        "throughput_task_per_hour": 194.253011,
+        "error_task_counts": {
+          "timeout": 0,
+          "session_create": 0,
+          "network_navigation": 3,
+          "unhandled_error": 3
+        },
+        "agent_usage": {
+          "total_tokens": 9672067,
+          "total_cost": 41.886556
+        },
+        "judge_usage": {
+          "total_tokens": 555575
+        },
+        "resource": {
+          "duration_seconds": 1186.082,
+          "return_code": 1,
+          "guard_triggered": null,
+          "metrics": {
+            "cpu_cores_mean": 0.4792,
+            "pss_gib": {
+              "mean": 2.5478,
+              "p95": 3.7994,
+              "max": 3.9977
+            },
+            "chrome_pss_gib": {
+              "mean": 0.0,
+              "p95": 0.0,
+              "max": 0.0
+            },
+            "memory_current_gib": {
+              "mean": 2.9513,
+              "p95": 4.1054,
+              "max": 4.2856
+            },
+            "memory_peak_kernel_gib": 4.31,
+            "host_available_gib_min": 79.4575,
+            "gpu_utilization_percent_mean": 2.8263,
+            "gpu_idle_percent_mean": 97.1737,
+            "gpu_memory_mib_mean": 22859.2049,
+            "gpu_power_w_mean": 29.8273,
+            "vllm_running_nonzero_fraction": null,
+            "vllm_waiting_nonzero_fraction": null
+          }
+        }
+      },
+      "c64": {
+        "run_id": "20260713_154320",
+        "counts": {
+          "planned": 64,
+          "trajectory": 64,
+          "judged": 64,
+          "success": 41,
+          "agent_done": 60,
+          "agent_success": 46
+        },
+        "rates": {
+          "trajectory_per_planned": 1.0,
+          "success_per_planned": 0.640625,
+          "success_per_judged": 0.640625
+        },
+        "steps": {
+          "mean": 12.328125,
+          "p50": 11.5,
+          "p95": 28.0
+        },
+        "e2e_seconds": {
+          "mean": 173.397781,
+          "p50": 132.56,
+          "p95": 482.709
+        },
+        "throughput_task_per_hour": 319.890704,
+        "error_task_counts": {
+          "timeout": 1,
+          "session_create": 0,
+          "network_navigation": 3,
+          "unhandled_error": 4
+        },
+        "agent_usage": {
+          "total_tokens": 8684928,
+          "total_cost": 40.748137
+        },
+        "judge_usage": {
+          "total_tokens": 549214
+        },
+        "resource": {
+          "duration_seconds": 720.246,
+          "return_code": 1,
+          "guard_triggered": null,
+          "metrics": {
+            "cpu_cores_mean": 0.7047,
+            "pss_gib": {
+              "mean": 6.2382,
+              "p95": 14.2955,
+              "max": 14.7098
+            },
+            "chrome_pss_gib": {
+              "mean": 0.0,
+              "p95": 0.0,
+              "max": 0.0
+            },
+            "memory_current_gib": {
+              "mean": 6.7541,
+              "p95": 14.4661,
+              "max": 14.9068
+            },
+            "memory_peak_kernel_gib": 14.9436,
+            "host_available_gib_min": 68.4323,
+            "gpu_utilization_percent_mean": 0.0097,
+            "gpu_idle_percent_mean": 99.9903,
+            "gpu_memory_mib_mean": 21891.6097,
+            "gpu_power_w_mean": 13.1665,
+            "vllm_running_nonzero_fraction": null,
+            "vllm_waiting_nonzero_fraction": null
+          }
+        }
+      }
+    },
+    "paired_quality": {
+      "schema_version": 1,
+      "paired_tasks": 64,
+      "success": {
+        "c64": 41,
+        "c10": 43
+      },
+      "paired_table": {
+        "both_success": 35,
+        "c64_only": 6,
+        "c10_only": 8,
+        "both_failed": 15
+      },
+      "success_rate_difference": {
+        "c64_minus_c10": -0.03125,
+        "bootstrap_95_ci": [
+          -0.140625,
+          0.078125
+        ],
+        "bootstrap_samples": 100000
+      }
+    },
+    "sustainable_before_external_session_check": {
+      "c10": true,
+      "c64": true
+    },
+    "active_session_monitor": {
+      "c64": {
+        "sample_count": 144,
+        "duration_seconds": 720.013,
+        "active_sessions": {
+          "en": {
+            "mean": 9.243,
+            "p95": 22,
+            "max": 23
+          },
+          "zh": {
+            "mean": 6.792,
+            "p95": 31,
+            "max": 34
+          },
+          "total": {
+            "mean": 16.035,
+            "p95": 36,
+            "max": 39
+          }
+        },
+        "errors": 0
+      }
+    }
+  },
+  "raw_session_capacity": {
+    "profiles": {
+      "en": {
+        "profile": "en",
+        "requested": 64,
+        "created_within_timeout": 25,
+        "failed_or_timed_out": 39,
+        "poll_timeout_seconds": 180.0,
+        "create_seconds": {
+          "mean": 73.748,
+          "p95": 153.176,
+          "max": 153.373
+        },
+        "sessions_before_active": 0
+      },
+      "zh": {
+        "profile": "zh",
+        "requested": 64,
+        "created_within_timeout": 48,
+        "failed_or_timed_out": 16,
+        "poll_timeout_seconds": 180.0,
+        "create_seconds": {
+          "mean": 59.918,
+          "p95": 157.768,
+          "max": 158.224
+        },
+        "sessions_before_active": 0
+      }
+    },
+    "cleanup_caveat": "the original probe's immediate sessions_after field was invalidated by sessions that activated after process exit; active sessions were then manually reconciled to zero and the probe cleanup logic was fixed"
+  }
+}

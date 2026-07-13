@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.summarize_replays import (
+from lexbrowser_eval.lexbench.summarize_replays import (
     load_json_object,
     load_json_records,
     summarize_replays,
