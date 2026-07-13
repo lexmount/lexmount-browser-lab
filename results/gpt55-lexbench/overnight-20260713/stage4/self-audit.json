@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "stage": 4,
+  "status": "complete",
+  "questions": [
+    {
+      "question": "Does the synthesis pool unlike stages into a new quality score?",
+      "answer": "no",
+      "evidence": "Stage 1 is the general 64-task repeated sample; Stage 2 is a selected 16-task diagnostic holdout; Stage 3 changes concurrency. They remain separate evidence layers."
+    },
+    {
+      "question": "Can the campaign claim Lexmount is generally more accurate?",
+      "answer": "no",
+      "evidence": "Stage 1 was 82/128 versus 80/128 with cluster CI [-9.375, +12.5]pp, and Stage 3 c32 was 40/64 versus 41/64."
+    },
+    {
+      "question": "Can the campaign claim repeatable Lexmount benefits on some sites?",
+      "answer": "yes, within the selected diagnostic set",
+      "evidence": "Stage 2 retained 16/18 expected holdout directions and had four Lexmount-only tasks across all four repeats. The same data also had three all-four Local-only tasks."
+    },
+    {
+      "question": "Does the failure evidence prove that IP or proxy caused the site effects?",
+      "answer": "no",
+      "evidence": "Captcha, denied-access, navigation, and control-chain signatures are associations. The experiment did not independently randomize IP, proxy, fingerprint, browser build, or provider host."
+    },
+    {
+      "question": "Is c32 a verified operational point?",
+      "answer": "yes, for this same-night campaign",
+      "evidence": "Both c32 backends completed 64/64 trajectories and Judge records, with no session-create failure or guard; Lexmount observed active max 32 and residual 0."
+    },
+    {
+      "question": "Is c64 a verified operational point?",
+      "answer": "no",
+      "evidence": "Quota attainability was shown with balanced 32/32, but the actual 28/36 allocation failed admission twice and no formal c64 Agent run was launched."
+    },
+    {
+      "question": "Can runner resource ratios be described as end-to-end cloud savings?",
+      "answer": "no",
+      "evidence": "Local includes Chrome on the runner; Lexmount excludes remote browser hosts. The ratios describe runner displacement, not total provider cost."
+    },
+    {
+      "question": "Are GPU differences part of the product conclusion?",
+      "answer": "no",
+      "evidence": "The model was remote and the host had unrelated GPU workloads; GPU metrics are context only."
+    },
+    {
+      "question": "Were all formal campaign records complete?",
+      "answer": "yes",
+      "evidence": "Across 12 formal arms, planned trajectories, completed trajectories, and valid Judge records were all 576."
+    },
+    {
+      "question": "What should change the next decision?",
+      "answer": "cross-window c32 replication and task-shaped admission evidence",
+      "evidence": "These directly test the two remaining uncertainties: quality/resource stability over time and honest c64 availability."
+    }
+  ]
+}

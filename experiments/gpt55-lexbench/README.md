@@ -53,13 +53,20 @@
 - 原始 session 容量：两套 project 分别执行指定并发探针；`--poll-timeout-seconds`
   只限制创建等待，`--cleanup-grace-seconds` 负责回收超时后才激活的 session。
 - 端到端容量：`task_sets/capacity64.txt` 固定 64 条分层任务，在同一台 Linux runner
-  顺序比较 Lexmount c10 与 c64，并采样 en/zh project 的实际 active session 数。
+  反序比较 Lexmount 与 Local。当前正式矩阵为 c16/c32；只有 raw admission 真实观察到
+  命名并发后才允许加入更高档位，避免把配置并发写成实际并发。
+- 正式 c64 的当前 gate：实际任务构成 `28 EN + 36 ZH` 连续两次 raw admission 成功，
+  或取得 provider reservation/profile allocation 证据。balanced `32 + 32` 只证明 quota
+  64 可达，不替代该 gate。
 - Local 使用 `MemoryMax=46G`，Host `MemAvailable < 32 GiB` 时触发护栏。
 - 5090 不可用时允许在同一台 macOS 主机顺序运行两端；该 fallback 使用进程树 RSS，
   不把 RSS 写成 PSS，也不生成 cgroup/GPU 结论。
 - `MACHINE_ID` 默认写成 `<platform>-<backend>`，移到命名主机时可以显式覆盖。macOS
   上 Lexmount arm 的资源数据只代表控制端进程树，不冒充远端服务端利用率。
 - 一个点只有在计划任务全部形成轨迹、无 quota/OOM/护栏中止时才算可持续点。
+- Lexmount 点还必须有 session monitor，且实际 active max 达到命名并发、monitor error 0、
+  residual session 0。当前结果见
+  [`results/gpt55-lexbench/overnight-20260713/`](../../results/gpt55-lexbench/overnight-20260713/README.md)。
 
 ### 4b. 5090 Local failure rerun
 

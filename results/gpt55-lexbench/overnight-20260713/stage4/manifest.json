@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "experiment_id": "gpt55-lexbench-overnight-stage4-20260713",
+  "status": "complete",
+  "question": "What conclusions from the three-stage GPT-5.5 LexBench campaign are solid enough for product and experiment decisions, and what remains unproven?",
+  "new_agent_trajectories": 0,
+  "source_commit": "6dcd38837a660dd6a4ed4acbdf5140476eb2a723",
+  "source_stages": {
+    "stage1": {
+      "role": "counterbalanced general 64-task sample",
+      "report_sha256": "fa3824fcfbb880370742990f30af4251864e14d77cd09d32cb5a31ae78f7dfbe"
+    },
+    "stage2": {
+      "role": "selected mechanism holdout",
+      "report_sha256": "08bb0161cc3483644d3dd9ae88b0f19278618b687d66ba1efffd5fca168f579c"
+    },
+    "stage3": {
+      "role": "raw admission and formal c16/c32 capacity matrix",
+      "report_sha256": "29d2168273ff7d14986b1f0279ce14360efc20bb01765e2914cfdeda46b7e6ae"
+    }
+  },
+  "campaign_completeness": {
+    "formal_arms": 12,
+    "planned_trajectories": 576,
+    "completed_trajectories": 576,
+    "valid_judge_records": 576,
+    "agent_tokens": 82042507,
+    "agent_cost_usd": 353.641313,
+    "judge_tokens": 4939653,
+    "pooled_quality_estimate_valid": false
+  },
+  "decisions": {
+    "general_quality_winner_established": false,
+    "site_level_bidirectional_effects_reproduced": true,
+    "runner_resource_displacement_supported": true,
+    "default_formal_concurrency": 32,
+    "quota_64_attainable": true,
+    "task_shaped_c64_reliable": false,
+    "formal_c64_ready": false
+  },
+  "next_gates": [
+    "two additional cross-window counterbalanced c32 pairs",
+    "two consecutive successful 28 EN + 36 ZH admission preflights or provider allocation evidence",
+    "fresh unselected routing holdout"
+  ],
+  "files": {
+    "report": "report.html",
+    "report_sha256": "0562f2a90379ccb1c24dd1c01cb01d5eb5fb2ba554a88a94c3fc12c165ae01ac",
+    "helm_document_id": "gpt55-lexbench-stage4-synthesis-2026-07-14",
+    "synthesis": "synthesis.json",
+    "self_audit": "self-audit.json",
+    "campaign_index": "../README.md"
+  }
+}

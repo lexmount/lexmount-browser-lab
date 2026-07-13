@@ -6,5 +6,7 @@
 
 ## GPT-5.5 / LexBench-Browser
 
+- [2026-07-13 overnight stability campaign](gpt55-lexbench/overnight-20260713/README.md)
+- [Overnight final synthesis](gpt55-lexbench/overnight-20260713/stage4/report.html)
 - [2026-07-13 全量配对报告](gpt55-lexbench/20260713/report.md)
 - [2026-07-12 Preflight](gpt55-lexbench/preflight-20260712.md)
