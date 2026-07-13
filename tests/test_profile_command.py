@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lexbrowser_eval.resources.cgroup_profiler import percentile, summarize_series
+from scripts.profile_command import percentile, summarize_series
 
 
 def test_percentile_uses_nearest_rank() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from lexbrowser_eval.lexbench.probe_sessions import _session_counts
+from scripts.probe_lexmount_sessions import _session_counts
 
 
 def test_session_counts_uses_pagination_totals() -> None:

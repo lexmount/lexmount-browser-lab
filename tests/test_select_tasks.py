@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lexbrowser_eval.lexbench.select_tasks import _allocate_strata, select_tasks
+from scripts.select_tasks import _allocate_strata, select_tasks
 
 
 def test_allocate_strata_preserves_total() -> None:
