@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "experiment_id": "gpt55-lexbench-overnight-stage4-20260713",
+  "status": "complete",
+  "scope": "Cross-stage synthesis of the same-night GPT-5.5 LexBench stability campaign. Stage 4 adds no new Agent trajectory and does not pool unlike task sets into a new quality estimate.",
+  "evidence_ladder": {
+    "stage1_population_sample": {
+      "question": "Does either browser backend retain a general quality lead after counterbalanced repeats?",
+      "tasks": 64,
+      "replicates": 2,
+      "attempts_per_backend": 128,
+      "lexmount_success": 82,
+      "local_success": 80,
+      "lexmount_minus_local": 0.015625,
+      "task_cluster_bootstrap_95_ci": [-0.09375, 0.125],
+      "answer": "No general winner was established."
+    },
+    "stage2_mechanism_holdout": {
+      "question": "Are the selected site-level directional differences reproducible, and what failure evidence accompanies them?",
+      "diagnostic_tasks": 16,
+      "holdout_attempts_per_backend": 32,
+      "stable_direction_checks": {
+        "confirmed": 16,
+        "expected": 18,
+        "rate": 0.888889
+      },
+      "all_four_stable_tasks": {
+        "lexmount_only": 4,
+        "local_only": 3
+      },
+      "mechanism_evidence": {
+        "lexmount_only_observations": 31,
+        "local_failure_site_or_access_environment": 23,
+        "local_raw_indicators": {
+          "captcha_or_bot": 8,
+          "http_access_denied": 7,
+          "network_navigation": 6
+        },
+        "local_only_observations": 22,
+        "lexmount_failure_runtime_signatures": {
+          "agent_stopped_without_done": 8,
+          "browser_state_handler_failure": 2,
+          "navigation_failure": 1
+        }
+      },
+      "answer": "Directional effects were mostly reproducible but bidirectional and site-specific; the diagnostic set is selection-biased."
+    },
+    "stage3_capacity_resources": {
+      "question": "Is quota 64 attainable, and what is the highest complete formal concurrency observed tonight?",
+      "raw_admission": {
+        "balanced_32_en_32_zh": {
+          "active_max": 64,
+          "target_sample_count": 35,
+          "success": true
+        },
+        "task_shaped_28_en_36_zh": {
+          "attempts": 2,
+          "successes": 0,
+          "active_maxima": [49, 46]
+        }
+      },
+      "formal_boundary": 32,
+      "c32_quality": {
+        "lexmount_success": 40,
+        "local_success": 41,
+        "lexmount_minus_local": -0.015625,
+        "bootstrap_95_ci": [-0.140625, 0.109375]
+      },
+      "c32_local_over_lexmount_runner_scope": {
+        "throughput": 1.214213,
+        "cpu_cores_mean": 4.04622,
+        "pss_gib_mean": 2.086311,
+        "pss_gib_p95": 2.185212,
+        "memory_current_gib_p95": 2.361025,
+        "memory_peak_kernel_gib": 2.475791
+      },
+      "answer": "Quota 64 was directly attained once with balanced allocation; c32 is the highest complete and observed formal point."
+    }
+  },
+  "execution_ledger": {
+    "formal_arms": 12,
+    "planned_trajectories": 576,
+    "completed_trajectories": 576,
+    "valid_judge_records": 576,
+    "agent_tokens": 82042507,
+    "agent_cost_usd": 353.641313,
+    "judge_tokens": 4939653,
+    "pooled_quality_estimate_valid": false,
+    "reason": "The 12 arms mix a 64-task sample, a selected 16-task diagnostic holdout, and different concurrency treatments."
+  },
+  "supported_claims": [
+    {
+      "claim": "The campaign did not establish a general Lexmount or Local quality winner on the fixed 64-task sample.",
+      "confidence": "high for this campaign design",
+      "evidence": "Stage 1 repeated difference +1.5625pp, 95% cluster CI [-9.375, +12.5]pp; Stage 3 c32 was 40/64 versus 41/64."
+    },
+    {
+      "claim": "Some site-level backend differences are reproducible and bidirectional.",
+      "confidence": "medium-high for the selected diagnostic tasks",
+      "evidence": "Stage 2 confirmed 16/18 expected directional holdout observations; four tasks were Lexmount-only and three Local-only in all four repeats."
+    },
+    {
+      "claim": "Lexmount removes local Chrome resource load from the runner and materially lowers runner-scope CPU and memory.",
+      "confidence": "high for runner scope, unknown end-to-end",
+      "evidence": "At c32, Local used 4.046x CPU, 2.086x mean PSS, and 2.476x kernel peak while delivering 1.214x rollout throughput."
+    },
+    {
+      "claim": "The account can hold 64 active Lexmount sessions, but the task-shaped 28/36 allocation is not yet reliable at that high-water mark.",
+      "confidence": "high for attainability, medium for reliability boundary",
+      "evidence": "Balanced 32/32 reached 64 for 35 samples; the task-shaped split failed twice."
+    }
+  ],
+  "unsupported_claims": [
+    "Lexmount is generally more accurate than Local Chrome on LexBench.",
+    "The observed access differences are proven to be caused by IP, proxy, browser fingerprint, or any single platform mechanism.",
+    "A quota of 64 guarantees that any profile mix can obtain 64 simultaneous sessions.",
+    "Lexmount controller memory is the end-to-end resource cost of the remote browser service.",
+    "One c16 and one c32 run prove that concurrency causes a quality increase or decrease."
+  ],
+  "operational_default": {
+    "formal_concurrency": 32,
+    "admission_preflight": "Use the actual EN/ZH allocation before any higher-concurrency formal run.",
+    "lexmount_sustainability_gate": "Require the session monitor to observe the named target, zero monitor errors, and zero residual sessions.",
+    "c64_gate": "Require two consecutive successful 28 EN + 36 ZH preflights, or provider-side reservation/allocation evidence, before a formal c64 run.",
+    "routing": "Treat the stable site-level directions as fallback/routing candidates and validate them on fresh holdouts before productizing."
+  },
+  "next_experiments": [
+    {
+      "priority": 1,
+      "experiment": "Repeat counterbalanced c32 pairs in at least two additional time windows.",
+      "decision_changed": "Whether c32 quality remains near parity and whether throughput/resource ratios persist."
+    },
+    {
+      "priority": 2,
+      "experiment": "Repeat task-shaped 28 EN + 36 ZH admission until the c64 gate is passed or provider allocation evidence identifies the constraint.",
+      "decision_changed": "Whether a formal c64 arm is honest and reproducible."
+    },
+    {
+      "priority": 3,
+      "experiment": "Build a fresh, unselected site-routing holdout for the access-sensitive and control-sensitive signatures.",
+      "decision_changed": "Whether backend-aware fallback improves population performance without selection bias."
+    }
+  ],
+  "source_reports": {
+    "stage1": {
+      "path": "../stage1/report.html",
+      "sha256": "fa3824fcfbb880370742990f30af4251864e14d77cd09d32cb5a31ae78f7dfbe",
+      "helm_document_id": "gpt55-lexbench-stage1-counterbalanced-2026-07-14"
+    },
+    "stage2": {
+      "path": "../stage2/report.html",
+      "sha256": "08bb0161cc3483644d3dd9ae88b0f19278618b687d66ba1efffd5fca168f579c",
+      "helm_document_id": "gpt55-lexbench-stage2-mechanism-2026-07-14"
+    },
+    "stage3": {
+      "path": "../stage3/report.html",
+      "sha256": "29d2168273ff7d14986b1f0279ce14360efc20bb01765e2914cfdeda46b7e6ae",
+      "helm_document_id": "gpt55-lexbench-stage3-capacity-2026-07-14"
+    }
+  }
+}

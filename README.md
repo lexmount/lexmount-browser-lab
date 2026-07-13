@@ -170,6 +170,7 @@ Local在本次46 GiB评测cgroup限制下最大可持续并发为60，c80被syst
 - [Qwen3-8B LexBench压力与资源报告](docs/eval_reports/lexbench/stress_results.md)
 - [Online-Mind2Web汇总](docs/eval_reports/online-mind2web/README.md)
 - [GPT-5.5 LexBench报告](results/gpt55-lexbench/20260713/report.md)
+- [GPT-5.5 LexBench整夜稳定性综合](results/gpt55-lexbench/overnight-20260713/stage4/report.html)
 
 ## 仓库结构
 
