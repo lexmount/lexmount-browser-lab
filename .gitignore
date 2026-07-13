@@ -5,6 +5,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.pyc
+*.egg-info/
+build/
+dist/
 
 # Raw benchmark outputs stay on the runner. Commit only reviewed summaries.
 artifacts/

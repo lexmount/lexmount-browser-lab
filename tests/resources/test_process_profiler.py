@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from scripts.profile_process import accumulate_cpu_seconds, percentile, summarize_series
+from lexbrowser_eval.resources.process_profiler import (
+    accumulate_cpu_seconds,
+    percentile,
+    summarize_series,
+)
 
 
 def test_process_profile_percentile() -> None:

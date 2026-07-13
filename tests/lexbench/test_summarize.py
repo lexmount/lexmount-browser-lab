@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.summarize_run import summarize_run
+from lexbrowser_eval.lexbench.summarize import summarize_run
 
 
 def _write_json(path: Path, value: object) -> None:
