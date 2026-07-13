@@ -5,8 +5,8 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE=""
 OUTPUT_DIR=""
 SMOKE_COUNT=4
-FULL_EN_COUNT=32
-FULL_ZH_COUNT=32
+FULL_EN_COUNT=28
+FULL_ZH_COUNT=36
 
 usage() {
   printf '%s\n' \

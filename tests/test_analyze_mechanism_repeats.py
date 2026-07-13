@@ -42,8 +42,13 @@ def test_analyze_mechanism_repeats_tracks_followup_retention() -> None:
                 {
                     "task_id": "1",
                     "outcome": "lexmount_only",
+                    "target_website": "example.com",
                     "evidence_bucket": "site_or_access_environment",
-                    "local": {"failure_category": "E1"},
+                    "local": {
+                        "failure_category": "E1",
+                        "error_signature": "navigation_failure",
+                        "raw_log_indicators": ["network_navigation"],
+                    },
                 },
                 {
                     "task_id": "99",
@@ -60,6 +65,7 @@ def test_analyze_mechanism_repeats_tracks_followup_retention() -> None:
 
     assert result["success_attempts"] == {"lexmount": 4, "local": 5}
     assert result["per_task"][0]["pattern"] == "XXXL"
+    assert result["per_task"][0]["target_website"] == "example.com"
     assert result["category_summary"]["stable_lexmount_only"] == {
         "tasks": 1,
         "followup_observations": 2,
@@ -73,6 +79,12 @@ def test_analyze_mechanism_repeats_tracks_followup_retention() -> None:
     }
     assert result["repeatability"]["contains_both_lexmount_only_and_local_only"] == 1
     assert result["evidence"]["discordant_observations"] == 4
+    assert result["evidence"]["loser_error_signatures"]["lexmount_only"] == {
+        "navigation_failure": 4
+    }
+    assert result["evidence"]["loser_raw_log_indicators"]["lexmount_only"] == {
+        "network_navigation": 4
+    }
 
 
 def test_analyze_mechanism_repeats_rejects_selection_mismatch() -> None:

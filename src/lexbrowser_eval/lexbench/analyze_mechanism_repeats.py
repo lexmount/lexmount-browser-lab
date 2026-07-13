@@ -76,6 +76,14 @@ def _audit_observations(
         "lexmount_only": Counter(),
         "local_only": Counter(),
     }
+    error_signature_counts: dict[str, Counter[str]] = {
+        "lexmount_only": Counter(),
+        "local_only": Counter(),
+    }
+    raw_indicator_counts: dict[str, Counter[str]] = {
+        "lexmount_only": Counter(),
+        "local_only": Counter(),
+    }
     outcome_counts: Counter[str] = Counter()
     near_threshold = 0
     high_similarity = 0
@@ -92,22 +100,30 @@ def _audit_observations(
             outcome = str(record.get("outcome") or "unknown")
             bucket = str(record.get("evidence_bucket") or "unresolved")
             outcome_counts[outcome] += 1
+            loser = (
+                record.get("local") or {}
+                if outcome == "lexmount_only"
+                else record.get("lexmount") or {}
+            )
             if outcome in bucket_counts:
                 bucket_counts[outcome][bucket] += 1
+                error_signature_counts[outcome][
+                    str(loser.get("error_signature") or "none")
+                ] += 1
+                raw_indicator_counts[outcome].update(loser.get("raw_log_indicators") or [])
             near_threshold += int(bool(record.get("near_threshold_loser")))
             high_similarity += int(bool(record.get("high_answer_similarity")))
             by_task[task_id].append(
                 {
                     "label": label,
                     "outcome": outcome,
+                    "target_website": record.get("target_website"),
                     "evidence_bucket": bucket,
                     "near_threshold_loser": bool(record.get("near_threshold_loser")),
                     "high_answer_similarity": bool(record.get("high_answer_similarity")),
-                    "loser_failure_category": (
-                        (record.get("local") or {}).get("failure_category")
-                        if outcome == "lexmount_only"
-                        else (record.get("lexmount") or {}).get("failure_category")
-                    ),
+                    "loser_failure_category": loser.get("failure_category"),
+                    "loser_error_signature": loser.get("error_signature"),
+                    "loser_raw_log_indicators": loser.get("raw_log_indicators") or [],
                 }
             )
     return by_task, {
@@ -115,6 +131,12 @@ def _audit_observations(
         "outcomes": dict(outcome_counts),
         "loser_evidence_buckets": {
             outcome: dict(counts) for outcome, counts in bucket_counts.items()
+        },
+        "loser_error_signatures": {
+            outcome: dict(counts) for outcome, counts in error_signature_counts.items()
+        },
+        "loser_raw_log_indicators": {
+            outcome: dict(counts) for outcome, counts in raw_indicator_counts.items()
         },
         "near_threshold_loser": near_threshold,
         "high_answer_similarity": high_similarity,
@@ -193,6 +215,14 @@ def analyze_mechanism_repeats(
             {
                 "task_id": task_id,
                 **selected[task_id],
+                "target_website": next(
+                    (
+                        observation["target_website"]
+                        for observation in audit_by_task[task_id]
+                        if observation.get("target_website")
+                    ),
+                    None,
+                ),
                 "pattern": pattern,
                 "followup_pattern": pattern[len(initial_pattern) :],
                 "lexmount_successes": sum(run[task_id] for run in lexmount_runs),

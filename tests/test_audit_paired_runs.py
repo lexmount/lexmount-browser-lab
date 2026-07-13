@@ -4,6 +4,7 @@ import pytest
 
 from lexbrowser_eval.lexbench.audit_paired_runs import (
     answer_similarity,
+    error_signature,
     evidence_bucket,
     load_dataset,
     load_evaluations,
@@ -37,6 +38,26 @@ def test_raw_log_indicators_ignore_status_digits_inside_urls() -> None:
     result = {"error": None, "action_history": ["Opened https://example.test/id/abc403def"]}
 
     assert raw_log_indicators(result) == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Agent stopped before completion after 6 steps without reporting done",
+            "agent_stopped_without_done",
+        ),
+        (
+            "Navigation failed: Expected at least one handler to return a non-None result",
+            "browser_state_handler_failure",
+        ),
+        ("Navigation failed: target closed", "navigation_failure"),
+        ("Timeout after 600 seconds", "timeout"),
+        ("Session create failed", "session_lifecycle_failure"),
+    ],
+)
+def test_error_signature_redacts_runtime_details(message: str, expected: str) -> None:
+    assert error_signature({"error": message}) == expected
 
 
 def test_evidence_bucket_keeps_mixed_causes_explicit() -> None:

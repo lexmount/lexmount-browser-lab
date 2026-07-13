@@ -125,6 +125,23 @@ def raw_log_indicators(result: dict[str, Any]) -> list[str]:
     return sorted(name for name, pattern in INDICATOR_PATTERNS.items() if pattern.search(text))
 
 
+def error_signature(result: dict[str, Any]) -> str | None:
+    text = str(result.get("error") or "").strip().lower()
+    if not text:
+        return None
+    if "agent stopped before completion" in text:
+        return "agent_stopped_without_done"
+    if "expected at least one handler to return" in text or "browserstaterequestevent" in text:
+        return "browser_state_handler_failure"
+    if "navigation failed" in text:
+        return "navigation_failure"
+    if "timeout after" in text or "timed out" in text:
+        return "timeout"
+    if "session" in text and ("create" in text or "connect" in text):
+        return "session_lifecycle_failure"
+    return "other_error"
+
+
 def failure_metadata(evaluation: dict[str, Any]) -> tuple[str | None, list[str]]:
     details = evaluation.get("evaluation_details") or {}
     classification = evaluation.get("failure_classification") or details.get(
@@ -184,6 +201,7 @@ def arm_record(
         "signals": task_summary.get("signals") or {},
         "failure_category": category,
         "failure_codes": codes,
+        "error_signature": error_signature(result),
         "raw_log_indicators": raw_log_indicators(result),
         "answer_length": len(answer or ""),
         "answer_sha256": hashlib.sha256((answer or "").encode()).hexdigest(),
@@ -261,6 +279,10 @@ def audit_paired_runs(
         "lexmount_only": Counter(),
         "local_only": Counter(),
     }
+    error_signature_counts: dict[str, Counter[str]] = {
+        "lexmount_only": Counter(),
+        "local_only": Counter(),
+    }
     discordant: list[dict[str, Any]] = []
 
     for task_id in task_ids:
@@ -306,6 +328,7 @@ def audit_paired_runs(
         high_answer_similarity = similarity is not None and similarity >= 0.75
         bucket_counts[outcome][bucket] += 1
         category_counts[outcome][loser.get("failure_category") or "NONE"] += 1
+        error_signature_counts[outcome][loser.get("error_signature") or "none"] += 1
         target_counts[outcome][str(metadata.get("target_website") or "unknown")] += 1
         discordant.append(
             {
@@ -338,6 +361,9 @@ def audit_paired_runs(
         },
         "loser_primary_failure_categories": {
             outcome: dict(counts) for outcome, counts in category_counts.items()
+        },
+        "loser_error_signatures": {
+            outcome: dict(counts) for outcome, counts in error_signature_counts.items()
         },
         "judge_sensitivity_flags": {
             "near_threshold_loser": sum(item["near_threshold_loser"] for item in discordant),
