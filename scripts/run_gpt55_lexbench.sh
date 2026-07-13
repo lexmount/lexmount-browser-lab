@@ -87,7 +87,7 @@ case "$PHASE" in
   capacity)
     [[ "$COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "capacity requires --count" >&2; exit 2; }
     CAPACITY_IDS="$ROOT_DIR/artifacts/task_sets/capacity-${COUNT}.txt"
-    uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/select_tasks.py" \
+    uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.select_tasks \
       --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
       --count "$COUNT" --output "$CAPACITY_IDS"
     read_task_ids "$CAPACITY_IDS"
@@ -110,17 +110,17 @@ mkdir -p "$OUTPUT_DIR"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
   export LOCAL_BROWSER_EXECUTABLE_PATH=${LOCAL_BROWSER_EXECUTABLE_PATH:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}
-  PROFILER="$ROOT_DIR/scripts/profile_process.py"
+  PROFILER_MODULE="lexbrowser_eval.resources.process_profiler"
   PROFILER_ARGS=(--min-host-available-gib 6)
   MACHINE_ID=${MACHINE_ID:-macos-${BACKEND}}
 else
-  PROFILER="$ROOT_DIR/scripts/profile_command.py"
+  PROFILER_MODULE="lexbrowser_eval.resources.cgroup_profiler"
   PROFILER_ARGS=()
   MACHINE_ID=${MACHINE_ID:-linux-${BACKEND}}
 fi
 
 set +e
-uv run --project "$ROOT_DIR" python "$PROFILER" \
+uv run --project "$ROOT_DIR" python -m "$PROFILER_MODULE" \
   --output-dir "$OUTPUT_DIR" \
   --cwd "$BENCHMARK_REPO" \
   --label "$RUN_ID" \
@@ -172,7 +172,7 @@ if ((SKIP_EVAL == 0)); then
   ) | tee "$OUTPUT_DIR/eval.log"
 fi
 
-uv run --project "$ROOT_DIR" python "$ROOT_DIR/scripts/summarize_run.py" \
+uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
   --run-dir "$BENCHMARK_OUTPUT" \
   --dataset "$BENCHMARK_REPO/browseruse_bench/data/LexBench-Browser/task.jsonl" \
   --resource-summary "$OUTPUT_DIR/resource_summary.json" \
