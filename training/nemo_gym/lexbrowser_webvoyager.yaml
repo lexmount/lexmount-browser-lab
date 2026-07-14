@@ -22,8 +22,8 @@ lexbrowser_webvoyager:
         # This is the real Verifiers/agent tool-turn limit.  It is deliberately
         # separate from grpo.max_num_steps (optimizer updates).
         max_turns: 8
-        judge_model: glm-5.2
-        stagehand_model: openai/glm-5.2
+        judge_model: gpt-5.5
+        stagehand_model: openai/gpt-5.5
         policy_model: gpt-4o
         proxy_model_to_stagehand: true
         browser_mode: normal

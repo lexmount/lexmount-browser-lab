@@ -89,6 +89,28 @@ class DeliveryHarnessTests(unittest.TestCase):
         self.assertIn('re.search(r"\\bERR_[A-Z_]+\\b", text)', source)
         self.assertNotIn('re.search(r"\\\\bERR_[A-Z_]+\\\\b", text)', source)
 
+    def test_delivery_defaults_to_dmx_gpt_5_5(self) -> None:
+        secrets_example = (DELIVERY / "secrets.env.example").read_text()
+        self.assertIn("OPENAI_BASE_URL=https://www.dmxapi.cn/v1", secrets_example)
+        self.assertIn("OPENAI_MODEL=gpt-5.5", secrets_example)
+        for config in (
+            ROOT / "training" / "nemo_gym" / "lexbrowser_webvoyager.yaml",
+            ROOT / "training" / "lexbrowser_webvoyager.yaml",
+        ):
+            source = config.read_text()
+            self.assertIn("judge_model: gpt-5.5", source)
+            self.assertIn("stagehand_model: openai/gpt-5.5", source)
+        for environment in (
+            ROOT / "training" / "nemo_gym" / "environment.py",
+            ROOT
+            / "training"
+            / "lexbrowser_webvoyager"
+            / "src"
+            / "lexbrowser_webvoyager_no_anti_bot"
+            / "environment.py",
+        ):
+            self.assertIn('os.environ.get("OPENAI_MODEL")', environment.read_text())
+
     def test_preflight_validator_accepts_distinct_gpu_family_nodes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
