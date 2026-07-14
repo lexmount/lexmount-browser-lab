@@ -1,6 +1,7 @@
-# LexBrowserEnv
+# Lexmount Browser Lab
 
-Lexmount Browser与Local Chrome/Playwright的可复现实验仓库。Agent、数据集和Judge
+Lexmount Browser与Local Chrome/Playwright的可复现实验仓库。Python实验包名为
+`lexbrowserenv-experiments`。Agent、数据集和Judge
 尽量使用官方实现；本仓库保存固定实验配置、一键Shell入口、进程归因资源监控和可审计报告。
 
 ## 支持范围
