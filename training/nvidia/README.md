@@ -1,7 +1,7 @@
 # NVIDIA delivery package
 
-This directory turns the stable `sxh-train` WebVoyager/Lexmount GRPO path into
-a Slurm-deliverable run. It leaves the existing 2x5090 launcher unchanged.
+This directory turns the validated WebVoyager/Lexmount GRPO path into a
+Slurm-deliverable run. It leaves the existing 2x5090 launcher unchanged.
 The default run is Qwen3-1.7B, revision
 `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e`, with the same 64-trajectory GRPO
 update geometry that produced the stable reward signal: 8 prompts x 8 sampled
@@ -28,11 +28,11 @@ There is no silent fallback to fewer GPUs, local Chrome, or a different model.
 Any missing GPU, NCCL, shared-storage, browser, or training condition fails
 the run and leaves a diagnosis in the run directory.
 
-The delivery launcher mounts the current `sxh-train` verifier config and the
-editable WebVoyager environment rather than maintaining a second browser
-lifecycle implementation. It therefore inherits the validated 60-second
-Lexmount session-create deadline and the late-session close/delete cleanup:
-timed-out creates do not silently leave provider browser capacity behind.
+The delivery launcher mounts the current verifier config and editable
+WebVoyager environment rather than maintaining a second browser lifecycle
+implementation. It therefore inherits the validated 60-second Lexmount
+session-create deadline and the late-session close/delete cleanup: timed-out
+creates do not silently leave provider browser capacity behind.
 
 ## Cluster contract
 
