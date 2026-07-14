@@ -66,12 +66,15 @@ cp training/nvidia/secrets.env.example secrets.env
 chmod 600 secrets.env
 ```
 
-Fill in the Lexmount and completion-judge values locally. The scheduler command
-uses an explicit non-secret environment whitelist and does not carry these
-values. `run.env`, manifests, preflight reports, resource reports, Ray logs,
-and diagnostic bundles contain names/statuses only, never credential values.
-The vendored NeMo launcher removes its upstream bare `env` diagnostics for the
-same reason.
+Fill in the Lexmount and completion-judge values locally. The delivery default
+uses the DMX OpenAI-compatible API at `https://www.dmxapi.cn/v1` with
+`gpt-5.5`. `OPENAI_MODEL` overrides the judge and fallback Stagehand model
+together when the target environment requires another compatible model. The
+scheduler command uses an explicit non-secret environment whitelist and does
+not carry these values. `run.env`, manifests, preflight reports, resource
+reports, Ray logs, and diagnostic bundles contain names/statuses only, never
+credential values. The vendored NeMo launcher removes its upstream bare `env`
+diagnostics for the same reason.
 
 ## Run sequence
 

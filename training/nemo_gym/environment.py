@@ -980,10 +980,10 @@ def load_environment(
     mode: str = "dom",
     dom_backend: str = "stagehand",
     max_turns: int = 30,
-    judge_model: str = "glm-5.2",
+    judge_model: str = "gpt-5.5",
     num_examples: int = -1,
     web_filter: str | None = None,
-    stagehand_model: str = "openai/glm-5.2",
+    stagehand_model: str = "openai/gpt-5.5",
     policy_model: str = "gpt-4o",
     proxy_model_to_stagehand: bool = True,
     browser_mode: str = "normal",
@@ -998,6 +998,10 @@ def load_environment(
 ) -> vf.Environment:
     if mode != "dom":
         raise ValueError("lexbrowser/webvoyager-no-anti-bot currently supports mode='dom' only")
+
+    if configured_model := os.environ.get("OPENAI_MODEL"):
+        judge_model = configured_model.removeprefix("openai/")
+        stagehand_model = f"openai/{judge_model}"
 
     dataset = load_webvoyager_dataset(num_examples=num_examples, web_filter=web_filter)
     parser = WebVoyagerTrajectoryParser()
