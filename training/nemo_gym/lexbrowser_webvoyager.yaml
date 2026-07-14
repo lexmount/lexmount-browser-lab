@@ -40,10 +40,11 @@ lexbrowser_webvoyager:
         # browser-creation boundary so 64 HTTP handlers never stampede the
         # Lexmount session API before the first vLLM turn.
         max_concurrent_sessions: 8
-        # The provider SDK otherwise uses a 60s HTTP timeout, which previously
-        # hid a session-creation queue as an empty exception. Fail fast with a
-        # typed, timed audit event instead.
-        session_create_timeout_s: 30.0
+        # Give Lexmount enough time to return a cold browser session. If this
+        # deadline is exceeded, the environment now keeps the late provider
+        # create task alive and closes the session as soon as it returns, so a
+        # timeout does not leak cloud-browser capacity.
+        session_create_timeout_s: 60.0
         stagehand_ready_timeout_s: 90.0
         # Cold real-site reset/navigation has its own budget.  This is not
         # used for policy tool calls, which remain bounded at 25 seconds.

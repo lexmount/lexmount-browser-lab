@@ -781,6 +781,7 @@ class LexmountDOMMode:
         self._client_lock = asyncio.Lock()
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
         self.session_create_timeout_s = session_create_timeout_s
+        self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
         self.logger = LOGGER
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
@@ -840,11 +841,37 @@ class LexmountDOMMode:
             else:
                 session_kwargs["official_proxy"] = self.official_proxy
             create_started_at = time.monotonic()
+            create_task: asyncio.Task[Any] = asyncio.create_task(
+                asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs)
+            )
             try:
                 lexmount_session = await asyncio.wait_for(
-                    asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs),
+                    asyncio.shield(create_task),
                     timeout=self.session_create_timeout_s,
                 )
+            except asyncio.TimeoutError as exc:
+                cleanup_task = asyncio.create_task(
+                    self._cleanup_late_session_create(
+                        create_task,
+                        create_started_at=create_started_at,
+                    )
+                )
+                self._background_session_cleanup_tasks.add(cleanup_task)
+                cleanup_task.add_done_callback(
+                    self._background_session_cleanup_tasks.discard
+                )
+                guard.record_timing(
+                    "lexmount_session_create_seconds",
+                    create_started_at,
+                    phase="lexmount_session_create",
+                    status="error:TimeoutError",
+                )
+                self.logger.warning(
+                    "Lexmount session creation timed out after %.2fs; "
+                    "late-created session will be closed if the provider returns it",
+                    time.monotonic() - create_started_at,
+                )
+                raise exc
             except Exception as exc:
                 guard.record_timing(
                     "lexmount_session_create_seconds",
@@ -892,9 +919,82 @@ class LexmountDOMMode:
             return state
         except Exception:
             if lexmount_session is not None:
-                await asyncio.to_thread(lexmount_session.close)
+                await self._close_lexmount_session(
+                    lexmount_session, reason="setup_state_exception"
+                )
             self._release_slot(state)
             raise
+
+    async def _cleanup_late_session_create(
+        self,
+        create_task: asyncio.Task[Any],
+        *,
+        create_started_at: float,
+    ) -> None:
+        try:
+            lexmount_session = await create_task
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.logger.warning(
+                "Late Lexmount session create finished with error after %.2fs: %r",
+                time.monotonic() - create_started_at,
+                exc,
+            )
+            return
+        await self._close_lexmount_session(
+            lexmount_session,
+            reason=(
+                "session_create_timeout_late_cleanup "
+                f"after={time.monotonic() - create_started_at:.2f}s"
+            ),
+        )
+
+    async def _close_lexmount_session(self, lexmount_session: Any, *, reason: str) -> None:
+        session_id = str(
+            getattr(lexmount_session, "id", None)
+            or getattr(lexmount_session, "session_id", None)
+            or ""
+        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(lexmount_session.close),
+                timeout=30.0,
+            )
+            self.logger.info(
+                "Closed Lexmount session%s (%s)",
+                f" {session_id}" if session_id else "",
+                reason,
+            )
+            return
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to close Lexmount session%s (%s): %r",
+                f" {session_id}" if session_id else "",
+                reason,
+                exc,
+            )
+        if session_id:
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.lexmount.sessions.delete,
+                        session_id=session_id,
+                    ),
+                    timeout=30.0,
+                )
+                self.logger.info(
+                    "Deleted Lexmount session %s after close failure (%s)",
+                    session_id,
+                    reason,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to delete Lexmount session %s after close failure (%s): %r",
+                    session_id,
+                    reason,
+                    exc,
+                )
 
     def _llm_config(self, state: vf.State) -> dict[str, str] | None:
         if not self.proxy_model_to_stagehand:
@@ -949,7 +1049,9 @@ class LexmountDOMMode:
                 await asyncio.to_thread(browser_session.close)
             lexmount_session = state.pop("lexmount_session", None)
             if lexmount_session is not None:
-                await asyncio.to_thread(lexmount_session.close)
+                await self._close_lexmount_session(
+                    lexmount_session, reason="rollout_cleanup"
+                )
         finally:
             state.pop("stagehand_session_id", None)
             state.pop("lexmount_session_id", None)
@@ -1329,7 +1431,7 @@ def load_environment(
     browser_mode: str = "normal",
     official_proxy: bool = False,
     max_concurrent_sessions: int = 20,
-    session_create_timeout_s: float = 30.0,
+    session_create_timeout_s: float = 60.0,
     stagehand_ready_timeout_s: float = 60.0,
     setup_navigation_timeout_s: float = 90.0,
     per_tool_timeout_s: float = 25.0,
