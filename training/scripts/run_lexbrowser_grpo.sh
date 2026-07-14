@@ -35,7 +35,7 @@ if [[ "$(stat -c '%a' "$ROOT/secrets.env")" != "600" ]]; then
   exit 1
 fi
 
-for name in LEXMOUNT_API_KEY LEXMOUNT_PROJECT_ID OPENAI_API_KEY OPENAI_BASE_URL; do
+for name in LEXMOUNT_BASE_URL LEXMOUNT_API_KEY LEXMOUNT_PROJECT_ID OPENAI_API_KEY OPENAI_BASE_URL; do
   if ! grep -q "^${name}=" "$ROOT/secrets.env"; then
     echo "secrets.env is missing $name" >&2
     exit 1
@@ -117,9 +117,8 @@ if [[ "$MODE" == "stage1" ]]; then
   # Stage 1 acceptance: one GRPO group of eight real WebVoyager trajectories.
   # Keep this first update deliberately at micro-batch=1: it validates that a
   # *single* 16K packed trajectory can complete the backward pass after the
-  # eight rollouts have been collected.  It is not the final throughput setup;
-  # the `train` mode retains micro-batch=4/global-batch=8 (two accumulation
-  # steps) once this gate has passed.
+  # eight rollouts have been collected. It is not the final throughput setup;
+  # `train` retains micro-batch=4/global-batch=64 (16 accumulation steps).
   overrides=(
     grpo.num_prompts_per_step=1
     grpo.num_generations_per_prompt=8
@@ -166,6 +165,18 @@ fi
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file=""
 audit_container_path="/workspace/LexBrowserEnv/logs/lexbrowser-grpo/${MODE}-${timestamp}.trajectory_audit.jsonl"
+gpu_audit_host_path="$ROOT/logs/lexbrowser-grpo/${MODE}-${timestamp}.gpu_samples.csv"
+gpu_audit_container_path="/workspace/LexBrowserEnv/logs/lexbrowser-grpo/${MODE}-${timestamp}.gpu_samples.csv"
+
+# Gate runs must never auto-discover a legacy adapter from the shared checkpoint
+# directory. Each 1.7B verification must initialize a new LoRA; formal `train`
+# already uses a timestamp-scoped directory below, so give stage gates the same
+# clean-start property even with checkpoint saving disabled.
+if [[ "$MODE" == "smoke" || "$MODE" == "stage1" || "$MODE" == "stage2" ]]; then
+  overrides+=(
+    "checkpointing.checkpoint_dir=/workspace/LexBrowserEnv/results/lexbrowser-grpo/gates/${MODE}-${timestamp}"
+  )
+fi
 
 # A formal run must never silently resume a checkpoint left by an unrelated
 # browser/network experiment.  In particular, a failed egress configuration
@@ -239,6 +250,23 @@ fi
 # browser failures, or arbitrary training errors.
 run_one_attempt() {
   local attempt_log="$1"
+  # Sample both GPUs independently of TensorBoard.  The rollout audit carries
+  # matching epoch windows, allowing the report to quantify (not guess) how
+  # often both model GPUs were idle while Gym/browser work was in flight.
+  printf 'unix_time,gpu_index,utilization_gpu_pct,memory_used_mib,memory_total_mib\n' > "$gpu_audit_host_path"
+  (
+    while true; do
+      sample_time="$(date +%s.%N)"
+      nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total \
+        --format=csv,noheader,nounits 2>/dev/null \
+        | awk -F ',' -v now="$sample_time" '{
+            for (i = 1; i <= NF; i++) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i) }
+            print now "," $1 "," $2 "," $3 "," $4
+          }' >> "$gpu_audit_host_path"
+      sleep 2
+    done
+  ) &
+  local gpu_sampler_pid=$!
   set +e
   "${DOCKER[@]}" run --rm --name "$container_name" --gpus '"device=0,1"' \
   --network host \
@@ -251,6 +279,8 @@ run_one_attempt() {
   -e HF_HOME=/workspace/cache/huggingface \
   -e UV_CACHE_DIR=/workspace/cache/uv \
   -e LEXBROWSER_TRAJECTORY_AUDIT_LOG="$audit_container_path" \
+  -e PYTHONPATH=/workspace/LexBrowserEnv/training/nemo_gym/runtime_overrides \
+  -e LEXBROWSER_STABLE_GRPO_GROUPING=1 \
   -e NO_PROXY=127.0.0.1,localhost \
   -e no_proxy=127.0.0.1,localhost \
   -v "$ROOT:/workspace/LexBrowserEnv" \
@@ -261,15 +291,14 @@ run_one_attempt() {
   -v "$ROOT/training/nemo_gym/verifiers_agent_app.py:$GYM_DIR/app.py:ro" \
   -v "$ROOT/training/nemo_gym/verifiers_agent_requirements.txt:$GYM_DIR/requirements.txt:ro" \
   -v "$ROOT/training/nemo_gym/lexbrowser_webvoyager.yaml:$GYM_DIR/configs/lexbrowser_webvoyager.yaml:ro" \
-  -v "$ROOT/training/nemo_rl_patches/vllm_worker.py:/opt/nemo-rl/nemo_rl/models/generation/vllm/vllm_worker.py:ro" \
-  -v "$ROOT/training/nemo_rl_patches/vllm_worker_async.py:/opt/nemo-rl/nemo_rl/models/generation/vllm/vllm_worker_async.py:ro" \
-  -v "$ROOT/training/nemo_rl_patches/grpo.py:/opt/nemo-rl/nemo_rl/algorithms/grpo.py:ro" \
   -v "$ROOT/training/configs/grpo_lexbrowser_webvoyager_qwen3_1_7b_2x5090.yaml:/workspace/config.yaml:ro" \
   -w /opt/nemo-rl \
   "$IMAGE" \
   python examples/nemo_gym/run_grpo_nemo_gym.py \
     --config /workspace/config.yaml "${overrides[@]}" 2>&1 | tee "$attempt_log"
   local status=${PIPESTATUS[0]}
+  kill "$gpu_sampler_pid" >/dev/null 2>&1 || true
+  wait "$gpu_sampler_pid" >/dev/null 2>&1 || true
   set -e
   return "$status"
 }
@@ -301,6 +330,10 @@ if [[ "$MODE" == "train" || "$MODE" == "calibration" ]]; then
   report_log_root="logs/lexbrowser-grpo/${MODE}-${timestamp}"
   report_training_log="/workspace/LexBrowserEnv${log_file#"$ROOT"}"
   report_audit_log="$audit_container_path"
+  report_group_size=64
+  if [[ "$MODE" == "calibration" ]]; then
+    report_group_size=8
+  fi
   "${DOCKER[@]}" run --rm \
     -v "$ROOT:/workspace/LexBrowserEnv" \
     -w /workspace/LexBrowserEnv \
@@ -310,6 +343,8 @@ if [[ "$MODE" == "train" || "$MODE" == "calibration" ]]; then
       --output-dir "$report_dir" \
       --training-log "$report_training_log" \
       --audit-log "$report_audit_log" \
+      --gpu-audit "$gpu_audit_container_path" \
+      --group-size "$report_group_size" \
       --mode "$MODE"
 fi
 

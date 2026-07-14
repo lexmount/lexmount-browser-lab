@@ -1,17 +1,16 @@
 defaults: /opt/nemo-rl/examples/configs/grpo_math_1B.yaml
 
 grpo:
-  # One GRPO group per update keeps browser rollout concurrency bounded to
-  # eight real WebVoyager sessions.  This is the stable production setting
-  # for the Lexmount backend; the group still contains eight sampled traces.
-  num_prompts_per_step: 1
+  # One optimizer update contains eight independent WebVoyager tasks. Each
+  # task contributes one GRPO group of eight sampled trajectories.
+  num_prompts_per_step: 8
   num_generations_per_prompt: 8
   # NeMo Gym owns the 100-turn browser trajectory and returns it as one RL rollout.
   max_rollout_turns: 1
-  # Match the BrowserEnv reference run's 100 optimizer steps.  One shuffled
-  # WebVoyager task is selected for each 8-rollout GRPO group.
+  # 150 updates with 8 shuffled prompts/update = two passes over the 600-task
+  # WebVoyager corpus. Each update still contains 8 rollout samples per task.
   max_num_epochs: 2
-  max_num_steps: 100
+  max_num_steps: 150
   normalize_rewards: true
   use_leave_one_out_baseline: true
   val_period: 0
@@ -36,34 +35,33 @@ policy:
   tokenizer:
     name: /home/wf/models/Qwen3-1.7B
     chat_template_kwargs:
-      # This local Qwen3-1.7B emits reliable Hermes tool calls only when its
-      # native reasoning path is enabled (same setting as the known-good
-      # MiniWob++/Lexmount run in /data/wf/RL).
+      # Keep the model's native reasoning format enabled for Hermes tool calls.
       enable_thinking: true
-  # Two micro-batches of four trajectories form one effective batch of eight:
-  # gradient accumulation = train_global_batch_size / train_micro_batch_size
-  # = 2 (TP=2, DP=1).
-  train_global_batch_size: 8
+  # 8 tasks x 8 trajectories = 64 trajectories per optimizer update. With
+  # micro-batch=4 this is 16 gradient-accumulation micro-batches.
+  train_global_batch_size: 64
   train_micro_batch_size: 4
-  logprob_batch_size: 4
-  generation_batch_size: 8
-  # A 16K single-trajectory backward OOMed even at micro-batch=1.  Keep every
-  # policy path at this verified 12K fallback; do not mix rollout, logprob,
-  # and training context limits.
+  # NeMo's stock logprob path materializes full-vocabulary logits. Keep this
+  # at one trajectory while retaining the 64-trajectory GRPO update and
+  # accumulation=16.
+  logprob_batch_size: 1
+  generation_batch_size: 64
+  # Keep the full browser-agent trajectory at 12K.  This is deliberately
+  # below the 16K request: it leaves headroom for TP=2 logprob/backward
+  # without truncating an individual assistant action (still 512 tokens).
   max_total_sequence_length: 12288
   precision: bfloat16
 
   dtensor_cfg:
     _v2: true
     enabled: true
-    # The host is shared and already uses about 55 GiB at idle. CPU offload made
-    # the two FSDP workers peak at 18-20 GiB each and triggered Ray's host-OOM
-    # guard. Qwen3-1.7B sharded across two 5090s fits without parameter offload.
+    # Do not offload parameters to host memory.  The policy spans both 5090s
+    # during policy work; standard NeMo colocated mode gives these cards back
+    # to vLLM only for generation.
     cpu_offload: false
     activation_checkpointing: true
-    # FSDP2 sequence packing cannot combine with context parallelism in NeMo
-    # RL v0.6.  Tensor-parallel vocabulary/lm_head sharding keeps the 12K
-    # logprob and backward phases within the two-card memory budget.
+    # Policy TP=2 across the two shared 5090s.  Sequence packing remains
+    # compatible because context parallelism is disabled.
     tensor_parallel_size: 2
     context_parallel_size: 1
     lora_cfg:
@@ -75,8 +73,7 @@ policy:
       dim: 8
       alpha: 32
       dropout: 0.0
-      # NeMo RL v0.6 forbids Triton LoRA kernels with TP>1.  Keep LoRA itself
-      # enabled, but use the compatible torch implementation for TP=2.
+      # NeMo-RL rejects the LoRA Triton backend when TP > 1.
       use_triton: false
 
   megatron_cfg:
@@ -111,14 +108,16 @@ policy:
     vllm_cfg:
       async_engine: true
       precision: bfloat16
-      # Match policy TP so rollout and logprob share the same two-GPU topology.
+      # vLLM TP=2 shares both 5090s only during rollout.  Native NeMo-RL v0.6
+      # colocated sleep/wake releases its weights and KV cache before policy
+      # logprob/backward; no NeMo-RL source override is mounted.
       tensor_parallel_size: 2
       pipeline_parallel_size: 1
       expert_parallel_size: 1
-      # With TP=2, vLLM and the dormant FSDP2 policy still coexist during
-      # rollout wake-up.  Reserve 65% for KV cache while keeping 12K context
-      # and enough headroom for the policy phase.
-      gpu_memory_utilization: 0.65
+      # Keep initialization and 12K KV conservative while the policy worker
+      # is constructed on the same GPUs.  This limits rollout concurrency,
+      # not the 64 trajectories collected per GRPO update.
+      gpu_memory_utilization: 0.40
       # Match the train/logprob sequence limit exactly.
       max_model_len: 12288
       enforce_eager: true
@@ -133,9 +132,20 @@ policy:
           enable_thinking: true
     vllm_kwargs:
       enable_chunked_prefill: true
-      max_num_seqs: 20
+      # Collect each 64-trajectory GRPO update in safe eight-request waves;
+      # the group size remains 8 prompts x 8 rollouts.
+      max_num_seqs: 8
+    # Original NeMo-RL v0.6 colocated mode: its native generation lifecycle
+    # calls vLLM sleep after rollout and wake before the next rollout.  Thus
+    # vLLM and policy each use TP=2 on the same cards without CPU offload or
+    # runtime replacement of NeMo-RL source files.
     colocated:
       enabled: true
+      resources:
+        # Resources are ignored in colocated mode; retain the actual shared
+        # two-GPU topology for readability.
+        gpus_per_node: 2
+        num_nodes: 1
 
 data:
   max_input_seq_length: null

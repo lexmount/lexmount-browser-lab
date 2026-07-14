@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar
 import logging
 import traceback
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,51 @@ from nemo_gym.server_utils import get_global_aiohttp_client
 
 
 logger = logging.getLogger(__name__)
+
+# A rollout is handled by several asyncio tasks (browser environment, vLLM
+# client, and judge).  Keep a request-local, secret-free timing record so the
+# audit can distinguish model work from browser/provider waiting.  This is
+# entirely inside the Gym agent app; it neither patches NeMo-RL nor changes
+# sampling, rewards, or token reconstruction.
+_ACTIVE_ROLLOUT_TIMING: ContextVar[dict[str, Any] | None] = ContextVar(
+    "active_lexbrowser_rollout_timing", default=None
+)
+_SHARED_SEMAPHORES: dict[tuple[int, str, int], asyncio.Semaphore] = {}
+
+
+async def _shared_semaphore(kind: str, limit: int) -> Any:
+    """Return a process-wide Gym semaphore, rather than one per HTTP request."""
+    if limit < 0:
+        return await maybe_semaphore(limit)
+    loop = asyncio.get_running_loop()
+    key = (id(loop), kind, limit)
+    semaphore = _SHARED_SEMAPHORES.get(key)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(limit)
+        _SHARED_SEMAPHORES[key] = semaphore
+    return semaphore
+
+
+def _record_timing_event(
+    timing: dict[str, Any] | None,
+    metric: str,
+    started_at_monotonic: float,
+    *,
+    phase: str,
+    status: str,
+) -> None:
+    if timing is None:
+        return
+    duration = max(0.0, time.monotonic() - started_at_monotonic)
+    timing[metric] = float(timing.get(metric, 0.0)) + duration
+    timing.setdefault("timing_events", []).append(
+        {
+            "phase": phase,
+            "started_at_unix": round(time.time() - duration, 3),
+            "duration_seconds": round(duration, 6),
+            "status": status,
+        }
+    )
 
 # NeMo RL sends the task transport payload directly to this agent's
 # ``run_group`` call.  It does not use the Verifiers environment Dataset's
@@ -185,6 +232,8 @@ class VLLMOpenAIClient:
             self.completions = client
 
     async def create(self, *args: Any, **kwargs: Any) -> ChatCompletion:
+        timing = _ACTIVE_ROLLOUT_TIMING.get()
+        request_started_at = time.monotonic()
         request_body: dict[str, Any] = {
             "model": kwargs.get("model", ""),
             "messages": kwargs.get("messages", []),
@@ -222,6 +271,15 @@ class VLLMOpenAIClient:
                 response_dict = await resp.json()
         except Exception as e:
             logger.error(f"Exception calling {url}: {type(e).__name__}: {e}")
+            if timing is not None:
+                timing["policy_request_count"] = float(timing.get("policy_request_count", 0.0)) + 1.0
+                _record_timing_event(
+                    timing,
+                    "policy_request_seconds",
+                    request_started_at,
+                    phase="policy_vllm_request",
+                    status=f"error:{type(e).__name__}",
+                )
             raise
 
         choice_dict = response_dict["choices"][0]
@@ -262,6 +320,15 @@ class VLLMOpenAIClient:
         response = ChatCompletion.model_validate(response_dict)
         setattr(response, "prompt_token_ids", prompt_token_ids)
         setattr(response.choices[0], "token_ids", generation_token_ids)
+        if timing is not None:
+            timing["policy_request_count"] = float(timing.get("policy_request_count", 0.0)) + 1.0
+            _record_timing_event(
+                timing,
+                "policy_request_seconds",
+                request_started_at,
+                phase="policy_vllm_request",
+                status="ok",
+            )
         return response
 
 
@@ -532,6 +599,61 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
         counts["no_tool_call"] = 1.0 if counts["tool_calls"] == 0 else 0.0
         return counts
 
+    @staticmethod
+    def _finalize_timing(state: dict, timing: dict[str, Any]) -> dict[str, float]:
+        """Merge app, browser, and policy durations into audit/TensorBoard metrics."""
+        finished_at_monotonic = time.monotonic()
+        timing["rollout_finished_at_unix"] = round(time.time(), 3)
+        timing["rollout_wall_seconds"] = max(
+            0.0, finished_at_monotonic - float(timing["rollout_started_at_monotonic"])
+        )
+
+        guard = state.get("trajectory_guard")
+        if guard is not None:
+            guard_started_at = getattr(guard, "started_at", None)
+            if guard_started_at is not None:
+                timing["agent_to_browser_dispatch_seconds"] = max(
+                    0.0, float(guard_started_at) - float(timing["rollout_started_at_monotonic"])
+                )
+            for key, value in dict(getattr(guard, "timings", {}) or {}).items():
+                timing[key] = float(value)
+            timing.setdefault("timing_events", []).extend(
+                list(getattr(guard, "timing_events", []) or [])
+            )
+
+        timing["judge_seconds"] = float(state.get("judge_seconds", timing.get("judge_seconds", 0.0)))
+        timing["browser_response_seconds"] = sum(
+            float(timing.get(key, 0.0))
+            for key in (
+                "lexmount_session_create_seconds",
+                "browser_attach_seconds",
+                "browser_setup_navigation_seconds",
+                "browser_tool_seconds",
+            )
+        )
+        timing["browser_or_scheduler_wait_seconds"] = (
+            float(timing.get("browser_slot_wait_seconds", 0.0))
+            + float(timing["browser_response_seconds"])
+        )
+        # Epoch timestamps/events are audit metadata, not learning metrics.
+        state["lexbrowser_timing"] = timing
+        metric_keys = (
+            "rollout_wall_seconds",
+            "agent_to_browser_dispatch_seconds",
+            "browser_slot_wait_seconds",
+            "lexmount_session_create_seconds",
+            "browser_attach_seconds",
+            "browser_setup_navigation_seconds",
+            "browser_tool_seconds",
+            "browser_tool_count",
+            "browser_response_seconds",
+            "browser_or_scheduler_wait_seconds",
+            "policy_request_seconds",
+            "policy_request_count",
+            "judge_seconds",
+        )
+        return {key: float(timing.get(key, 0.0)) for key in metric_keys}
+
     def _write_trajectory_audit(
         self,
         *,
@@ -585,6 +707,9 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
             # Keeping only a string avoids attempting to serialize aiohttp or
             # Stagehand exception objects through the NeMo Gym/Ray transport.
             "infrastructure_error": state.get("infrastructure_error"),
+            # Timing has no prompts, credentials, CDP URLs, or DOM content.
+            # Events make GPU-idle correlation reproducible after the run.
+            "timing": state.get("lexbrowser_timing", {}),
             # Audit the actual policy prompt separately from the completion.
             # This lets us prove that browser-use instructions reached the
             # rollout worker without recording secrets or hidden token data.
@@ -610,6 +735,12 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
         response: Response,
         body: VerifiersAgentRunRequest = Body(),
     ) -> VerifiersNeMoGymResponse:
+        rollout_timing: dict[str, Any] = {
+            "rollout_started_at_monotonic": time.monotonic(),
+            "rollout_started_at_unix": round(time.time(), 3),
+            "timing_events": [],
+        }
+        timing_token = _ACTIVE_ROLLOUT_TIMING.set(rollout_timing)
         try:
             vf_env_id = body.vf_env_id or self.config.vf_env_id
             vf_env = self._get_env(vf_env_id)
@@ -661,18 +792,24 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                     and self._text(message.get("content", "")).strip()
                 )
 
+            rollout_info = dict(body.info or {})
             rollout_input = vf.RolloutInput(
                 prompt=prompt_messages,
                 answer=body.answer,
                 task=task_text,
-                info=body.info,
+                info=rollout_info,
                 example_id=body.example_id,
             )
 
             client = self._get_openai_client()
 
-            gen_sem = await maybe_semaphore(self.config.max_concurrent_generation)
-            score_sem = await maybe_semaphore(self.config.max_concurrent_scoring)
+            # This semaphore must be shared by all 64 HTTP requests in an
+            # optimizer step. Creating one per request made a configured "8"
+            # effectively behave as 64 concurrent Lexmount session creates.
+            gen_sem = await _shared_semaphore(
+                "generation", self.config.max_concurrent_generation
+            )
+            score_sem = await _shared_semaphore("scoring", self.config.max_concurrent_scoring)
 
             # prefer NeMo RL generation config set in responses_create_params https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/experience/rollouts.py#L1045-L1046
             sampling_args = {
@@ -680,84 +817,67 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                 "temperature": getattr(body.responses_create_params, "temperature", None) or self.config.temperature,
                 "top_p": getattr(body.responses_create_params, "top_p", None) or self.config.top_p,
             }
-            # A browser setup failure must not take down the full Ray rollout
-            # batch.  Re-sample this one task with a clean environment/session;
-            # setup_state itself also renews a failed Lexmount Chrome once.
+            # ``gen_sem`` is acquired by Verifiers before the browser setup
+            # path.  It serializes model-generation pressure for the whole
+            # rollout, so waiting for it is normal scheduler queueing—not a
+            # browser failure.  Do not put a wall-clock timeout around
+            # ``run_group`` here: that would cancel queued requests before
+            # they can create a Lexmount session and then starve them by
+            # retrying into the same queue.  The environment itself owns
+            # bounded session, navigation, tool, and episode timeouts.
             last_error: Exception | None = None
             states = None
-            for infra_attempt in range(1, 4):
-                try:
-                    # ``episode_timeout_s`` bounds normal tool turns, but a
-                    # provider socket can still strand ``run_group`` while a
-                    # setup coroutine is being cancelled.  Put a hard wall
-                    # clock around the complete single-rollout invocation so
-                    # one dead browser can never hold an eight-member GRPO
-                    # group indefinitely.  The 210s budget is deliberately
-                    # larger than the configured 180s episode budget.
-                    states = await asyncio.wait_for(
-                        vf_env.run_group(
-                            group_inputs=[rollout_input],
-                            client=client,
-                            model=self.config.model_name,
-                            gen_sampling_args=sampling_args,
-                            gen_sem=gen_sem,
-                            score_sem=score_sem,
-                        ),
-                        timeout=210.0,
-                    )
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    # ``LexBrowserEnv.setup_state`` already used its bounded
-                    # fresh-Chrome navigation retries. Re-running the entire
-                    # group here would multiply one unavailable website into
-                    # nine expensive 90s attempts, without changing network
-                    # state. Serialize the terminal infrastructure outcome
-                    # below instead of turning a transient provider route
-                    # failure into a stalled GRPO batch.
-                    if "infrastructure_setup_navigation_failed" in str(exc):
-                        logger.warning(
-                            "Setup navigation exhausted its session retries for task %s; "
-                            "returning invalid infrastructure rollout",
-                            task_idx,
-                        )
-                        break
-                    logger.warning(
-                        "Infrastructure rollout retry %s/3 for task %s: %s",
-                        infra_attempt,
-                        task_idx,
-                        exc,
-                    )
-                    if infra_attempt < 3:
-                        await asyncio.sleep(0.5 * infra_attempt)
+            try:
+                states = await vf_env.run_group(
+                    group_inputs=[rollout_input],
+                    client=client,
+                    model=self.config.model_name,
+                    gen_sampling_args=sampling_args,
+                    gen_sem=gen_sem,
+                    score_sem=score_sem,
+                )
+            except asyncio.CancelledError:
+                # Preserve shutdown semantics; cancellation is not a reward.
+                raise
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Infrastructure rollout failed for task %s without wrapper retry: %r",
+                    task_idx,
+                    exc,
+                )
             if states is None:
                 # Serialize a structured, explicitly invalid infrastructure
                 # outcome instead of returning HTTP 500 with an aiohttp error
                 # object that Ray cannot pickle.  Downstream reporting excludes
                 # valid_trajectory=0 from reward curves.
                 logger.error(
-                    "All infrastructure retries exhausted for task %s: %r",
+                    "Infrastructure rollout failed for task %s: %r",
                     task_idx,
                     last_error,
                 )
                 failure_metrics = {
                     "infrastructure_failures": 1.0,
                     "valid_trajectory": 0.0,
-                    "setup_navigation_attempts": 3.0,
+                    # This adapter did not itself retry setup.  Environment
+                    # metrics report any real setup attempts separately.
+                    "setup_navigation_attempts": 0.0,
                     "setup_navigation_retry_success": 0.0,
                 }
+                failure_state = {
+                    "prompt": prompt_messages,
+                    "completion": [],
+                    "infrastructure_error": (
+                        f"{type(last_error).__name__}: {last_error}"
+                        if last_error is not None
+                        else "unknown infrastructure failure"
+                    ),
+                }
+                failure_metrics.update(self._finalize_timing(failure_state, rollout_timing))
                 self._write_trajectory_audit(
                     task_idx=task_idx,
                     rollout_input=rollout_input,
-                    state={
-                        "prompt": prompt_messages,
-                        "completion": [],
-                        "infrastructure_error": (
-                            f"{type(last_error).__name__}: {last_error}"
-                            if last_error is not None
-                            else "unknown infrastructure failure"
-                        ),
-                    },
+                    state=failure_state,
                     reward=0.0,
                     metrics=failure_metrics,
                 )
@@ -770,7 +890,7 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                         generation_log_probs=[0.0],
                     ).model_dump()
                 ]
-                return VerifiersNeMoGymResponse(
+                response_payload = VerifiersNeMoGymResponse(
                     id=f"verifiers-{vf_env_id}-{task_idx}",
                     created_at=0,
                     model=self.config.model_name,
@@ -781,11 +901,14 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                     reward=0.0,
                     metrics=failure_metrics,
                 )
+                _ACTIVE_ROLLOUT_TIMING.reset(timing_token)
+                return response_payload
 
             state = states[0]
             reward = state.get("reward", 0.0) or 0.0
             metrics = dict(state.get("metrics", {}) or {})
             metrics.update(self._trajectory_metrics(state))
+            metrics.update(self._finalize_timing(state, rollout_timing))
 
             self._write_trajectory_audit(
                 task_idx=task_idx,
@@ -797,7 +920,7 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
 
             output = self._convert_trajectory_to_output(state)
 
-            return VerifiersNeMoGymResponse(
+            response_payload = VerifiersNeMoGymResponse(
                 id=f"verifiers-{vf_env_id}-{task_idx}",
                 created_at=0,
                 model=self.config.model_name,
@@ -808,9 +931,12 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                 reward=reward,
                 metrics=metrics,
             )
+            _ACTIVE_ROLLOUT_TIMING.reset(timing_token)
+            return response_payload
         except Exception as e:
             logger.error(f"Exception in responses(): {type(e).__name__}: {e}")
             logger.error(f"Traceback:\n{traceback.format_exc()}")
+            _ACTIVE_ROLLOUT_TIMING.reset(timing_token)
             raise
 
     async def run(

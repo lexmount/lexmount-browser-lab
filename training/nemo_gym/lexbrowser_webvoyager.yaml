@@ -35,10 +35,15 @@ lexbrowser_webvoyager:
         # external proxy credentials, if supplied, still take precedence.
         official_proxy: false
         # Real-site Stagehand navigate has a fixed 15s DOM-ready deadline.
-        # Match the eight-member GRPO group.  This bounds a permanently
-        # unavailable origin to one retry window instead of serializing it
-        # across two four-browser waves.
+        # One formal step still contains 64 trajectories, but the policy GPU
+        # can hold only about eight 12K requests. Share this same limit at the
+        # browser-creation boundary so 64 HTTP handlers never stampede the
+        # Lexmount session API before the first vLLM turn.
         max_concurrent_sessions: 8
+        # The provider SDK otherwise uses a 60s HTTP timeout, which previously
+        # hid a session-creation queue as an empty exception. Fail fast with a
+        # typed, timed audit event instead.
+        session_create_timeout_s: 30.0
         stagehand_ready_timeout_s: 90.0
         # Cold real-site reset/navigation has its own budget.  This is not
         # used for policy tool calls, which remain bounded at 25 seconds.
@@ -52,8 +57,11 @@ lexbrowser_webvoyager:
         episode_timeout_s: 180.0
         max_repeated_tool_calls: 3
       group_size: 1
-      max_concurrent_generation: 4
-      max_concurrent_scoring: 4
+      # This is a process-wide semaphore in app.py. It limits *full browser
+      # rollouts* to eight waves, not the GRPO group size: one step remains
+      # 8 task x 8 rollout = 64 trajectories.
+      max_concurrent_generation: 8
+      max_concurrent_scoring: 64
       # Short phase-1 episodes: 8 tool turns × 512 generated tokens, plus
       # bounded observations and task context, stay inside the common 8K cap.
       # Keep this aligned with policy.generation.max_new_tokens. At 12K it

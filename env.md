@@ -10,8 +10,13 @@ qwen模型目录：/home/wf/models/Qwen3-8B
 
 
 # Lexmount浏览器
-LEXMOUNT_API_KEY = oc2npdoTOFTK00Ys8bzVu3LJx59aXGa3
-LEXMOUNT_PROJECT_ID = 61c42286-5141-4bf0-a6aa-4ff6ff5b636b
+https://browser.lexmount.com/  
+LEXMOUNT_API_KEY = w95gvaxdF30XMg1sCUD0L8QpeujfQXfw
+LEXMOUNT_PROJECT_ID = 94ba7027-af11-4e30-8b30-05ac50f24ac6
+
+Sign in with google
+登录邮箱：
+xianghui.sun@lexmount.com
 
 # LLM API
 OPENAI_API_KEY="sk-fgrNlns4poTwmzABx8IP-A"

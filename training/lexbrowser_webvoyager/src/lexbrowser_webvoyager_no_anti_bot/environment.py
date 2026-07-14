@@ -211,18 +211,24 @@ async def judge_task_completion(
     parser: vf.Parser,
 ) -> float:
     """Use the upstream BrowserEnv binary reward and no-tool-call short circuit."""
+    started_at = time.monotonic()
     if not _has_tool_calls(completion):
+        state["judge_seconds"] = time.monotonic() - started_at
         return 0.0
     rendered_completion = parser.parse_answer(completion)
     if not rendered_completion:
+        state["judge_seconds"] = time.monotonic() - started_at
         return 0.0
-    state["webvoyager_judge_transcript"] = rendered_completion
-    judge_response = await judge(prompt, rendered_completion, answer, state)
-    # Preserve the binary judge's literal response for the local, secret-free
-    # rollout audit.  It makes reward=0 diagnosable without changing the
-    # reward contract or exposing the judge prompt/API credentials.
-    state["webvoyager_judge_response"] = str(judge_response)
-    return 1.0 if re.match(r"^\s*yes\b", judge_response, flags=re.IGNORECASE) else 0.0
+    try:
+        state["webvoyager_judge_transcript"] = rendered_completion
+        judge_response = await judge(prompt, rendered_completion, answer, state)
+        # Preserve the binary judge's literal response for the local, secret-free
+        # rollout audit.  It makes reward=0 diagnosable without changing the
+        # reward contract or exposing the judge prompt/API credentials.
+        state["webvoyager_judge_response"] = str(judge_response)
+        return 1.0 if re.match(r"^\s*yes\b", judge_response, flags=re.IGNORECASE) else 0.0
+    finally:
+        state["judge_seconds"] = time.monotonic() - started_at
 
 
 @dataclass
@@ -240,6 +246,35 @@ class TrajectoryGuard:
     timeouts: int = 0
     terminated: bool = False
     termination_reason: str = ""
+    timings: dict[str, float] = field(default_factory=dict)
+    timing_events: list[dict[str, Any]] = field(default_factory=list)
+
+    def record_timing(
+        self,
+        metric: str,
+        started_at: float,
+        *,
+        phase: str | None = None,
+        status: str = "ok",
+    ) -> float:
+        """Record a secret-free wall-clock interval for rollout diagnosis.
+
+        This deliberately lives in the environment guard rather than NeMo-RL:
+        it measures provider/browser work only and cannot alter policy tokens,
+        rewards, or scheduling behavior.
+        """
+        duration = max(0.0, time.monotonic() - started_at)
+        self.timings[metric] = self.timings.get(metric, 0.0) + duration
+        if phase is not None:
+            self.timing_events.append(
+                {
+                    "phase": phase,
+                    "started_at_unix": round(time.time() - duration, 3),
+                    "duration_seconds": round(duration, 6),
+                    "status": status,
+                }
+            )
+        return duration
 
     def before_tool(self, name: str, payload: str) -> str | None:
         if self.terminated:
@@ -707,6 +742,7 @@ class LexmountDOMMode:
         official_proxy: bool,
         external_proxy: dict[str, str] | None,
         max_concurrent_sessions: int,
+        session_create_timeout_s: float,
         stagehand_ready_timeout_s: float,
         setup_navigation_timeout_s: float,
         per_tool_timeout_s: float,
@@ -744,6 +780,7 @@ class LexmountDOMMode:
         self.stagehand_client: AsyncStagehand | None = None
         self._client_lock = asyncio.Lock()
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
+        self.session_create_timeout_s = session_create_timeout_s
         self.logger = LOGGER
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
@@ -778,13 +815,20 @@ class LexmountDOMMode:
         return self.stagehand_client
 
     async def setup_state(self, state: vf.State) -> vf.State:
+        guard = state.get("trajectory_guard")
+        if not isinstance(guard, TrajectoryGuard):
+            guard = TrajectoryGuard(
+                per_tool_timeout_s=self.per_tool_timeout_s,
+                episode_timeout_s=self.episode_timeout_s,
+                max_repeated_tool_calls=self.max_repeated_tool_calls,
+            )
+            state["trajectory_guard"] = guard
+        slot_started_at = time.monotonic()
         await self._slots.acquire()
-        state["lexbrowser_slot_acquired"] = True
-        state["trajectory_guard"] = TrajectoryGuard(
-            per_tool_timeout_s=self.per_tool_timeout_s,
-            episode_timeout_s=self.episode_timeout_s,
-            max_repeated_tool_calls=self.max_repeated_tool_calls,
+        guard.record_timing(
+            "browser_slot_wait_seconds", slot_started_at, phase="browser_slot_wait"
         )
+        state["lexbrowser_slot_acquired"] = True
         lexmount_session = None
         try:
             session_kwargs: dict[str, Any] = {"browser_mode": self.browser_mode}
@@ -795,14 +839,37 @@ class LexmountDOMMode:
                 session_kwargs["proxy"] = self.external_proxy
             else:
                 session_kwargs["official_proxy"] = self.official_proxy
-            lexmount_session = await asyncio.to_thread(
-                self.lexmount.sessions.create, **session_kwargs
-            )
+            create_started_at = time.monotonic()
+            try:
+                lexmount_session = await asyncio.wait_for(
+                    asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs),
+                    timeout=self.session_create_timeout_s,
+                )
+            except Exception as exc:
+                guard.record_timing(
+                    "lexmount_session_create_seconds",
+                    create_started_at,
+                    phase="lexmount_session_create",
+                    status=f"error:{type(exc).__name__}",
+                )
+                self.logger.warning(
+                    "Lexmount session creation failed after %.2fs: %r",
+                    time.monotonic() - create_started_at,
+                    exc,
+                )
+                raise
+            else:
+                guard.record_timing(
+                    "lexmount_session_create_seconds",
+                    create_started_at,
+                    phase="lexmount_session_create",
+                )
             cdp_url = lexmount_session.connect_url
             if not cdp_url:
                 raise RuntimeError("Lexmount session did not return a CDP URL")
             state["lexmount_session"] = lexmount_session
             state["lexmount_session_id"] = lexmount_session.id
+            browser_attach_started_at = time.monotonic()
             if self.dom_backend == "cdp":
                 state["browser_session"] = await asyncio.to_thread(
                     LexmountCDPSession, cdp_url, self.setup_navigation_timeout_s
@@ -817,6 +884,11 @@ class LexmountDOMMode:
                 state["browser_session"] = stagehand_session
                 state["stagehand_session"] = stagehand_session
                 state["stagehand_session_id"] = stagehand_session.id
+            guard.record_timing(
+                "browser_attach_seconds",
+                browser_attach_started_at,
+                phase="browser_attach",
+            )
             return state
         except Exception:
             if lexmount_session is not None:
@@ -893,6 +965,7 @@ class LexmountDOMMode:
         blocked = guard.before_tool("navigate", url)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
                 await asyncio.wait_for(
@@ -929,6 +1002,12 @@ class LexmountDOMMode:
         except Exception as exc:
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_NAVIGATE: {exc}"
+        finally:
+            guard.record_timing(
+                "browser_tool_seconds", started_at, phase="browser_navigate"
+            )
+            guard.record_timing("browser_navigate_seconds", started_at)
+            guard.timings["browser_tool_count"] = guard.timings.get("browser_tool_count", 0.0) + 1.0
 
     async def observe(
         self, instruction: str, session: Any, llm_config: Any = None, guard: TrajectoryGuard | None = None
@@ -938,6 +1017,7 @@ class LexmountDOMMode:
         blocked = guard.before_tool("observe", instruction)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
                 actions = await asyncio.wait_for(
@@ -966,6 +1046,12 @@ class LexmountDOMMode:
         except Exception as exc:
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_OBSERVE: {exc}"
+        finally:
+            guard.record_timing(
+                "browser_tool_seconds", started_at, phase="browser_observe"
+            )
+            guard.record_timing("browser_observe_seconds", started_at)
+            guard.timings["browser_tool_count"] = guard.timings.get("browser_tool_count", 0.0) + 1.0
 
     async def act(
         self, instruction: str, session: Any, llm_config: Any = None, guard: TrajectoryGuard | None = None
@@ -975,6 +1061,7 @@ class LexmountDOMMode:
         blocked = guard.before_tool("act", instruction)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
                 result = await asyncio.wait_for(
@@ -1013,6 +1100,10 @@ class LexmountDOMMode:
         except Exception as exc:
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_ACT: {exc}"
+        finally:
+            guard.record_timing("browser_tool_seconds", started_at, phase="browser_act")
+            guard.record_timing("browser_act_seconds", started_at)
+            guard.timings["browser_tool_count"] = guard.timings.get("browser_tool_count", 0.0) + 1.0
 
     async def extract(
         self,
@@ -1027,6 +1118,7 @@ class LexmountDOMMode:
         blocked = guard.before_tool("extract", instruction)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        started_at = time.monotonic()
         try:
             schema = json.loads(schema_json)
             if isinstance(session, LexmountCDPSession):
@@ -1056,6 +1148,12 @@ class LexmountDOMMode:
         except Exception as exc:
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_EXTRACT: {exc}"
+        finally:
+            guard.record_timing(
+                "browser_tool_seconds", started_at, phase="browser_extract"
+            )
+            guard.record_timing("browser_extract_seconds", started_at)
+            guard.timings["browser_tool_count"] = guard.timings.get("browser_tool_count", 0.0) + 1.0
 
 
 class LexBrowserEnv(vf.StatefulToolEnv):
@@ -1065,13 +1163,14 @@ class LexBrowserEnv(vf.StatefulToolEnv):
         self._mode_impl.register_tools(self)
 
     async def setup_state(self, state: vf.State, **kwargs: Any) -> vf.State:
-        state = await self._mode_impl.setup_state(state)
-        info = state.get("info") or {}
-        session = state.get("browser_session")
-        if isinstance(session, LexmountCDPSession):
-            session.set_task_query(str(info.get("question") or state.get("question") or ""))
-        start_url = info.get("start_url") or state.get("start_url")
-        if start_url:
+        try:
+            state = await self._mode_impl.setup_state(state)
+            info = state.get("info") or {}
+            session = state.get("browser_session")
+            if isinstance(session, LexmountCDPSession):
+                session.set_task_query(str(info.get("question") or state.get("question") or ""))
+            start_url = info.get("start_url") or state.get("start_url")
+            if start_url:
             # BrowserEnv reset semantics: WebVoyager begins on the dataset's
             # website. This navigation is environment setup, not an agent tool call.
             # A real site can miss Stagehand's internal 15s DOM-ready deadline.
@@ -1079,69 +1178,91 @@ class LexBrowserEnv(vf.StatefulToolEnv):
             # session and retry from a fresh Lexmount Chrome.  Retrying the same
             # Stagehand session is unsafe because a late navigation can supersede
             # the next request.
-            last_error: Exception | None = None
-            for attempt in range(1, SETUP_NAVIGATION_MAX_ATTEMPTS + 1):
-                try:
-                    session = state["browser_session"]
-                    attempt_deadline = time.monotonic() + self._mode_impl.setup_navigation_timeout_s
-                    if isinstance(session, LexmountCDPSession):
-                        await asyncio.wait_for(
-                            asyncio.to_thread(session.navigate, start_url),
-                            timeout=self._mode_impl.setup_navigation_timeout_s,
+                last_error: Exception | None = None
+                for attempt in range(1, SETUP_NAVIGATION_MAX_ATTEMPTS + 1):
+                    navigation_started_at = time.monotonic()
+                    try:
+                        session = state["browser_session"]
+                        attempt_deadline = time.monotonic() + self._mode_impl.setup_navigation_timeout_s
+                        if isinstance(session, LexmountCDPSession):
+                            await asyncio.wait_for(
+                                asyncio.to_thread(session.navigate, start_url),
+                                timeout=self._mode_impl.setup_navigation_timeout_s,
+                            )
+                            remaining = max(0.1, attempt_deadline - time.monotonic())
+                            await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    session.wait_for_usable_document,
+                                    remaining,
+                                ),
+                                timeout=remaining + 1.0,
+                            )
+                        else:
+                            await asyncio.wait_for(
+                                session.navigate(
+                                    url=start_url,
+                                    # This must be a Stagehand navigation option (ms),
+                                    # not only an outer Python timeout.  The former
+                                    # controls the server-side page wait strategy.
+                                    options={
+                                        "wait_until": "domcontentloaded",
+                                        "timeout": int(
+                                            self._mode_impl.setup_navigation_timeout_s * 1000
+                                        ),
+                                    },
+                                    timeout=self._mode_impl.setup_navigation_timeout_s + 5.0,
+                                ),
+                                timeout=self._mode_impl.setup_navigation_timeout_s + 10.0,
+                            )
+                        state["setup_navigation_attempts"] = attempt
+                        state["setup_navigation_retry_success"] = float(attempt > 1)
+                        guard = state.get("trajectory_guard")
+                        if isinstance(guard, TrajectoryGuard):
+                            guard.record_timing(
+                                "browser_setup_navigation_seconds",
+                                navigation_started_at,
+                                phase="browser_setup_navigation",
+                            )
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        guard = state.get("trajectory_guard")
+                        if guard is not None:
+                            guard.infrastructure_failures += 1
+                        state["setup_navigation_attempts"] = attempt
+                        if isinstance(guard, TrajectoryGuard):
+                            guard.record_timing(
+                                "browser_setup_navigation_seconds",
+                                navigation_started_at,
+                                phase="browser_setup_navigation",
+                                status=f"error:{type(exc).__name__}",
+                            )
+                        self._mode_impl.logger.warning(
+                            "Initial navigation failed (attempt %s/%s, url=%s): %r",
+                            attempt,
+                            SETUP_NAVIGATION_MAX_ATTEMPTS,
+                            start_url,
+                            exc,
                         )
-                        remaining = max(0.1, attempt_deadline - time.monotonic())
-                        await asyncio.wait_for(
-                            asyncio.to_thread(
-                                session.wait_for_usable_document,
-                                remaining,
-                            ),
-                            timeout=remaining + 1.0,
-                        )
-                    else:
-                        await asyncio.wait_for(
-                            session.navigate(
-                                url=start_url,
-                                # This must be a Stagehand navigation option (ms),
-                                # not only an outer Python timeout.  The former
-                                # controls the server-side page wait strategy.
-                                options={
-                                    "wait_until": "domcontentloaded",
-                                    "timeout": int(
-                                        self._mode_impl.setup_navigation_timeout_s * 1000
-                                    ),
-                                },
-                                timeout=self._mode_impl.setup_navigation_timeout_s + 5.0,
-                            ),
-                            timeout=self._mode_impl.setup_navigation_timeout_s + 10.0,
-                        )
-                    state["setup_navigation_attempts"] = attempt
-                    state["setup_navigation_retry_success"] = float(attempt > 1)
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    guard = state.get("trajectory_guard")
-                    if guard is not None:
-                        guard.infrastructure_failures += 1
-                    state["setup_navigation_attempts"] = attempt
-                    self._mode_impl.logger.warning(
-                        "Initial navigation failed (attempt %s/%s, url=%s): %r",
-                        attempt,
-                        SETUP_NAVIGATION_MAX_ATTEMPTS,
-                        start_url,
-                        exc,
-                    )
-                    await self._mode_impl.cleanup_session(state)
-                    if attempt == SETUP_NAVIGATION_MAX_ATTEMPTS:
-                        raise RuntimeError(
-                            "infrastructure_setup_navigation_failed"
-                        ) from exc
-                    await asyncio.sleep(0.5 * attempt)
-                    state = await self._mode_impl.setup_state(state)
-            if last_error is not None and "setup_navigation_retry_success" not in state:
-                raise RuntimeError("infrastructure_setup_navigation_failed") from last_error
-            state["initial_url"] = start_url
-        initialized = await super().setup_state(state, **kwargs)
-        return initialized if initialized is not None else state
+                        await self._mode_impl.cleanup_session(state)
+                        if attempt == SETUP_NAVIGATION_MAX_ATTEMPTS:
+                            raise RuntimeError(
+                                "infrastructure_setup_navigation_failed"
+                            ) from exc
+                        await asyncio.sleep(0.5 * attempt)
+                        state = await self._mode_impl.setup_state(state)
+                if last_error is not None and "setup_navigation_retry_success" not in state:
+                    raise RuntimeError("infrastructure_setup_navigation_failed") from last_error
+                state["initial_url"] = start_url
+            initialized = await super().setup_state(state, **kwargs)
+            return initialized if initialized is not None else state
+        except BaseException:
+            # A caller cancellation can occur while setup_state owns a
+            # Lexmount session slot.  StatefulToolEnv only invokes cleanup
+            # after a normally completed rollout, so release the project
+            # resources here before propagating the cancellation/error.
+            await self._mode_impl.cleanup_session(state)
+            raise
 
     def update_tool_args(
         self,
@@ -1208,6 +1329,7 @@ def load_environment(
     browser_mode: str = "normal",
     official_proxy: bool = False,
     max_concurrent_sessions: int = 20,
+    session_create_timeout_s: float = 30.0,
     stagehand_ready_timeout_s: float = 60.0,
     setup_navigation_timeout_s: float = 90.0,
     per_tool_timeout_s: float = 25.0,
@@ -1249,6 +1371,7 @@ def load_environment(
         official_proxy=official_proxy,
         external_proxy=_external_proxy_from_env(),
         max_concurrent_sessions=max_concurrent_sessions,
+        session_create_timeout_s=session_create_timeout_s,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,
         setup_navigation_timeout_s=setup_navigation_timeout_s,
         per_tool_timeout_s=per_tool_timeout_s,

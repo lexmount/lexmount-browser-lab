@@ -31,6 +31,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Trajectory audit JSONL used to plot browser-use metrics per GRPO step.",
     )
+    parser.add_argument(
+        "--gpu-audit",
+        type=Path,
+        help="Host nvidia-smi CSV sampled during this invocation.",
+    )
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=8,
+        help="Trajectories per optimizer update (64 for 8 prompts x 8 rollouts).",
+    )
     parser.add_argument("--mode", choices=("train", "calibration"), default="train")
     return parser.parse_args()
 
@@ -141,6 +152,24 @@ def parse_audit_log(
         "rollout/infrastructure_failures": [],
         "rollout/mean_no_tool_call": [],
     }
+    timing_keys = (
+        "rollout_wall_seconds",
+        "agent_to_browser_dispatch_seconds",
+        "browser_slot_wait_seconds",
+        "lexmount_session_create_seconds",
+        "browser_attach_seconds",
+        "browser_setup_navigation_seconds",
+        "browser_tool_seconds",
+        "browser_tool_count",
+        "browser_response_seconds",
+        "browser_or_scheduler_wait_seconds",
+        "policy_request_seconds",
+        "policy_request_count",
+        "judge_seconds",
+    )
+    for key in timing_keys:
+        result[f"rollout/mean_{key}"] = []
+        result[f"rollout/p95_{key}"] = []
     for start in range(0, len(rows) - group_size + 1, group_size):
         group = rows[start : start + group_size]
         metrics = [row.get("metrics") or {} for row in group]
@@ -157,6 +186,93 @@ def parse_audit_log(
         result["rollout/mean_no_tool_call"].append(
             (step, sum(float(metric.get("no_tool_call", 0.0)) for metric in metrics) / group_size)
         )
+        for key in timing_keys:
+            values = sorted(float(metric.get(key, 0.0)) for metric in metrics)
+            result[f"rollout/mean_{key}"].append((step, sum(values) / group_size))
+            p95_index = max(0, math.ceil(0.95 * len(values)) - 1)
+            result[f"rollout/p95_{key}"].append((step, values[p95_index]))
+    return {tag: points for tag, points in result.items() if points}
+
+
+def parse_gpu_idle_audit(
+    audit_path: Path,
+    gpu_path: Path,
+    group_size: int,
+    first_step: int,
+) -> dict[str, list[tuple[int, float]]]:
+    """Correlate rollout wall windows with independently sampled GPU activity.
+
+    This is intentionally reported as an observed overlap, not a causal claim:
+    it distinguishes model-idle samples that coincided with browser/scheduler
+    events from model-idle samples with no recorded rollout activity.
+    """
+    if not gpu_path.exists() or not audit_path.exists():
+        return {}
+    rows: list[dict] = []
+    for line in audit_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    samples_by_time: dict[float, dict[int, float]] = {}
+    with gpu_path.open(encoding="utf-8", errors="replace") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            try:
+                when = float(row["unix_time"])
+                gpu = int(row["gpu_index"])
+                utilization = float(row["utilization_gpu_pct"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            samples_by_time.setdefault(when, {})[gpu] = utilization
+
+    result = {
+        "rollout/gpu_both_idle_fraction": [],
+        "rollout/gpu_idle_browser_overlap_fraction": [],
+        "rollout/gpu_window_sample_count": [],
+    }
+    for start in range(0, len(rows) - group_size + 1, group_size):
+        group = rows[start : start + group_size]
+        timings = [row.get("timing") or {} for row in group]
+        starts = [float(item["rollout_started_at_unix"]) for item in timings if item.get("rollout_started_at_unix")]
+        ends = [float(item["rollout_finished_at_unix"]) for item in timings if item.get("rollout_finished_at_unix")]
+        if not starts or not ends:
+            continue
+        window_start, window_end = min(starts), max(ends)
+        window_samples = [
+            (when, by_gpu)
+            for when, by_gpu in samples_by_time.items()
+            if window_start <= when <= window_end and len(by_gpu) >= 2
+        ]
+        if not window_samples:
+            continue
+        browser_intervals: list[tuple[float, float]] = []
+        for item in timings:
+            for event in item.get("timing_events") or []:
+                phase = str(event.get("phase", ""))
+                if not (phase.startswith("browser") or phase.startswith("lexmount")):
+                    continue
+                try:
+                    event_start = float(event["started_at_unix"])
+                    event_end = event_start + float(event["duration_seconds"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                browser_intervals.append((event_start, event_end))
+        idle_count = 0
+        idle_browser_overlap = 0
+        for when, by_gpu in window_samples:
+            idle = all(utilization < 5.0 for utilization in by_gpu.values())
+            if idle:
+                idle_count += 1
+                if any(event_start <= when <= event_end for event_start, event_end in browser_intervals):
+                    idle_browser_overlap += 1
+        step = first_step + start // group_size
+        total = len(window_samples)
+        result["rollout/gpu_both_idle_fraction"].append((step, idle_count / total))
+        result["rollout/gpu_idle_browser_overlap_fraction"].append(
+            (step, idle_browser_overlap / total)
+        )
+        result["rollout/gpu_window_sample_count"].append((step, float(total)))
     return {tag: points for tag, points in result.items() if points}
 
 
@@ -215,9 +331,23 @@ def main() -> None:
         metric_source = f"NeMo training log fallback: {args.training_log}"
     if args.audit_log:
         scalar_map.update(
-            parse_audit_log(args.audit_log, first_step=first_training_step(args.training_log))
+            parse_audit_log(
+                args.audit_log,
+                group_size=args.group_size,
+                first_step=first_training_step(args.training_log),
+            )
         )
         metric_source += f"; trajectory audit: {args.audit_log}"
+    if args.audit_log and args.gpu_audit:
+        scalar_map.update(
+            parse_gpu_idle_audit(
+                args.audit_log,
+                args.gpu_audit,
+                group_size=args.group_size,
+                first_step=first_training_step(args.training_log),
+            )
+        )
+        metric_source += f"; GPU sampler: {args.gpu_audit}"
     tags = sorted(scalar_map)
 
     with (args.output_dir / "training_scalars.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -246,6 +376,13 @@ def main() -> None:
     optimization_tags = select_tags(
         tags, ("learning_rate", "lr", "loss", "grad_norm", "kl")
     )
+    timing_tags = [
+        tag
+        for tag in tags
+        if tag.startswith("rollout/mean_")
+        and (tag.endswith("_seconds") or tag.endswith("_count"))
+    ]
+    gpu_tags = [tag for tag in tags if tag.startswith("rollout/gpu_")]
 
     plots: list[tuple[str, str]] = []
     if plot_scalar_map(
@@ -272,6 +409,22 @@ def main() -> None:
         "Metric value",
     ):
         plots.append(("学习率、loss 与优化指标", "optimization_vs_step.png"))
+    if plot_scalar_map(
+        scalar_map,
+        timing_tags,
+        args.output_dir / "rollout_latency_vs_step.png",
+        "Rollout latency vs. training step",
+        "Seconds / count per rollout",
+    ):
+        plots.append(("浏览器、调度与推理延迟", "rollout_latency_vs_step.png"))
+    if plot_scalar_map(
+        scalar_map,
+        gpu_tags,
+        args.output_dir / "gpu_idle_vs_step.png",
+        "Observed GPU idle vs. training step",
+        "Fraction / samples",
+    ):
+        plots.append(("GPU 空闲观测与浏览器等待重叠", "gpu_idle_vs_step.png"))
 
     primary_reward = min(
         reward_tags,
@@ -306,6 +459,17 @@ def main() -> None:
         "reward_last_window_mean": last_mean,
         "reward_linear_slope_per_step": slope,
         "observed_last_step": observed_last_step,
+        "rollouts_per_optimizer_step": args.group_size,
+        "latest_rollout_timing": {
+            tag: scalar_map[tag][-1][1]
+            for tag in timing_tags
+            if scalar_map.get(tag)
+        },
+        "latest_gpu_idle_observation": {
+            tag: scalar_map[tag][-1][1]
+            for tag in gpu_tags
+            if scalar_map.get(tag)
+        },
     }
     (args.output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -322,9 +486,12 @@ def main() -> None:
         training_description = "20 optimizer steps；1 prompt/step；8 rollouts/prompt；global batch 8，micro batch 4，梯度累积 2"
     else:
         data_description = "过滤后的 WebVoyager，600 个真实网页导航任务"
-        training_description = "100 optimizer steps；1 prompt/step；8 rollouts/prompt；global batch 8，micro batch 4，梯度累积 2"
+        training_description = (
+            "150 optimizer steps；8 prompts/step；8 rollouts/prompt；"
+            "64 trajectories/step；global batch 64，micro batch 4，梯度累积 16"
+        )
 
-    configured_steps = 20 if args.mode == "calibration" else 100
+    configured_steps = 20 if args.mode == "calibration" else 150
     is_complete_snapshot = observed_last_step is not None and observed_last_step >= configured_steps
     snapshot_description = (
         "完成后的"
@@ -343,10 +510,11 @@ def main() -> None:
 
 - 环境：`lexbrowser/webvoyager-no-anti-bot`
 - 数据：{data_description}
-- 模型：`/home/wf/models/Qwen3-1.7B`
+- 模型：`/home/wf/models/Qwen3-4B-Instruct-2507`
 - 算法：同步 multi-turn GRPO，DTensor v2 LoRA（rank 8，alpha 32）
 - 训练：{training_description}
 - 浏览器：Lexmount cloud Chrome/CDP；DOM mode；direct egress；最多 8 个并发真实浏览器 session；setup 导航 30 秒/次、最多 3 个全新 session 重试
+- 埋点：每条 rollout 记录 Gym→浏览器派发、Lexmount session 创建、CDP attach、初始导航、工具响应、vLLM 请求、judge 与总 wall time；2 秒 GPU 采样与这些窗口关联。
 - Reward：无 tool call 为 0；否则由 GLM judge 对完整工具轨迹做二值判定
 - TensorBoard run：`{run_dir}`
 - 指标来源：`{metric_source}`
@@ -367,6 +535,10 @@ def main() -> None:
 - [机器可读摘要](summary.json)
 
 ## 解释边界
+
+`gpu_both_idle_fraction` 是两个模型 GPU 同时低于 5% 利用率的实测采样占比；
+`gpu_idle_browser_overlap_fraction` 是其中与 Lexmount/CDP 浏览器事件时间窗重叠的比例。
+它用于定位等待位置，不把相关性误称为浏览器导致 GPU 空闲的因果证明。
 
 真实网站状态会随时间变化。训练跑通和 reward 上升说明 Lexmount Browser + NeMo RL
 链路能够产生可学习的真实网站轨迹；要证明相对 Browserbase 的“非劣效”，仍需对同一

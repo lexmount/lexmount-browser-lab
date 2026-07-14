@@ -5,7 +5,8 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-INTERVAL_SECONDS="${LEXBROWSER_MONITOR_INTERVAL_SECONDS:-300}"
+INTERVAL_SECONDS="${LEXBROWSER_MONITOR_INTERVAL_SECONDS:-60}"
+ROLLOUTS_PER_OPTIMIZER_STEP="${LEXBROWSER_ROLLOUTS_PER_OPTIMIZER_STEP:-64}"
 UNIT_PREFIX="${LEXBROWSER_UNIT_PREFIX:-lexbrowser-webvoyager}"
 OUT_DIR="$ROOT/logs/lexbrowser-grpo/monitor"
 mkdir -p "$OUT_DIR"
@@ -21,7 +22,7 @@ if [[ -n "$latest_log" ]]; then
   candidate_audit="$ROOT/logs/lexbrowser-grpo/${attempt_base}.trajectory_audit.jsonl"
   [[ -f "$candidate_audit" ]] && latest_audit="$candidate_audit"
 fi
-  python3 - "$latest_log" "$latest_audit" "$UNIT_PREFIX" <<'PY' >>"$OUT"
+  python3 - "$latest_log" "$latest_audit" "$UNIT_PREFIX" "$ROLLOUTS_PER_OPTIMIZER_STEP" <<'PY' >>"$OUT"
 import collections
 import datetime
 import json
@@ -29,7 +30,8 @@ import os
 import subprocess
 import sys
 
-log_path, audit_path, unit_prefix = sys.argv[1:]
+log_path, audit_path, unit_prefix, rollouts_per_step = sys.argv[1:]
+rollouts_per_step = int(rollouts_per_step)
 
 def run(args):
     try:
@@ -67,14 +69,26 @@ if audit_path and os.path.exists(audit_path):
         sum(float(row.get("reward", 0.0)) for row in valid_rows) / len(valid_rows)
         if valid_rows else None
     )
-    # One formal GRPO group has eight sampled browser trajectories.  Keep both
-    # counters explicit: a browser rollout is not the same unit as a prompt/
-    # optimizer update.
-    record["completed_grpo_groups"] = len(rows) // 8
-    record["prompts_completed"] = len(rows) // 8
+    # Formal configuration: 8 prompts x 8 sampled trajectories = 64 rows per
+    # optimizer update. Browser rollouts and optimizer steps remain explicit.
+    record["completed_optimizer_steps_from_audit"] = len(rows) // rollouts_per_step
+    record["rollouts_per_optimizer_step"] = rollouts_per_step
     record["tool_calls"] = sum(float(metric.get("tool_calls", 0.0)) for metric in metrics)
     record["infrastructure_failures"] = sum(float(metric.get("infrastructure_failures", 0.0)) for metric in metrics)
     record["policy_failures"] = sum(float(metric.get("policy_failures", 0.0)) for metric in metrics)
+    for key in (
+        "rollout_wall_seconds",
+        "agent_to_browser_dispatch_seconds",
+        "browser_slot_wait_seconds",
+        "lexmount_session_create_seconds",
+        "browser_setup_navigation_seconds",
+        "browser_tool_seconds",
+        "browser_response_seconds",
+        "policy_request_seconds",
+        "judge_seconds",
+    ):
+        values = [float(metric.get(key, 0.0)) for metric in metrics]
+        record[f"mean_{key}"] = sum(values) / len(values) if values else None
 if log_path and os.path.exists(log_path):
     text = open(log_path, encoding="utf-8", errors="replace").read()
     import re
