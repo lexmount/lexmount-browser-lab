@@ -1,0 +1,195 @@
+defaults: /opt/nemo-rl/examples/configs/grpo_math_1B.yaml
+
+grpo:
+  # One optimizer update contains eight independent WebVoyager tasks. Each
+  # task contributes one GRPO group of eight sampled trajectories.
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 8
+  # NeMo Gym owns the 100-turn browser trajectory and returns it as one RL rollout.
+  max_rollout_turns: 1
+  # 150 updates with 8 shuffled prompts/update = two passes over the 600-task
+  # WebVoyager corpus. Each update still contains 8 rollout samples per task.
+  max_num_epochs: 2
+  max_num_steps: 150
+  normalize_rewards: true
+  use_leave_one_out_baseline: true
+  val_period: 0
+  val_at_start: false
+  val_at_end: false
+  max_val_samples: null
+  val_batch_size: null
+  seed: 42
+
+loss_fn:
+  reference_policy_kl_penalty: 0.0
+
+checkpointing:
+  enabled: true
+  checkpoint_dir: /workspace/LexBrowserEnv/results/lexbrowser-grpo
+  keep_top_k: 3
+  save_period: 10
+  save_optimizer: true
+
+policy:
+  # The delivery driver replaces this with the shared, revision-pinned model
+  # directory under the run's assets/ tree.
+  model_name: /workspace/LexBrowserEnv/artifacts/lexbrowser-nvidia/model
+  tokenizer:
+    name: /workspace/LexBrowserEnv/artifacts/lexbrowser-nvidia/model
+    chat_template_kwargs:
+      # Keep the model's native reasoning format enabled for Hermes tool calls.
+      enable_thinking: true
+  # 8 tasks x 8 trajectories = 64 trajectories per optimizer update. With
+  # micro-batch=4 this is 16 gradient-accumulation micro-batches.
+  train_global_batch_size: 64
+  train_micro_batch_size: 4
+  # NeMo's stock logprob path materializes full-vocabulary logits. Keep this
+  # at one trajectory while retaining the 64-trajectory GRPO update and
+  # accumulation=16.
+  logprob_batch_size: 1
+  generation_batch_size: 64
+  # Keep the full browser-agent trajectory at 12K. This is deliberately
+  # below the 16K request: it leaves headroom for tensor-parallel logprob/backward
+  # without truncating an individual assistant action (still 512 tokens).
+  max_total_sequence_length: 12288
+  precision: bfloat16
+
+  dtensor_cfg:
+    _v2: true
+    enabled: true
+    # Do not offload parameters to host memory.  The policy spans both 5090s
+    # during policy work; standard NeMo colocated mode gives these cards back
+    # to vLLM only for generation.
+    cpu_offload: false
+    activation_checkpointing: true
+    # Eight GPUs form one Tensor Parallel group. With 8 nodes this leaves
+    # eight data-parallel replicas, while preserving the 64-trajectory GRPO
+    # update geometry that produced stable reward in the 2x5090 baseline.
+    tensor_parallel_size: 8
+    context_parallel_size: 1
+    lora_cfg:
+      # The BrowserEnv reference run publishes a trained LoRA. NeMo RL v0.6
+      # supports its merge-weight GRPO path on DTensor v2, so use the same
+      # parameter-efficient update under the shared-GPU memory limit.
+      enabled: true
+      match_all_linear: true
+      dim: 8
+      alpha: 32
+      dropout: 0.0
+      # NeMo-RL rejects the LoRA Triton backend when TP > 1.
+      use_triton: false
+
+  megatron_cfg:
+    enabled: false
+
+  sequence_packing:
+    enabled: true
+    train_mb_tokens: 12288
+    logprob_mb_tokens: 12288
+    algorithm: modified_first_fit_decreasing
+    sequence_length_round: 64
+
+  optimizer:
+    name: torch.optim.AdamW
+    kwargs:
+      # Match the 5e-5 learning rate shown in the BrowserEnv reference run.
+      lr: 5.0e-5
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      eps: 1.0e-8
+      foreach: false
+      fused: false
+
+  generation:
+    backend: vllm
+    # The vLLM bridge clamps each request to remaining context, so preserve a
+    # full 512-token thinking/tool-call budget while preventing late-turn
+    # max-model-length validation failures.
+    max_new_tokens: 512
+    temperature: 1.0
+    top_p: 1.0
+    vllm_cfg:
+      async_engine: true
+      precision: bfloat16
+      # vLLM and policy use the same 8-GPU TP group during their respective
+      # phases. Native NeMo-RL v0.6 colocated sleep/wake releases generation
+      # memory before policy logprob/backward.
+      tensor_parallel_size: 8
+      pipeline_parallel_size: 1
+      expert_parallel_size: 1
+      # Keep initialization and 12K KV conservative while the policy worker
+      # is constructed on the same GPUs.  This limits rollout concurrency,
+      # not the 64 trajectories collected per GRPO update.
+      gpu_memory_utilization: 0.40
+      # Match the train/logprob sequence limit exactly.
+      max_model_len: 12288
+      enforce_eager: true
+      expose_http_server: true
+      skip_tokenizer_init: false
+      served_model_name: gpt-4o
+      http_server_serving_chat_kwargs:
+        enable_auto_tools: true
+        tool_parser: hermes
+        reasoning_parser: deepseek_r1
+        default_chat_template_kwargs:
+          enable_thinking: true
+    vllm_kwargs:
+      enable_chunked_prefill: true
+      # Collect each 64-trajectory GRPO update in safe eight-request waves;
+      # the group size remains 8 prompts x 8 rollouts.
+      max_num_seqs: 8
+    # Original NeMo-RL v0.6 colocated mode: its native generation lifecycle
+    # calls vLLM sleep after rollout and wake before the next rollout.  Thus
+    # vLLM and policy each use the requested topology on the same cards without CPU offload or
+    # runtime replacement of NeMo-RL source files.
+    colocated:
+      enabled: true
+      resources:
+        # These are the default 8-node x 8-GPU topology. The driver passes the
+        # actual allocation as CLI overrides, including smaller smoke/node-check modes.
+        gpus_per_node: 8
+        num_nodes: 8
+
+data:
+  max_input_seq_length: null
+  shuffle: true
+  num_workers: 0
+  train:
+    data_path: /workspace/LexBrowserEnv/training/data/webvoyager/train.jsonl
+    dataset_name: NemoGymDataset
+    split_validation_size: null
+  validation: null
+  default:
+    dataset_name: NemoGymDataset
+    env_name: nemo_gym
+    prompt_file: null
+    system_prompt_file: null
+    processor: nemo_gym_data_processor
+
+env:
+  should_use_nemo_gym: true
+  should_log_nemo_gym_responses: true
+  nemo_gym:
+    rollout_max_attempts_to_avoid_lp_nan: 1
+    is_trajectory_collection: false
+    config_paths:
+      - responses_api_models/vllm_model/configs/vllm_model_for_training.yaml
+      - responses_api_agents/verifiers_agent/configs/lexbrowser_webvoyager.yaml
+    policy_model:
+      responses_api_models:
+        vllm_model:
+          uses_reasoning_parser: true
+          extra_body:
+            chat_template_kwargs:
+              enable_thinking: true
+
+logger:
+  log_dir: /workspace/LexBrowserEnv/logs/lexbrowser-grpo
+  wandb_enabled: false
+  tensorboard_enabled: true
+  mlflow_enabled: false
+  monitor_gpus: true
+
+cluster:
+  gpus_per_node: 8
+  num_nodes: 8
