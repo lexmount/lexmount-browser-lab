@@ -1,0 +1,75 @@
+lexbrowser_webvoyager:
+  responses_api_agents:
+    verifiers_agent:
+      entrypoint: app.py
+      domain: agent
+      description: WebVoyager-no-anti-bot with Lexmount Browser as the Chrome/CDP backend.
+      value: Train browser navigation with the upstream BrowserEnv task and reward contract.
+      model_server:
+        type: responses_api_models
+        name: policy_model
+      # API alias only: vLLM serves Qwen3-1.7B under this legacy OpenAI name so
+      # Stagehand uses Chat Completions instead of the unsupported Responses API.
+      model_name: gpt-4o
+      vf_env_id: lexbrowser-webvoyager-no-anti-bot
+      vf_env_args:
+        mode: dom
+        # Stagehand's helper requires a second LLM to emit JSON DOM actions.
+        # For the Qwen3-1.7B on-policy run we use Lexmount's deterministic CDP
+        # DOM adapter instead: observations expose selectors and the policy
+        # alone chooses every fill/click action.
+        dom_backend: cdp
+        # This is the real Verifiers/agent tool-turn limit.  It is deliberately
+        # separate from grpo.max_num_steps (optimizer updates).
+        max_turns: 8
+        judge_model: glm-5.2
+        stagehand_model: openai/glm-5.2
+        policy_model: gpt-4o
+        proxy_model_to_stagehand: true
+        browser_mode: normal
+        # Lexmount Chrome itself is the browser backend.  This project’s
+        # provider-managed proxy route returns ERR_TUNNEL_CONNECTION_FAILED on
+        # reachable WebVoyager origins (for example WolframAlpha), while the
+        # Lexmount direct route has been CDP-smoke-tested on the same origins.
+        # Keep direct egress for a reproducible, usable 600-task run; explicit
+        # external proxy credentials, if supplied, still take precedence.
+        official_proxy: false
+        # Real-site Stagehand navigate has a fixed 15s DOM-ready deadline.
+        # One formal step still contains 64 trajectories, but the policy GPU
+        # can hold only about eight 12K requests. Share this same limit at the
+        # browser-creation boundary so 64 HTTP handlers never stampede the
+        # Lexmount session API before the first vLLM turn.
+        max_concurrent_sessions: 8
+        # Give Lexmount enough time to return a cold browser session. If this
+        # deadline is exceeded, the environment now keeps the late provider
+        # create task alive and closes the session as soon as it returns, so a
+        # timeout does not leak cloud-browser capacity.
+        session_create_timeout_s: 60.0
+        stagehand_ready_timeout_s: 90.0
+        # Cold real-site reset/navigation has its own budget.  This is not
+        # used for policy tool calls, which remain bounded at 25 seconds.
+        # Healthy WebVoyager origins pass the CDP preflight well inside this
+        # window.  With three fresh-session attempts this gives a bad origin a
+        # bounded 90s setup budget, rather than stalling an 8-rollout group for
+        # several minutes.
+        setup_navigation_timeout_s: 30.0
+        # Bound one real-site episode so a hung page cannot stall a GRPO group.
+        per_tool_timeout_s: 25.0
+        episode_timeout_s: 180.0
+        max_repeated_tool_calls: 3
+      group_size: 1
+      # This is a process-wide semaphore in app.py. It limits *full browser
+      # rollouts* to eight waves, not the GRPO group size: one step remains
+      # 8 task x 8 rollout = 64 trajectories.
+      max_concurrent_generation: 8
+      max_concurrent_scoring: 64
+      # Short phase-1 episodes: 8 tool turns × 512 generated tokens, plus
+      # bounded observations and task context, stay inside the common 8K cap.
+      # Keep this aligned with policy.generation.max_new_tokens. At 12K it
+      # leaves headroom for multi-turn DOM observations.
+      # Preserve enough Qwen thinking budget to reach the next grounded tool
+      # call.  The vLLM bridge clamps this per request against the remaining
+      # 12K context, so late turns cannot turn this into a context overflow.
+      max_tokens: 512
+      temperature: 1.0
+      top_p: 1.0

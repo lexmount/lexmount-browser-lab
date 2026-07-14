@@ -1,5 +1,6 @@
 .DS_Store
 .env
+secrets.env
 .venv/
 __pycache__/
 .pytest_cache/
@@ -11,5 +12,11 @@ dist/
 
 # Raw benchmark outputs stay on the runner. Commit only reviewed summaries.
 artifacts/
+logs/
+training/.venv/
+training/data/
+training/.cache/
+logs/lexbrowser-grpo/
+results/lexbrowser-grpo/
 results/**/raw/
 results/**/samples.csv
