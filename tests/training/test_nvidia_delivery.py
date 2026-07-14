@@ -42,6 +42,53 @@ class DeliveryHarnessTests(unittest.TestCase):
             self.assertFalse(manifest["secrets"]["file_present"])
             self.assertFalse(any(manifest["secrets"]["required_names_present"].values()))
 
+    def test_resume_path_requires_safe_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            rejected = subprocess.run(
+                [
+                    "bash",
+                    str(DELIVERY / "run_nvidia.sh"),
+                    "--mode",
+                    "dry-run",
+                    "--run-root",
+                    temporary,
+                    "--run-id",
+                    "unsafe-resume",
+                    "--resume",
+                    "/checkpoints/it's-here",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("resume path must be an absolute path", rejected.stderr)
+
+            accepted = subprocess.run(
+                [
+                    "bash",
+                    str(DELIVERY / "run_nvidia.sh"),
+                    "--mode",
+                    "dry-run",
+                    "--run-root",
+                    temporary,
+                    "--run-id",
+                    "safe-resume",
+                    "--resume",
+                    "/shared/checkpoints/run-1",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertIn("dry-run manifest", accepted.stdout)
+
+    def test_cdp_preflight_uses_word_boundary_error_regex(self) -> None:
+        source = (ROOT / "training" / "scripts" / "smoke_lexmount_cdp.py").read_text()
+        self.assertIn('re.search(r"\\bERR_[A-Z_]+\\b", text)', source)
+        self.assertNotIn('re.search(r"\\\\bERR_[A-Z_]+\\\\b", text)', source)
+
     def test_preflight_validator_accepts_distinct_gpu_family_nodes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -61,6 +61,10 @@ done
 [[ "$GPU_FAMILY" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid GPU family: $GPU_FAMILY" >&2; exit 2; }
 [[ -n "$RUN_ID" ]] || RUN_ID="${MODE}-$(date -u +%Y%m%dT%H%M%SZ)"
 [[ "$RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "invalid run id: $RUN_ID" >&2; exit 2; }
+[[ -z "$RESUME_FROM" || "$RESUME_FROM" =~ ^/[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || {
+  echo "resume path must be an absolute path using only letters, digits, '.', '_', '-', and '/'" >&2
+  exit 2
+}
 
 RUN_DIR="$RUN_ROOT/$RUN_ID"
 CONFIG="$DELIVERY_DIR/configs/grpo_lexbrowser_webvoyager_qwen3_1_7b_nvidia.yaml"

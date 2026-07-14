@@ -40,27 +40,30 @@ def main() -> None:
         username = os.environ.get("LEXMOUNT_EXTERNAL_PROXY_USERNAME", "").strip()
         password = os.environ.get("LEXMOUNT_EXTERNAL_PROXY_PASSWORD", "").strip()
         if not username or not password:
-            raise SystemExit(
-                "LEXMOUNT_EXTERNAL_PROXY_SERVER requires username and password"
-            )
+            raise SystemExit("LEXMOUNT_EXTERNAL_PROXY_SERVER requires username and password")
         session_kwargs: dict[str, Any] = {
             "browser_mode": args.browser_mode,
             "proxy": {
-                "type": "external", "server": proxy_server,
-                "username": username, "password": password,
+                "type": "external",
+                "server": proxy_server,
+                "username": username,
+                "password": password,
             },
         }
         proxy_mode = "external"
     else:
         session_kwargs = {
-            "browser_mode": args.browser_mode, "official_proxy": args.official_proxy,
+            "browser_mode": args.browser_mode,
+            "official_proxy": args.official_proxy,
         }
         proxy_mode = "official" if args.official_proxy else "direct"
     browser = client.sessions.create(**session_kwargs)
     ws: websocket.WebSocket | None = None
     request_id = 0
 
-    def call(method: str, params: dict[str, Any] | None = None, session_id: str | None = None) -> dict[str, Any]:
+    def call(
+        method: str, params: dict[str, Any] | None = None, session_id: str | None = None
+    ) -> dict[str, Any]:
         nonlocal request_id
         assert ws is not None
         request_id += 1
@@ -87,9 +90,9 @@ def main() -> None:
             http_proxy_port=None,
         )
         page_target = call("Target.createTarget", {"url": "about:blank"})["targetId"]
-        page_session = call(
-            "Target.attachToTarget", {"targetId": page_target, "flatten": True}
-        )["sessionId"]
+        page_session = call("Target.attachToTarget", {"targetId": page_target, "flatten": True})[
+            "sessionId"
+        ]
         call("Page.enable", session_id=page_session)
         try:
             call("Page.navigate", {"url": args.url}, session_id=page_session)
@@ -100,7 +103,8 @@ def main() -> None:
             # Python websocket traceback that obscures the real diagnosis.
             print(
                 "LEXMOUNT_CDP_REACHABILITY_FAILED "
-                f"mode={proxy_mode} browser={args.browser_mode} reason=cdp_navigation_{type(exc).__name__}"
+                f"mode={proxy_mode} browser={args.browser_mode} "
+                f"reason=cdp_navigation_{type(exc).__name__}"
             )
             raise SystemExit(5) from exc
         # ``Page.navigate`` only confirms that Chrome accepted the request; it
@@ -114,7 +118,14 @@ def main() -> None:
             try:
                 snapshot = call(
                     "Runtime.evaluate",
-                    {"expression": "JSON.stringify({url:location.href,title:document.title||'',text:(document.body?.innerText||'').slice(0,1000)})", "returnByValue": True},
+                    {
+                        "expression": (
+                            "JSON.stringify({url:location.href,"
+                            "title:document.title||'',"
+                            "text:(document.body?.innerText||'').slice(0,1000)})"
+                        ),
+                        "returnByValue": True,
+                    },
                     session_id=page_session,
                 )
                 value = snapshot.get("result", {}).get("value", "{}")
@@ -129,12 +140,20 @@ def main() -> None:
             except (RuntimeError, json.JSONDecodeError):
                 pass
             time.sleep(0.5)
-        error = re.search(r"\\bERR_[A-Z_]+\\b", text)
+        error = re.search(r"\bERR_[A-Z_]+\b", text)
         if url.startswith("chrome-error://") or error:
-            print(f"LEXMOUNT_CDP_REACHABILITY_FAILED mode={proxy_mode} browser={args.browser_mode} reason={error.group(0) if error else 'chrome-error'}")
+            print(
+                "LEXMOUNT_CDP_REACHABILITY_FAILED "
+                f"mode={proxy_mode} browser={args.browser_mode} "
+                f"reason={error.group(0) if error else 'chrome-error'}"
+            )
             raise SystemExit(2)
         if not url or url == "about:blank" or len(text.strip()) < 20:
-            print(f"LEXMOUNT_CDP_REACHABILITY_FAILED mode={proxy_mode} browser={args.browser_mode} reason=empty_or_loading_dom")
+            print(
+                "LEXMOUNT_CDP_REACHABILITY_FAILED "
+                f"mode={proxy_mode} browser={args.browser_mode} "
+                "reason=empty_or_loading_dom"
+            )
             raise SystemExit(3)
         challenge = re.search(
             r"cloudflare|verify you are human|checking your browser|access denied|just a moment",
@@ -142,9 +161,17 @@ def main() -> None:
             flags=re.IGNORECASE,
         )
         if challenge:
-            print(f"LEXMOUNT_CDP_REACHABILITY_FAILED mode={proxy_mode} browser={args.browser_mode} reason=anti_bot_challenge")
+            print(
+                "LEXMOUNT_CDP_REACHABILITY_FAILED "
+                f"mode={proxy_mode} browser={args.browser_mode} "
+                "reason=anti_bot_challenge"
+            )
             raise SystemExit(4)
-        print(f"LEXMOUNT_CDP_REACHABILITY_OK mode={proxy_mode} browser={args.browser_mode} url={url[:160]} text_chars={len(text)}")
+        print(
+            "LEXMOUNT_CDP_REACHABILITY_OK "
+            f"mode={proxy_mode} browser={args.browser_mode} "
+            f"url={url[:160]} text_chars={len(text)}"
+        )
     finally:
         if ws is not None:
             ws.close()

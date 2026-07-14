@@ -28,6 +28,7 @@ command -v srun >/dev/null || fail allocation "srun unavailable"
 srun --help 2>&1 | grep -q -- '--container-image' || fail allocation "Slurm Pyxis/Enroot support (--container-image) is required"
 mkdir -p "$RUN_DIR" "$SHARED_CACHE/gym-venvs/verifiers-agent" "$SHARED_CACHE/gym-venvs/vllm-model" "$RUN_DIR/cache/huggingface" "$RUN_DIR/cache/uv" "$RUN_DIR/logs" "$RUN_DIR/metrics" "$RUN_DIR/preflight/nodes"
 
+resume_env_value="$(printf '%q' "${LEXBROWSER_RESUME_FROM:-}")"
 cat > "$RUN_DIR/run.env" <<EOF
 export LEXBROWSER_MODE='$LEXBROWSER_MODE'
 export LEXBROWSER_RUN_DIR='$CONTAINER_RUN_DIR'
@@ -38,7 +39,7 @@ export LEXBROWSER_GPUS_PER_NODE='$LEXBROWSER_GPUS_PER_NODE'
 export LEXBROWSER_GPU_FAMILY='$EXPECTED_GPU_FAMILY'
 export LEXBROWSER_MODEL_ID='$LEXBROWSER_MODEL_ID'
 export LEXBROWSER_MODEL_REVISION='$LEXBROWSER_MODEL_REVISION'
-export LEXBROWSER_RESUME_FROM='${LEXBROWSER_RESUME_FROM:-}'
+export LEXBROWSER_RESUME_FROM=$resume_env_value
 export HF_HOME='$CONTAINER_RUN_DIR/cache/huggingface'
 export UV_CACHE_DIR='$CONTAINER_RUN_DIR/cache/uv'
 export PYTHONPATH='/workspace/LexBrowserEnv/training/nemo_gym/runtime_overrides'
