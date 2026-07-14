@@ -45,9 +45,7 @@ from nemo_rl.models.generation.vllm.vllm_worker import BaseVllmGenerationWorker
 # the helper request shape below (structured response, no policy-prefix, no
 # policy tools).  It is deliberately never used for policy generation or
 # policy logprob/token reconstruction.
-STAGEHAND_STRUCTURED_CHAT_TEMPLATE = """<|im_start|>system
-Return only one compact, syntactically complete JSON value that satisfies the requested response schema. For a DOM-element list, return at most 20 elements, prioritizing controls directly relevant to the instruction. Do not include explanations, Markdown, reasoning, or extra fields.<|im_end|>
-{%- for message in messages %}
+STAGEHAND_STRUCTURED_CHAT_TEMPLATE = """{%- for message in messages %}
 {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }}
 {%- endfor %}
 {%- if add_generation_prompt %}
@@ -378,35 +376,6 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
                 return super().model_post_init(context)
 
         class NeMoRLOpenAIServingMixin:
-            @staticmethod
-            def _set_max_tokens(request, max_tokens: int) -> None:
-                """Mutate either OpenAI output-token field used by vLLM."""
-                if getattr(request, "max_completion_tokens", None) is not None:
-                    request.max_completion_tokens = max_tokens
-                elif getattr(request, "max_tokens", None) is not None:
-                    request.max_tokens = max_tokens
-
-            @staticmethod
-            def _clamp_max_tokens(request, requested: int, prompt_token_ids: list[int]) -> None:
-                """Keep input + output within vLLM's strict max_model_len.
-
-                NeMo-Gym appends real browser observations turn by turn.  A
-                late prompt can be valid by one token less than its requested
-                completion, which vLLM otherwise rejects before generation.
-                Clamping the requested completion preserves the on-policy
-                prompt/tokens already produced and is preferable to inventing
-                a synthetic empty rollout.
-                """
-                remaining = model_config.max_model_len - len(prompt_token_ids)
-                if remaining <= 0:
-                    raise ValueError(
-                        f"Prompt length ({len(prompt_token_ids)}) fills max_model_len "
-                        f"({model_config.max_model_len}); no output room remains"
-                    )
-                NeMoRLOpenAIServingMixin._set_max_tokens(
-                    request, min(requested, remaining)
-                )
-
             async def _preprocess_chat(
                 self,
                 request,
@@ -424,18 +393,6 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
 
                 # Deepcopy messages here since _preprocess_chat may be destructive.
                 messages_for_replace_prefix_tokens = deepcopy(messages)
-
-                # vLLM validates input+max_tokens inside its preprocessing.
-                # Temporarily reserve one completion token to obtain the
-                # exact rendered prompt, then clamp to the actual remaining
-                # context after NeMo's prefix-token replacement below.
-                requested_max_tokens = (
-                    request.max_completion_tokens
-                    if getattr(request, "max_completion_tokens", None) is not None
-                    else getattr(request, "max_tokens", None)
-                )
-                if requested_max_tokens is not None:
-                    self._set_max_tokens(request, 1)
 
                 # res is (conversation, [engine_prompt])
                 try:
@@ -460,10 +417,6 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
                     raise
 
                 if request.required_prefix_token_ids is None:
-                    if requested_max_tokens is not None:
-                        self._clamp_max_tokens(
-                            request, requested_max_tokens, res[1][0]["prompt_token_ids"]
-                        )
                     return res
 
                 # Find the last assistant message
@@ -520,11 +473,6 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
                 )
 
                 engine_prompt["prompt_token_ids"] = final_prompt_token_ids
-
-                if requested_max_tokens is not None:
-                    self._clamp_max_tokens(
-                        request, requested_max_tokens, final_prompt_token_ids
-                    )
 
                 return res
 
@@ -645,16 +593,8 @@ class VllmAsyncGenerationWorker(BaseVllmGenerationWorker):
                 request.chat_template_kwargs = {}
                 # Stagehand parses this response directly as one JSON object.
                 # Cap only the environment-side helper so a verbose DOM list
-                # cannot hit its parser with a truncated JSON string. vLLM's
-                # newer OpenAI request field takes precedence when present.
-                helper_max_tokens = 2048
-                request.max_tokens = min(
-                    int(request.max_tokens or helper_max_tokens), helper_max_tokens
-                )
-                if getattr(request, "max_completion_tokens", None) is not None:
-                    request.max_completion_tokens = min(
-                        int(request.max_completion_tokens), helper_max_tokens
-                    )
+                # cannot hit its parser with a truncated JSON string.
+                request.max_tokens = min(int(request.max_tokens or 2048), 2048)
                 print("[LEX_STAGEHAND_TEMPLATE] structured_no_think", flush=True)
             elif not is_policy_request:
                 helper_template_kwargs = dict(request.chat_template_kwargs or {})

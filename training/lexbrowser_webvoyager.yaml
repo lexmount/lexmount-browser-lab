@@ -35,18 +35,13 @@ lexbrowser_webvoyager:
         # external proxy credentials, if supplied, still take precedence.
         official_proxy: false
         # Real-site Stagehand navigate has a fixed 15s DOM-ready deadline.
-        # Match the eight-member GRPO group.  This bounds a permanently
-        # unavailable origin to one retry window instead of serializing it
-        # across two four-browser waves.
-        max_concurrent_sessions: 8
+        # Four fresh sessions avoid its CDP navigation tail while the 8-member
+        # GRPO group is collected in two stable waves.
+        max_concurrent_sessions: 4
         stagehand_ready_timeout_s: 90.0
         # Cold real-site reset/navigation has its own budget.  This is not
         # used for policy tool calls, which remain bounded at 25 seconds.
-        # Healthy WebVoyager origins pass the CDP preflight well inside this
-        # window.  With three fresh-session attempts this gives a bad origin a
-        # bounded 90s setup budget, rather than stalling an 8-rollout group for
-        # several minutes.
-        setup_navigation_timeout_s: 30.0
+        setup_navigation_timeout_s: 90.0
         # Bound one real-site episode so a hung page cannot stall a GRPO group.
         per_tool_timeout_s: 25.0
         episode_timeout_s: 180.0

@@ -27,12 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 EXPECTED_DATASET_ROWS = 600
 EXPECTED_DATASET_SHA256 = "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097"
-# The judge must see the rendered evidence that the agent based its answer on.
-# 160 characters only contains the URL/header of a real-page observation and
-# hides the relevant controls (for example Apple "Genius Bar" / "Repair"),
-# systematically turning supported answers into reward=0.  This applies only
-# to the out-of-band judge transcript, never the policy context or token path.
-TOOL_RESULT_CHAR_LIMIT = 1024
+TOOL_RESULT_CHAR_LIMIT = 160
 TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 SETUP_NAVIGATION_MAX_ATTEMPTS = 3
@@ -75,7 +70,7 @@ First call observe to inspect the current page, then use observe, act, navigate,
 
 CDP_BROWSER_AGENT_SYSTEM_PROMPT = """You are an autonomous browser agent. A real browser is already open on the task website.
 You must complete the user's task with the provided browser tools; do not answer from prior knowledge and never say that you cannot browse.
-First call observe. It returns explicit `[data-lex-id=lex-N]` selectors. For every act call, use exactly one of: `fill [data-lex-id=lex-N] :: text`, `click [data-lex-id=lex-N]`, or `press [data-lex-id=lex-N] :: Enter`. Observe again after actions and only answer with browser evidence."""
+First call observe. It returns explicit `[data-lex-id=\"lex-N\"]` selectors. For every act call, use exactly one of: `fill [data-lex-id=\"lex-N\"] :: text`, `click [data-lex-id=\"lex-N\"]`, or `press [data-lex-id=\"lex-N\"] :: Enter`. Observe again after actions and only answer with browser evidence."""
 
 
 def _tool_call_field(tool_call: Any, field: str, default: Any = None) -> Any:
@@ -218,10 +213,6 @@ async def judge_task_completion(
         return 0.0
     state["webvoyager_judge_transcript"] = rendered_completion
     judge_response = await judge(prompt, rendered_completion, answer, state)
-    # Preserve the binary judge's literal response for the local, secret-free
-    # rollout audit.  It makes reward=0 diagnosable without changing the
-    # reward contract or exposing the judge prompt/API credentials.
-    state["webvoyager_judge_response"] = str(judge_response)
     return 1.0 if re.match(r"^\s*yes\b", judge_response, flags=re.IGNORECASE) else 0.0
 
 
@@ -403,16 +394,11 @@ class LexmountCDPSession:
               elements: Array.from(document.querySelectorAll(
               'input,textarea,select,button,a,[role=button],[contenteditable=true]'
             )).filter(el => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
-            // Keep enough controls for expanded site menus (Apple's Repair
-            // link comes after the primary product navigation), while the
-            // compact response still leaves room for multi-turn 12K rollout.
-            .slice(0, 32).map((el, i) => {
+            .slice(0, 24).map((el, i) => {
               const id = `lex-${i}`; el.setAttribute('data-lex-id', id);
               const label = (el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
                 el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
-              // An unquoted CSS identifier is valid here and avoids nested
-              // quote escaping inside the policy's JSON tool arguments.
-              return {selector: `[data-lex-id=${id}]`, tag: el.tagName.toLowerCase(),
+              return {selector: `[data-lex-id="${id}"]`, tag: el.tagName.toLowerCase(),
                 description: label || el.tagName.toLowerCase(),
                 actions: /^(input|textarea|select)$/i.test(el.tagName) || el.isContentEditable ? 'fill' : 'click'};
             })
@@ -546,9 +532,9 @@ class LexmountCDPSession:
 
     def act(self, instruction: str) -> str:
         # Exact protocol deliberately keeps action grounding in the policy:
-        # ``fill [data-lex-id=lex-0] :: query`` or ``click [data-lex-id=lex-1]``.
+        # ``fill [data-lex-id="lex-0"] :: query`` or ``click [data-lex-id="lex-1"]``.
         match = re.match(
-            r'^\s*(fill|type|click|press)\s+(\[data-lex-id=lex-\d+\])(?:\s*::\s*(.*))?\s*$',
+            r'^\s*(fill|type|click|press)\s+(\[data-lex-id="lex-\d+"\])(?:\s*::\s*(.*))?\s*$',
             instruction,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -648,8 +634,8 @@ class LexmountCDPSession:
                 if len(submit_controls) == 1:
                     return self._run_action("click", submit_controls[0])
         raise ValueError(
-            "Invalid CDP action. Use `fill [data-lex-id=lex-N] :: text`, "
-            "`click [data-lex-id=lex-N]`, or name one previously-observed control."
+            "Invalid CDP action. Use `fill [data-lex-id=\"lex-N\"] :: text`, "
+            "`click [data-lex-id=\"lex-N\"]`, or name one previously-observed control."
         )
 
 
@@ -751,14 +737,7 @@ class LexmountDOMMode:
         env.add_tool(self.navigate, args_to_skip=["session", "guard"])
         env.add_tool(self.observe, args_to_skip=["session", "llm_config", "guard"])
         env.add_tool(self.act, args_to_skip=["session", "llm_config", "guard"])
-        # ``extract`` requires a nested JSON-schema string.  That is useful
-        # for Stagehand, but is neither used nor needed by the deterministic
-        # CDP adapter: ``observe`` already returns literal rendered evidence.
-        # Omitting it here keeps a small policy action space and prevents a
-        # malformed nested schema from being misclassified as a tool-parser
-        # failure.  Stagehand retains its native structured extractor.
-        if self.dom_backend != "cdp":
-            env.add_tool(self.extract, args_to_skip=["session", "llm_config", "guard"])
+        env.add_tool(self.extract, args_to_skip=["session", "llm_config", "guard"])
 
     async def _get_stagehand_client(self) -> AsyncStagehand:
         async with self._client_lock:
@@ -897,17 +876,6 @@ class LexmountDOMMode:
             if isinstance(session, LexmountCDPSession):
                 await asyncio.wait_for(
                     asyncio.to_thread(session.navigate, url), timeout=guard.per_tool_timeout_s
-                )
-                # CDP ``Page.navigate`` acknowledges before the target page
-                # is readable.  Do not hand the policy an empty interstitial
-                # and let it hallucinate a final answer: wait for rendered DOM
-                # evidence within this tool's bounded budget.
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        session.wait_for_usable_document,
-                        max(0.1, guard.per_tool_timeout_s - 0.5),
-                    ),
-                    timeout=guard.per_tool_timeout_s,
                 )
                 return f"Navigated to {url}"
             await asyncio.wait_for(
@@ -1229,12 +1197,7 @@ def load_environment(
         judge_client=judge_client,
         judge_model=judge_model,
         judge_prompt=TASK_JUDGE_PROMPT,
-        # GLM-5.2 is a reasoning model.  With the upstream eight-token cap it
-        # consumes the entire budget in ``reasoning_content`` and returns an
-        # empty assistant message, which forces every binary reward to zero.
-        # 1024 is verified to reach a literal yes/no completion; this is
-        # scorer-only and does not affect policy generation or packing.
-        judge_sampling_args={"temperature": 0.0, "max_tokens": 1024},
+        judge_sampling_args={"temperature": 0.0, "max_tokens": 8},
     )
     rubric.add_reward_func(judge_task_completion, weight=1.0)
 

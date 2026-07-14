@@ -70,19 +70,10 @@ BROWSER_POLICY_SYSTEM_PROMPT = (
     "assistant turn, wait for its result, then decide the next action. For a "
     "form submission, first observe, then act to fill/click, then observe or "
     "extract the resulting page before answering. An act instruction must name "
-    "the exact observed control and operation, not merely the desired outcome. "
-    "For a fill action, copy the literal task text from the user message; "
-    "never write the placeholder phrase 'the user\'s query'. Do not say only "
-    "'calculate' or 'search' to the act tool."
-    " If observe returns selectors of the form [data-lex-id=lex-N], use "
-    "the exact CDP action protocol: `fill [data-lex-id=lex-N] :: text`, "
-    "`click [data-lex-id=lex-N]`, or `press [data-lex-id=lex-N] :: Enter`. "
-    "In this DOM mode, after a successful click call observe to get the rendered result; "
-    "do not call extract. For list questions, copy requested item labels exactly "
-    "from the latest browser evidence rather than inferring a related product or "
-    "renaming it (for example, preserve 'Genius Bar' rather than inventing "
-    "'Genius Store'). Do not give a final answer after only the homepage unless "
-    "the requested items are visibly present there."
+    "the exact observed control and operation, not merely the desired outcome: "
+    "for example, 'Fill the textbox described as WolframAlpha input field with "
+    "the user's query', then 'Click the button described as Compute input "
+    "button'. Do not say only 'calculate' or 'search' to the act tool."
 )
 
 _HERMES_TOOL_CALL_RE = re.compile(
@@ -471,7 +462,6 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
             "generation_tokens": 0.0,
             "setup_navigation_attempts": 1.0,
             "setup_navigation_retry_success": 0.0,
-            "judge_empty_response": 0.0,
         }
         for step in state.get("trajectory") or []:
             tokens = step.get("tokens") if isinstance(step, dict) else None
@@ -521,9 +511,6 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
         counts["setup_navigation_retry_success"] = float(
             state.get("setup_navigation_retry_success", 0.0)
         )
-        counts["judge_empty_response"] = float(
-            not str(state.get("webvoyager_judge_response") or "").strip()
-        )
         if counts["infrastructure_failures"] > 0:
             # Keep the numeric reward contract required by GRPO, but clearly
             # separate invalid infrastructure episodes from policy reward in
@@ -570,21 +557,11 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
             )
         record = {
             "task_idx": task_idx,
-            # ``vf.RolloutInput`` is a TypedDict in the installed Verifiers
-            # release, not an object with attributes.  Use mapping access so
-            # audit records reflect the exact task passed to JudgeRubric.
-            "task_id": (rollout_input.get("info", {}) or {}).get("task_id"),
-            "website": (rollout_input.get("info", {}) or {}).get("website"),
-            "question": rollout_input.get("task", ""),
+            "task_id": (getattr(rollout_input, "info", {}) or {}).get("task_id"),
+            "website": (getattr(rollout_input, "info", {}) or {}).get("website"),
+            "question": getattr(rollout_input, "task", ""),
             "reward": reward,
             "metrics": metrics,
-            "judge_response": state.get("webvoyager_judge_response"),
-            "judge_transcript_chars": len(str(state.get("webvoyager_judge_transcript") or "")),
-            # Setup failures never produce an agent completion, but they must
-            # remain visible in the same audit stream as ordinary trajectories.
-            # Keeping only a string avoids attempting to serialize aiohttp or
-            # Stagehand exception objects through the NeMo Gym/Ray transport.
-            "infrastructure_error": state.get("infrastructure_error"),
             # Audit the actual policy prompt separately from the completion.
             # This lets us prove that browser-use instructions reached the
             # rollout worker without recording secrets or hidden token data.
@@ -645,26 +622,10 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                     {"role": "system", "content": BROWSER_POLICY_SYSTEM_PROMPT},
                 )
 
-            # NeMo Gym's transport can leave ``body.task`` empty while the
-            # actual WebVoyager instruction is correctly present as the user
-            # message in ``responses_create_params.input``.  JudgeRubric uses
-            # RolloutInput.task to fill `{question}` in TASK_JUDGE_PROMPT, so
-            # preserve that literal instruction rather than sending an empty
-            # task to the judge.  This is data plumbing only: no task is
-            # synthesized, rewritten, or answered here.
-            task_text = self._text(body.task).strip()
-            if not task_text:
-                task_text = "\n".join(
-                    self._text(message.get("content", "")).strip()
-                    for message in prompt_messages
-                    if message.get("role") == "user"
-                    and self._text(message.get("content", "")).strip()
-                )
-
             rollout_input = vf.RolloutInput(
                 prompt=prompt_messages,
                 answer=body.answer,
-                task=task_text,
+                task=body.task,
                 info=body.info,
                 example_id=body.example_id,
             )
@@ -687,41 +648,17 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
             states = None
             for infra_attempt in range(1, 4):
                 try:
-                    # ``episode_timeout_s`` bounds normal tool turns, but a
-                    # provider socket can still strand ``run_group`` while a
-                    # setup coroutine is being cancelled.  Put a hard wall
-                    # clock around the complete single-rollout invocation so
-                    # one dead browser can never hold an eight-member GRPO
-                    # group indefinitely.  The 210s budget is deliberately
-                    # larger than the configured 180s episode budget.
-                    states = await asyncio.wait_for(
-                        vf_env.run_group(
-                            group_inputs=[rollout_input],
-                            client=client,
-                            model=self.config.model_name,
-                            gen_sampling_args=sampling_args,
-                            gen_sem=gen_sem,
-                            score_sem=score_sem,
-                        ),
-                        timeout=210.0,
+                    states = await vf_env.run_group(
+                        group_inputs=[rollout_input],
+                        client=client,
+                        model=self.config.model_name,
+                        gen_sampling_args=sampling_args,
+                        gen_sem=gen_sem,
+                        score_sem=score_sem,
                     )
                     break
                 except Exception as exc:
                     last_error = exc
-                    # ``LexBrowserEnv.setup_state`` already used its bounded
-                    # fresh-Chrome navigation retries. Re-running the entire
-                    # group here would multiply one unavailable website into
-                    # nine expensive 90s attempts, without changing network
-                    # state. Serialize the terminal infrastructure outcome
-                    # below instead of turning a transient provider route
-                    # failure into a stalled GRPO batch.
-                    if "infrastructure_setup_navigation_failed" in str(exc):
-                        logger.warning(
-                            "Setup navigation exhausted its session retries for task %s; "
-                            "returning invalid infrastructure rollout",
-                            task_idx,
-                        )
-                        break
                     logger.warning(
                         "Infrastructure rollout retry %s/3 for task %s: %s",
                         infra_attempt,
@@ -739,27 +676,6 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                     "All infrastructure retries exhausted for task %s: %r",
                     task_idx,
                     last_error,
-                )
-                failure_metrics = {
-                    "infrastructure_failures": 1.0,
-                    "valid_trajectory": 0.0,
-                    "setup_navigation_attempts": 3.0,
-                    "setup_navigation_retry_success": 0.0,
-                }
-                self._write_trajectory_audit(
-                    task_idx=task_idx,
-                    rollout_input=rollout_input,
-                    state={
-                        "prompt": prompt_messages,
-                        "completion": [],
-                        "infrastructure_error": (
-                            f"{type(last_error).__name__}: {last_error}"
-                            if last_error is not None
-                            else "unknown infrastructure failure"
-                        ),
-                    },
-                    reward=0.0,
-                    metrics=failure_metrics,
                 )
                 output = [
                     NeMoGymResponseOutputMessageForTraining(
@@ -779,7 +695,12 @@ class VerifiersAgent(SimpleResponsesAPIAgent):
                     env_id=vf_env_id,
                     group_id=str(task_idx),
                     reward=0.0,
-                    metrics=failure_metrics,
+                    metrics={
+                        "infrastructure_failures": 1.0,
+                        "valid_trajectory": 0.0,
+                        "setup_navigation_attempts": 3.0,
+                        "setup_navigation_retry_success": 0.0,
+                    },
                 )
 
             state = states[0]

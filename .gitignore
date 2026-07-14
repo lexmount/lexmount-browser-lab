@@ -9,6 +9,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+logs/
+training/.venv
 
 # Raw benchmark outputs stay on the runner. Commit only reviewed summaries.
 artifacts/

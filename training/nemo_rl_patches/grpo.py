@@ -1732,11 +1732,11 @@ def grpo_train(
                 # have completed; force vLLM to offload KV/weights immediately
                 # before policy logprob materializes the full vocabulary logits.
                 if colocated_inference:
-                    print("▶ Phase switch: sleeping vLLM before 32K logprob...", flush=True)
+                    print("▶ Phase switch: sleeping vLLM before policy logprob...", flush=True)
                     with timer.time("vllm_sleep_before_logprob"):
                         phase_sleep_ok = policy_generation.finish_generation()
                     if not phase_sleep_ok:
-                        raise RuntimeError("vLLM failed to sleep before 32K logprob")
+                        raise RuntimeError("vLLM failed to sleep before policy logprob")
                 print("▶ Preparing for logprob inference...", flush=True)
                 with timer.time("logprob_inference_prep"):
                     policy.prepare_for_lp_inference()
@@ -2791,11 +2791,11 @@ def async_grpo_train(
 
                 # Training phase (same strict 32K phase handoff as sync version)
                 if colocated_inference:
-                    print("▶ Phase switch: sleeping vLLM before 32K logprob...", flush=True)
+                    print("▶ Phase switch: sleeping vLLM before policy logprob...", flush=True)
                     with timer.time("vllm_sleep_before_logprob"):
                         phase_sleep_ok = policy_generation.finish_generation()
                     if not phase_sleep_ok:
-                        raise RuntimeError("vLLM failed to sleep before 32K logprob")
+                        raise RuntimeError("vLLM failed to sleep before policy logprob")
                 print("▶ Preparing for logprob inference...")
                 with timer.time("logprob_inference_prep"):
                     policy.prepare_for_lp_inference()

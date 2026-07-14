@@ -102,10 +102,9 @@ policy:
 
   generation:
     backend: vllm
-    # The vLLM bridge clamps each request to remaining context, so preserve a
-    # full 512-token thinking/tool-call budget while preventing late-turn
-    # max-model-length validation failures.
-    max_new_tokens: 512
+    # At the verified 12K fallback, reserve response tokens within vLLM's
+    # strict max_model_len. 512 rejected late multi-turn prompts; 384 does not.
+    max_new_tokens: 384
     temperature: 1.0
     top_p: 1.0
     vllm_cfg:

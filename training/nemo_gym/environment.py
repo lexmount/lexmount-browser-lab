@@ -27,12 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 EXPECTED_DATASET_ROWS = 600
 EXPECTED_DATASET_SHA256 = "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097"
-# The judge must see the rendered evidence that the agent based its answer on.
-# 160 characters only contains the URL/header of a real-page observation and
-# hides the relevant controls (for example Apple "Genius Bar" / "Repair"),
-# systematically turning supported answers into reward=0.  This applies only
-# to the out-of-band judge transcript, never the policy context or token path.
-TOOL_RESULT_CHAR_LIMIT = 1024
+TOOL_RESULT_CHAR_LIMIT = 160
 TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 SETUP_NAVIGATION_MAX_ATTEMPTS = 3
@@ -75,7 +70,7 @@ First call observe to inspect the current page, then use observe, act, navigate,
 
 CDP_BROWSER_AGENT_SYSTEM_PROMPT = """You are an autonomous browser agent. A real browser is already open on the task website.
 You must complete the user's task with the provided browser tools; do not answer from prior knowledge and never say that you cannot browse.
-First call observe. It returns explicit `[data-lex-id=lex-N]` selectors. For every act call, use exactly one of: `fill [data-lex-id=lex-N] :: text`, `click [data-lex-id=lex-N]`, or `press [data-lex-id=lex-N] :: Enter`. Observe again after actions and only answer with browser evidence."""
+First call observe. It returns explicit `[data-lex-id=\"lex-N\"]` selectors. For every act call, use exactly one of: `fill [data-lex-id=\"lex-N\"] :: text`, `click [data-lex-id=\"lex-N\"]`, or `press [data-lex-id=\"lex-N\"] :: Enter`. Observe again after actions and only answer with browser evidence."""
 
 
 def _tool_call_field(tool_call: Any, field: str, default: Any = None) -> Any:
@@ -218,10 +213,6 @@ async def judge_task_completion(
         return 0.0
     state["webvoyager_judge_transcript"] = rendered_completion
     judge_response = await judge(prompt, rendered_completion, answer, state)
-    # Preserve the binary judge's literal response for the local, secret-free
-    # rollout audit.  It makes reward=0 diagnosable without changing the
-    # reward contract or exposing the judge prompt/API credentials.
-    state["webvoyager_judge_response"] = str(judge_response)
     return 1.0 if re.match(r"^\s*yes\b", judge_response, flags=re.IGNORECASE) else 0.0
 
 
@@ -336,51 +327,6 @@ class LexmountCDPSession:
     def navigate(self, url: str) -> None:
         self.call("Page.navigate", {"url": url}, session_id=self._session_id)
 
-    def wait_for_usable_document(self, timeout_s: float) -> None:
-        """Confirm that a setup navigation yielded a real, usable document.
-
-        ``Page.navigate`` returning only means Chrome accepted the command. In
-        a remote-browser deployment it can subsequently land on
-        ``chrome-error://`` or remain an empty interstitial. Detect that while
-        still in environment setup so a fresh Lexmount session is tried rather
-        than exposing an infrastructure error as the policy's first observe.
-        """
-        deadline = time.monotonic() + timeout_s
-        last_url = ""
-        last_text = ""
-        while time.monotonic() < deadline:
-            raw = self.evaluate(
-                """(() => JSON.stringify({
-                  url: location.href,
-                  text: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 300)
-                }))()"""
-            )
-            snapshot = json.loads(raw or "{}")
-            last_url = str(snapshot.get("url") or "")
-            last_text = str(snapshot.get("text") or "")
-            if (
-                last_url.startswith("chrome-error://")
-                or re.search(r"\bERR_[A-Z_]+\b", last_text)
-            ):
-                reason = re.search(r"\bERR_[A-Z_]+\b", last_text)
-                raise RuntimeError(
-                    "infrastructure_browser_error_page: "
-                    f"{reason.group(0) if reason else last_url}"
-                )
-            if last_url and last_url != "about:blank" and len(last_text) >= 20:
-                if re.search(
-                    r"cloudflare|verify you are human|checking your browser|just a moment",
-                    last_text,
-                    flags=re.IGNORECASE,
-                ):
-                    raise RuntimeError("infrastructure_anti_bot_challenge")
-                return
-            time.sleep(0.25)
-        raise TimeoutError(
-            "infrastructure_setup_document_not_ready "
-            f"url={last_url or 'about:blank'} text_chars={len(last_text)}"
-        )
-
     def evaluate(self, expression: str) -> Any:
         response = self.call(
             "Runtime.evaluate",
@@ -399,50 +345,28 @@ class LexmountCDPSession:
         raw = self.evaluate(
             """(() => JSON.stringify({
               url: location.href,
-              visible_text: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1600),
+              visible_text: (document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 3000),
               elements: Array.from(document.querySelectorAll(
               'input,textarea,select,button,a,[role=button],[contenteditable=true]'
             )).filter(el => { const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1; })
-            // Keep enough controls for expanded site menus (Apple's Repair
-            // link comes after the primary product navigation), while the
-            // compact response still leaves room for multi-turn 12K rollout.
-            .slice(0, 32).map((el, i) => {
+            .slice(0, 40).map((el, i) => {
               const id = `lex-${i}`; el.setAttribute('data-lex-id', id);
               const label = (el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
-                el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 80);
-              // An unquoted CSS identifier is valid here and avoids nested
-              // quote escaping inside the policy's JSON tool arguments.
-              return {selector: `[data-lex-id=${id}]`, tag: el.tagName.toLowerCase(),
+                el.innerText || el.value || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+              return {selector: `[data-lex-id="${id}"]`, tag: el.tagName.toLowerCase(),
                 description: label || el.tagName.toLowerCase(),
                 actions: /^(input|textarea|select)$/i.test(el.tagName) || el.isContentEditable ? 'fill' : 'click'};
             })
             }))()"""
         )
         snapshot = json.loads(raw or "{}")
-        url = str(snapshot.get("url") or "")
-        visible_text = str(snapshot.get("visible_text") or "")
-        # Chrome's built-in error document is a transport/browser failure, not
-        # an empty page chosen by the policy.  Surface it as infrastructure so
-        # an unavailable provider proxy (for example ERR_TUNNEL_CONNECTION_FAILED)
-        # cannot silently become a valid reward=0 trajectory.
-        if (
-            url.startswith("chrome-error://")
-            or re.search(r"\bERR_[A-Z_]+\b", visible_text)
-            or "this site can’t be reached" in visible_text.lower()
-            or "this site can't be reached" in visible_text.lower()
-        ):
-            reason = re.search(r"\bERR_[A-Z_]+\b", visible_text)
-            raise RuntimeError(
-                "infrastructure_browser_error_page: "
-                f"{reason.group(0) if reason else url}"
-            )
         self._observed_controls = list(snapshot.get("elements") or [])
         return snapshot
 
     def visible_text(self) -> str:
         """Read rendered page evidence without a model-based extractor."""
         value = self.evaluate(
-            "(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 3000)"
+            "(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 5000)"
         )
         return str(value or "")
 
@@ -470,17 +394,7 @@ class LexmountCDPSession:
             control_tokens = set(re.findall(r"[a-z0-9]+", description))
             normalized_description = re.sub(r"\s+", " ", description).strip()
             normalized_label = re.sub(r"\s+", " ", label.lower()).strip()
-            # Websites commonly expose a camel-cased aria-label (for example
-            # ``WolframAlpha input field``) while the policy writes the human
-            # spelling ``Wolfram Alpha input field``.  Treat only an exact
-            # alphanumeric-normalized match as equivalent; it remains a match
-            # against the last observed control rather than semantic planning.
-            compact_description = re.sub(r"[^a-z0-9]", "", normalized_description)
-            compact_label = re.sub(r"[^a-z0-9]", "", normalized_label)
-            if (
-                normalized_description == normalized_label
-                or compact_description == compact_label
-            ):
+            if normalized_description == normalized_label:
                 score = 3.0
             elif description and description in label.lower():
                 score = 2.0
@@ -506,49 +420,26 @@ class LexmountCDPSession:
     def _run_action(self, verb: str, selector: str, value: str = "") -> str:
         payload = json.dumps(value)
         selector_json = json.dumps(selector)
-        before_url = ""
-        before_text = ""
         if verb in {"fill", "type"}:
-            expression = f"""(() => {{ const e=document.querySelector({selector_json}); if(!e) throw new Error('selector not found'); e.focus(); const p=Object.getPrototypeOf(e); const d=Object.getOwnPropertyDescriptor(p,'value'); if(d&&d.set) d.set.call(e,{payload}); else e.value={payload}; e.dispatchEvent(new InputEvent('input',{{bubbles:true,inputType:'insertText',data:{payload}}})); e.dispatchEvent(new Event('change',{{bubbles:true}})); return 'filled'; }})()"""
+            expression = f"""(() => {{ const e=document.querySelector({selector_json}); if(!e) throw new Error('selector not found'); e.focus(); e.value={payload}; e.dispatchEvent(new Event('input',{{bubbles:true}})); e.dispatchEvent(new Event('change',{{bubbles:true}})); return 'filled'; }})()"""
         elif verb == "click":
-            # ``HTMLElement.click`` already runs the browser's native default
-            # action (including form submission for a real submit control).
-            # Calling ``requestSubmit(e)`` afterwards is both redundant and
-            # invalid for non-submit controls; on some real sites it resets a
-            # successfully navigated form.  Dispatch pointer events for React
-            # handlers, then let the native click be the sole submission path.
-            before_url = str(self.evaluate("location.href") or "")
-            before_text = self.visible_text()
-            expression = f"""(() => {{ const e=document.querySelector({selector_json}); if(!e) throw new Error('selector not found'); e.focus(); for(const t of ['pointerdown','mousedown','pointerup','mouseup']) e.dispatchEvent(new MouseEvent(t,{{bubbles:true,cancelable:true,view:window}})); e.click(); return 'clicked'; }})()"""
+            expression = f"""(() => {{ const e=document.querySelector({selector_json}); if(!e) throw new Error('selector not found'); e.click(); return 'clicked'; }})()"""
         else:
             key = json.dumps(value or "Enter")
             expression = f"""(() => {{ const e=document.querySelector({selector_json}); if(!e) throw new Error('selector not found'); e.focus(); e.dispatchEvent(new KeyboardEvent('keydown',{{key:{key},bubbles:true}})); e.dispatchEvent(new KeyboardEvent('keyup',{{key:{key},bubbles:true}})); return 'pressed'; }})()"""
         result = str(self.evaluate(expression) or "ok")
         if result == "clicked":
-            # A real SPA can change location immediately while rendering its
-            # result a few seconds later.  Poll the rendered DOM only; this is
-            # synchronization after the policy's explicit click, not an
-            # implicit browser action or semantic extraction.
-            changed_at: float | None = None
-            deadline = time.monotonic() + 6.0
-            while time.monotonic() < deadline:
-                time.sleep(0.4)
-                current_url = str(self.evaluate("location.href") or "")
-                current_text = self.visible_text()
-                if current_url != before_url or current_text != before_text:
-                    if changed_at is None:
-                        changed_at = time.monotonic()
-                    # Let a navigation/hydration settle, while avoiding a
-                    # fixed multi-second delay for ordinary non-nav clicks.
-                    if time.monotonic() - changed_at >= 1.6:
-                        break
+            # Let event handlers and real-site navigation begin before the
+            # policy's next observe call.  This is browser synchronization,
+            # not an implicit second action.
+            time.sleep(0.35)
         return result
 
     def act(self, instruction: str) -> str:
         # Exact protocol deliberately keeps action grounding in the policy:
-        # ``fill [data-lex-id=lex-0] :: query`` or ``click [data-lex-id=lex-1]``.
+        # ``fill [data-lex-id="lex-0"] :: query`` or ``click [data-lex-id="lex-1"]``.
         match = re.match(
-            r'^\s*(fill|type|click|press)\s+(\[data-lex-id=lex-\d+\])(?:\s*::\s*(.*))?\s*$',
+            r'^\s*(fill|type|click|press)\s+(\[data-lex-id="lex-\d+"\])(?:\s*::\s*(.*))?\s*$',
             instruction,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -561,26 +452,16 @@ class LexmountCDPSession:
         # plans the task nor calls an LLM; ambiguity is rejected instead of
         # guessing.  It additionally permits the common "fill ... and click
         # ..." compound instruction as two explicit DOM events.
-        # Capture the value before falling back to generic fill parsing.  The
-        # 1.7B policy commonly says ``with the expression '...'``; the former
-        # generic regex treated that phrase as part of the control label and
-        # rejected an otherwise literal, grounded action.
         fill = re.search(
-            r'''\b(?:fill|type)\s+(?:the\s+)?(?P<label>.+?)\s+(?:with|as)\s+(?:the\s+)?(?:expression\s+)?(?P<value>["'][^"']+["']|the\s+user(?:'s)?\s+query)(?:\s+and\s+click\b|\s*[.!]?$)''',
+            r'''\b(?:fill|type)\s+(?:the\s+)?(?P<label>.+?)(?:\s+(?:with|as)\s+(?P<value>["'][^"']+["']|the\s+user(?:'s)?\s+query))?(?:\s+and\s+click\b|\s*[.!]?$)''',
             instruction,
             flags=re.IGNORECASE | re.DOTALL,
         )
         if not fill:
-            fill = re.search(
-                r'''\b(?:fill|type)\s+(?:the\s+)?(?P<label>.+?)(?:\s+(?:with|as)\s+(?P<value>["'][^"']+["']|the\s+user(?:'s)?\s+query))?(?:\s+and\s+click\b|\s*[.!]?$)''',
-                instruction,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-        if not fill:
             # Qwen frequently emits the equally grounded BrowserGym-style
             # wording: "Enter 'text' into the <observed control>".
             enter = re.search(
-                r'''\b(?:enter|type)\s+(?:the\s+)?(?:expression\s+)?(?P<value>["'][^"']+["'])\s+(?:into|in)\s+(?:the\s+)?(?P<label>.+?)(?:\s*[.!]?$)''',
+                r'''\b(?:enter|type)\s+(?P<value>["'][^"']+["'])\s+(?:into|in)\s+(?:the\s+)?(?P<label>.+?)(?:\s*[.!]?$)''',
                 instruction,
                 flags=re.IGNORECASE | re.DOTALL,
             )
@@ -628,28 +509,9 @@ class LexmountCDPSession:
             ]
             if len(matching) == 1:
                 return self._run_action("click", matching[0])
-            if word == "submit":
-                # ``submit`` and a labelled Compute/Search button are the
-                # same browser-form operation.  This is allowed only when
-                # exactly one previously observed click control has one of
-                # those literal submit labels; it never derives an action
-                # from task content or chooses between candidates.
-                submit_controls = [
-                    str(control.get("selector"))
-                    for control in self._observed_controls
-                    if "click" in str(control.get("actions", ""))
-                    and re.search(
-                        r"\b(?:submit|compute|search|send|go)\b",
-                        str(control.get("description", "")),
-                        re.IGNORECASE,
-                    )
-                    and str(control.get("selector", ""))
-                ]
-                if len(submit_controls) == 1:
-                    return self._run_action("click", submit_controls[0])
         raise ValueError(
-            "Invalid CDP action. Use `fill [data-lex-id=lex-N] :: text`, "
-            "`click [data-lex-id=lex-N]`, or name one previously-observed control."
+            "Invalid CDP action. Use `fill [data-lex-id=\"lex-N\"] :: text`, "
+            "`click [data-lex-id=\"lex-N\"]`, or name one previously-observed control."
         )
 
 
@@ -705,7 +567,6 @@ class LexmountDOMMode:
         proxy_model_to_stagehand: bool,
         browser_mode: str,
         official_proxy: bool,
-        external_proxy: dict[str, str] | None,
         max_concurrent_sessions: int,
         stagehand_ready_timeout_s: float,
         setup_navigation_timeout_s: float,
@@ -713,17 +574,7 @@ class LexmountDOMMode:
         episode_timeout_s: float,
         max_repeated_tool_calls: int,
     ) -> None:
-        # Keep a preflight-selected Lexmount region for every real rollout;
-        # otherwise a successful regional smoke test and a training session
-        # could silently use different egress paths.
-        lexmount_kwargs: dict[str, str] = {
-            "api_key": api_key,
-            "project_id": project_id,
-        }
-        region = os.environ.get("LEXMOUNT_REGION", "").strip()
-        if region:
-            lexmount_kwargs["region"] = region
-        self.lexmount = Lexmount(**lexmount_kwargs)
+        self.lexmount = Lexmount(api_key=api_key, project_id=project_id)
         if dom_backend not in {"stagehand", "cdp"}:
             raise ValueError(f"Unsupported dom_backend={dom_backend!r}")
         self.dom_backend = dom_backend
@@ -732,7 +583,6 @@ class LexmountDOMMode:
         self.proxy_model_to_stagehand = proxy_model_to_stagehand
         self.browser_mode = browser_mode
         self.official_proxy = official_proxy
-        self.external_proxy = external_proxy
         self.stagehand_ready_timeout_s = stagehand_ready_timeout_s
         # This deadline is intentionally separate from a policy tool-call
         # deadline.  Initial navigation can require a cold real-site load and
@@ -751,14 +601,7 @@ class LexmountDOMMode:
         env.add_tool(self.navigate, args_to_skip=["session", "guard"])
         env.add_tool(self.observe, args_to_skip=["session", "llm_config", "guard"])
         env.add_tool(self.act, args_to_skip=["session", "llm_config", "guard"])
-        # ``extract`` requires a nested JSON-schema string.  That is useful
-        # for Stagehand, but is neither used nor needed by the deterministic
-        # CDP adapter: ``observe`` already returns literal rendered evidence.
-        # Omitting it here keeps a small policy action space and prevents a
-        # malformed nested schema from being misclassified as a tool-parser
-        # failure.  Stagehand retains its native structured extractor.
-        if self.dom_backend != "cdp":
-            env.add_tool(self.extract, args_to_skip=["session", "llm_config", "guard"])
+        env.add_tool(self.extract, args_to_skip=["session", "llm_config", "guard"])
 
     async def _get_stagehand_client(self) -> AsyncStagehand:
         async with self._client_lock:
@@ -787,16 +630,10 @@ class LexmountDOMMode:
         )
         lexmount_session = None
         try:
-            session_kwargs: dict[str, Any] = {"browser_mode": self.browser_mode}
-            if self.external_proxy is not None:
-                # Lexmount's native authenticated upstream-proxy session
-                # configuration.  Use it instead of (not in addition to) the
-                # provider proxy so egress is deterministic per session.
-                session_kwargs["proxy"] = self.external_proxy
-            else:
-                session_kwargs["official_proxy"] = self.official_proxy
             lexmount_session = await asyncio.to_thread(
-                self.lexmount.sessions.create, **session_kwargs
+                self.lexmount.sessions.create,
+                browser_mode=self.browser_mode,
+                official_proxy=self.official_proxy,
             )
             cdp_url = lexmount_session.connect_url
             if not cdp_url:
@@ -898,17 +735,6 @@ class LexmountDOMMode:
                 await asyncio.wait_for(
                     asyncio.to_thread(session.navigate, url), timeout=guard.per_tool_timeout_s
                 )
-                # CDP ``Page.navigate`` acknowledges before the target page
-                # is readable.  Do not hand the policy an empty interstitial
-                # and let it hallucinate a final answer: wait for rendered DOM
-                # evidence within this tool's bounded budget.
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        session.wait_for_usable_document,
-                        max(0.1, guard.per_tool_timeout_s - 0.5),
-                    ),
-                    timeout=guard.per_tool_timeout_s,
-                )
                 return f"Navigated to {url}"
             await asyncio.wait_for(
                 session.navigate(
@@ -943,7 +769,7 @@ class LexmountDOMMode:
                 actions = await asyncio.wait_for(
                     asyncio.to_thread(session.observe), timeout=guard.per_tool_timeout_s
                 )
-                return json.dumps(actions, ensure_ascii=False, separators=(",", ":")) if actions else "No matching elements found"
+                return json.dumps(actions, indent=2) if actions else "No matching elements found"
             if llm_config:
                 response = await asyncio.wait_for(session.observe(
                     instruction=instruction, options={"model": llm_config}
@@ -960,7 +786,7 @@ class LexmountDOMMode:
                 }
                 for action in response.data.result
             ]
-            return json.dumps(actions, ensure_ascii=False, separators=(",", ":")) if actions else "No matching elements found"
+            return json.dumps(actions, indent=2) if actions else "No matching elements found"
         except asyncio.TimeoutError:
             return f"ERROR_{guard.infrastructure_timeout('observe').upper()}: retryable browser timeout"
         except Exception as exc:
@@ -981,17 +807,7 @@ class LexmountDOMMode:
                     asyncio.to_thread(session.act, instruction), timeout=guard.per_tool_timeout_s
                 )
                 if "clicked" in result:
-                    evidence = await asyncio.wait_for(
-                        asyncio.to_thread(session.visible_text), timeout=guard.per_tool_timeout_s
-                    )
-                    # Surface the post-click rendered page, not an inferred
-                    # answer.  This gives both policy and transcript judge
-                    # direct browser evidence even if the policy terminates
-                    # immediately after a real form submission.
-                    return (
-                        "Success: clicked. Rendered page evidence: "
-                        f"{evidence[-1800:]}. Next call observe for the full page; do not use extract."
-                    )
+                    return "Success: clicked. Next call observe to read the real page result; do not use extract."
                 return f"Success: {result}"
             if llm_config:
                 response = await asyncio.wait_for(session.act(
@@ -1083,19 +899,10 @@ class LexBrowserEnv(vf.StatefulToolEnv):
             for attempt in range(1, SETUP_NAVIGATION_MAX_ATTEMPTS + 1):
                 try:
                     session = state["browser_session"]
-                    attempt_deadline = time.monotonic() + self._mode_impl.setup_navigation_timeout_s
                     if isinstance(session, LexmountCDPSession):
                         await asyncio.wait_for(
                             asyncio.to_thread(session.navigate, start_url),
                             timeout=self._mode_impl.setup_navigation_timeout_s,
-                        )
-                        remaining = max(0.1, attempt_deadline - time.monotonic())
-                        await asyncio.wait_for(
-                            asyncio.to_thread(
-                                session.wait_for_usable_document,
-                                remaining,
-                            ),
-                            timeout=remaining + 1.0,
                         )
                     else:
                         await asyncio.wait_for(
@@ -1169,32 +976,6 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _external_proxy_from_env() -> dict[str, str] | None:
-    """Read an optional Lexmount SDK external proxy without leaking secrets.
-
-    The absent default keeps the BrowserEnv-aligned provider egress.  If an
-    operator supplies a proxy server, require a complete authenticated tuple
-    rather than launching a partly configured session that would fail during
-    real-site navigation.
-    """
-    server = os.environ.get("LEXMOUNT_EXTERNAL_PROXY_SERVER", "").strip()
-    if not server:
-        return None
-    username = os.environ.get("LEXMOUNT_EXTERNAL_PROXY_USERNAME", "").strip()
-    password = os.environ.get("LEXMOUNT_EXTERNAL_PROXY_PASSWORD", "").strip()
-    if not username or not password:
-        raise ValueError(
-            "LEXMOUNT_EXTERNAL_PROXY_SERVER requires both "
-            "LEXMOUNT_EXTERNAL_PROXY_USERNAME and LEXMOUNT_EXTERNAL_PROXY_PASSWORD"
-        )
-    return {
-        "type": "external",
-        "server": server,
-        "username": username,
-        "password": password,
-    }
-
-
 def load_environment(
     mode: str = "dom",
     dom_backend: str = "stagehand",
@@ -1229,12 +1010,7 @@ def load_environment(
         judge_client=judge_client,
         judge_model=judge_model,
         judge_prompt=TASK_JUDGE_PROMPT,
-        # GLM-5.2 is a reasoning model.  With the upstream eight-token cap it
-        # consumes the entire budget in ``reasoning_content`` and returns an
-        # empty assistant message, which forces every binary reward to zero.
-        # 1024 is verified to reach a literal yes/no completion; this is
-        # scorer-only and does not affect policy generation or packing.
-        judge_sampling_args={"temperature": 0.0, "max_tokens": 1024},
+        judge_sampling_args={"temperature": 0.0, "max_tokens": 8},
     )
     rubric.add_reward_func(judge_task_completion, weight=1.0)
 
@@ -1247,7 +1023,6 @@ def load_environment(
         proxy_model_to_stagehand=proxy_model_to_stagehand,
         browser_mode=browser_mode,
         official_proxy=official_proxy,
-        external_proxy=_external_proxy_from_env(),
         max_concurrent_sessions=max_concurrent_sessions,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,
         setup_navigation_timeout_s=setup_navigation_timeout_s,

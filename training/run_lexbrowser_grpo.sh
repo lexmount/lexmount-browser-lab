@@ -7,19 +7,14 @@ IMAGE="${NEMO_RL_IMAGE:-nvcr.io/nvidia/nemo-rl:v0.6.0}"
 MODEL_DIR="${MODEL_DIR:-/home/wf/models/Qwen3-1.7B}"
 MODE="${1:-train}"
 SMOKE_TASK_OFFSET="${WEBVOYAGER_SMOKE_TASK_OFFSET:-0}"
-# A separately labelled signal-calibration run uses a real, reachable Apple
-# WebVoyager task. It never replaces the 600-task randomized `train` run.
-if [[ "$MODE" == "calibration" ]]; then
-  SMOKE_TASK_OFFSET="${WEBVOYAGER_CALIBRATION_TASK_OFFSET:-117}"
-fi
 DATA_SOURCE="$ROOT/training/lexbrowser_webvoyager/src/lexbrowser_webvoyager_no_anti_bot/datasets/WebVoyager_data_clean.jsonl"
 DATA_DIR="$ROOT/training/data/webvoyager"
 GYM_DIR="/opt/nemo-rl/3rdparty/Gym-workspace/Gym/responses_api_agents/verifiers_agent"
 GYM_MODEL_DIR="/opt/nemo-rl/3rdparty/Gym-workspace/Gym/responses_api_models/vllm_model"
 GYM_CACHE_DIR="$WORKSPACE/.cache/nemo-rl/gym-venvs"
 
-if [[ "$MODE" != "train" && "$MODE" != "smoke" && "$MODE" != "stage1" && "$MODE" != "stage2" && "$MODE" != "calibration" ]]; then
-  echo "usage: $0 [train|smoke|stage1|stage2|calibration]" >&2
+if [[ "$MODE" != "train" && "$MODE" != "smoke" && "$MODE" != "stage1" && "$MODE" != "stage2" ]]; then
+  echo "usage: $0 [train|smoke|stage1|stage2]" >&2
   exit 2
 fi
 
@@ -148,42 +143,9 @@ if [[ "$MODE" == "stage2" ]]; then
   )
 fi
 
-if [[ "$MODE" == "calibration" ]]; then
-  # Same GRPO group and optimizer geometry as formal training, repeated on one
-  # real WebVoyager task with previously verified positive rollouts. This is a
-  # sparse-reward signal check, reported separately from the 600-task baseline.
-  overrides=(
-    grpo.num_prompts_per_step=1
-    grpo.num_generations_per_prompt=8
-    grpo.max_num_steps=20
-    grpo.max_num_epochs=20
-    policy.train_global_batch_size=8
-    policy.train_micro_batch_size=4
-    data.train.data_path=/workspace/LexBrowserEnv/training/data/webvoyager/smoke.jsonl
-  )
-fi
-
 timestamp="$(date +%Y%m%d-%H%M%S)"
 log_file=""
 audit_container_path="/workspace/LexBrowserEnv/logs/lexbrowser-grpo/${MODE}-${timestamp}.trajectory_audit.jsonl"
-
-# A formal run must never silently resume a checkpoint left by an unrelated
-# browser/network experiment.  In particular, a failed egress configuration
-# can leave an all-zero checkpoint which would otherwise make a later direct
-# Lexmount run start at a nonzero optimizer step.  Scope checkpoint discovery
-# to this invocation; an intentional resume can still be done explicitly by
-# passing the desired checkpoint directory to NeMo outside this launcher.
-if [[ "$MODE" == "train" || "$MODE" == "calibration" ]]; then
-  checkpoint_dir="/workspace/LexBrowserEnv/results/lexbrowser-grpo/${MODE}-${timestamp}"
-  if [[ "$MODE" == "train" && -n "${LEXBROWSER_RESUME_CHECKPOINT_DIR:-}" ]]; then
-    checkpoint_dir="$LEXBROWSER_RESUME_CHECKPOINT_DIR"
-    echo "resuming formal train checkpoint directory: $checkpoint_dir"
-  fi
-  overrides+=(
-    "checkpointing.checkpoint_dir=$checkpoint_dir"
-    "logger.log_dir=/workspace/LexBrowserEnv/logs/lexbrowser-grpo/${MODE}-${timestamp}"
-  )
-fi
 
 # A CDP ``Page.navigate`` acknowledgement is not evidence that the remote
 # Chrome can actually reach a WebVoyager website: an unavailable egress route
@@ -293,24 +255,14 @@ for attempt in 1 2 3; do
   sleep 20
 done
 
-if [[ "$MODE" == "train" || "$MODE" == "calibration" ]]; then
-  # Each invocation gets its own immutable report directory.  In particular,
-  # a resumed formal run must not overwrite the hand-curated top-level README
-  # nor an earlier baseline/calibration curve.
-  report_dir="docs/train_reports/${MODE}-${timestamp}"
-  report_log_root="logs/lexbrowser-grpo/${MODE}-${timestamp}"
-  report_training_log="/workspace/LexBrowserEnv${log_file#"$ROOT"}"
-  report_audit_log="$audit_container_path"
+if [[ "$MODE" == "train" ]]; then
   "${DOCKER[@]}" run --rm \
     -v "$ROOT:/workspace/LexBrowserEnv" \
     -w /workspace/LexBrowserEnv \
     "$IMAGE" \
     python training/scripts/generate_train_report.py \
-      --log-root "$report_log_root" \
-      --output-dir "$report_dir" \
-      --training-log "$report_training_log" \
-      --audit-log "$report_audit_log" \
-      --mode "$MODE"
+      --log-root logs/lexbrowser-grpo \
+      --output-dir docs/train_reports
 fi
 
 echo "completed $MODE run; log: $log_file"
