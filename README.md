@@ -21,6 +21,12 @@ uv sync --extra dev
 运行凭据通过Shell格式的env文件注入。可从[.env.example](.env.example)复制，并按实验补充
 Qwen、Judge、Lexmount、Hugging Face或WebArena站点配置。
 
+## 运行前置条件
+
+Lexmount/NVIDIA训练和线上基准任务的runner必须具备DNS与HTTPS外网访问能力；纯内网集群
+不能执行这些任务。运行机器至少需要能够访问NGC、PyPI、Hugging Face、DMX Judge API、
+Lexmount API，以及对应的真实WebVoyager/WebArena目标站点。
+
 ## 一键运行
 
 ### LexBench：Qwen3-8B
