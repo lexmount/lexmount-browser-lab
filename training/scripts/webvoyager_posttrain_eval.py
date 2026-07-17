@@ -775,6 +775,13 @@ async def run_evaluation(args: argparse.Namespace) -> int:
     from openai import AsyncOpenAI
 
     tasks = load_jsonl_tasks(args.tasks.resolve())
+    if args.task_id:
+        requested_ids = set(args.task_id)
+        tasks = [task for task in tasks if task.task_id in requested_ids]
+        found_ids = {task.task_id for task in tasks}
+        missing_ids = sorted(requested_ids - found_ids)
+        if missing_ids:
+            raise RuntimeError(f"requested task ids are absent from manifest: {missing_ids}")
     if args.limit is not None:
         tasks = tasks[: args.limit]
     if not tasks:
@@ -937,6 +944,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-tokens", type=int, default=1024)
     run.add_argument("--max-assistant-turns", type=int, default=6)
     run.add_argument("--seed", type=int, default=20260717)
+    run.add_argument("--task-id", action="append", default=[])
     run.add_argument("--limit", type=int)
     run.add_argument("--resume", action="store_true")
     run.add_argument("--setup-attempts", type=int, default=4)
