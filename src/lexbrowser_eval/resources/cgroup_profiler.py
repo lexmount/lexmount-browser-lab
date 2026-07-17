@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -187,6 +188,24 @@ def _kill_unit(unit: str, sig: str) -> None:
     )
 
 
+def _ensure_user_bus_environment() -> None:
+    """Recover the user systemd bus when this profiler is launched from tmux/SSH.
+
+    A non-login tmux server may not inherit ``XDG_RUNTIME_DIR`` or
+    ``DBUS_SESSION_BUS_ADDRESS`` even though the user's systemd instance is
+    running.  Linux exposes the conventional per-user bus under
+    ``/run/user/<uid>/bus``; use it only when the caller did not provide an
+    explicit bus configuration.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    candidate = Path(runtime_dir) if runtime_dir else Path("/run/user") / str(os.getuid())
+    bus = candidate / "bus"
+    if not runtime_dir and candidate.is_dir():
+        os.environ["XDG_RUNTIME_DIR"] = str(candidate)
+    if not os.environ.get("DBUS_SESSION_BUS_ADDRESS") and bus.is_socket():
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+
+
 def _round(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits) if value is not None else None
 
@@ -217,6 +236,7 @@ def main() -> int:
     for executable in ("systemd-run", "systemctl"):
         if shutil.which(executable) is None:
             raise SystemExit(f"[FAILED] {executable} is required")
+    _ensure_user_bus_environment()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     samples_path = args.output_dir / "samples.csv"
