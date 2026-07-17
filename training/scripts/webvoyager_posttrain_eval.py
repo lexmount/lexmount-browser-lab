@@ -484,6 +484,7 @@ async def _judge_task(
     client: Any,
     *,
     model: str,
+    temperature: float | None,
     task: Task,
     transcript: str,
     final_answer: str,
@@ -504,11 +505,15 @@ async def _judge_task(
     )
     started = time.monotonic()
     try:
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 1024,
+        }
+        if temperature is not None:
+            request["temperature"] = temperature
         response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=1024,
+            **request
         )
         raw = str(response.choices[0].message.content or "").strip()
         payload = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE))
@@ -720,6 +725,7 @@ async def evaluate_task(
             judge = await _judge_task(
                 judge_client,
                 model=args.judge_model,
+                temperature=args.judge_temperature,
                 task=task,
                 transcript=transcript,
                 final_answer=final_answer,
@@ -1069,7 +1075,11 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
         },
-        "judge": {"mode": args.judge, "model": args.judge_model if judge_client else None},
+        "judge": {
+            "mode": args.judge,
+            "model": args.judge_model if judge_client else None,
+            "temperature": args.judge_temperature if judge_client else None,
+        },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
     rows: list[dict[str, Any]] = list(prior_rows)
@@ -1269,6 +1279,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--policy-api-key")
     run.add_argument("--judge", choices=("off", "training"), default="off")
     run.add_argument("--judge-model", default="")
+    run.add_argument(
+        "--judge-temperature",
+        type=float,
+        help="optional judge sampling temperature; omit to use the judge model default",
+    )
     run.add_argument("--judge-base-url")
     run.add_argument("--judge-api-key")
     run.add_argument("--temperature", type=float, default=1.0)

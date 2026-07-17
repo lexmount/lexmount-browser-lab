@@ -87,6 +87,38 @@ def test_browser_setup_uses_dedicated_navigation_timeout() -> None:
     assert observed == {"timeout_s": 60.0}
 
 
+def test_judge_omits_temperature_when_not_requested() -> None:
+    module = load_script_module()
+    requests: list[dict] = []
+
+    class Completions:
+        async def create(self, **kwargs):
+            requests.append(kwargs)
+            message = types.SimpleNamespace(content='{"verdict":"yes","reason":"evidence"}')
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=Completions()))
+    task = module.Task("task", "question", "https://example.test", "example")
+
+    result = asyncio.run(
+        module._judge_task(
+            client,
+            model="gpt-5.5",
+            temperature=None,
+            task=task,
+            transcript="browser evidence",
+            final_answer="answer",
+            execution_status={},
+            final_url="https://example.test",
+            final_state="{}",
+        )
+    )
+
+    assert result["verdict"] == "yes"
+    assert requests[0]["model"] == "gpt-5.5"
+    assert "temperature" not in requests[0]
+
+
 def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None:
     module = load_script_module()
     tasks_path = tmp_path / "tasks.jsonl"
