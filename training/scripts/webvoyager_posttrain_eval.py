@@ -753,6 +753,109 @@ async def evaluate_task(
     return result
 
 
+async def probe_task(
+    *, task: Task, mode: Any, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Measure one browser's usable-DOM availability without invoking a policy."""
+    started = time.monotonic()
+    state: dict[str, Any] | None = None
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "task": task.as_dict(),
+        "backend": args.backend,
+        "status": "unknown",
+    }
+    try:
+        state, attempts = await _open_browser_state(mode, task, args)
+        guard = state["trajectory_guard"]
+        observed = await mode.observe("", state["browser_session"], guard=guard)
+        error_class = _error_classification(str(observed))
+        result["setup"] = {
+            "attempts": attempts,
+            "navigation_result": state.get("setup_navigation_result", ""),
+        }
+        if error_class:
+            result.update(
+                {
+                    "status": "browser_error",
+                    "error_class": error_class,
+                    "error": str(observed),
+                }
+            )
+        else:
+            snapshot = json.loads(str(observed))
+            if not isinstance(snapshot, dict):
+                raise ValueError("observe did not return a JSON object")
+            visible_text = str(snapshot.get("visible_text") or "")
+            elements = snapshot.get("elements")
+            evidence = {
+                "url": str(snapshot.get("url") or ""),
+                "visible_text": visible_text,
+                "element_count": len(elements) if isinstance(elements, list) else 0,
+            }
+            result.update(
+                {
+                    "status": "available",
+                    "document": {
+                        "url": evidence["url"],
+                        "visible_text_chars": len(visible_text),
+                        "element_count": evidence["element_count"],
+                        "fingerprint_sha256": hashlib.sha256(
+                            json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                        ).hexdigest(),
+                    },
+                }
+            )
+        result["guard"] = {
+            "termination_reason": str(getattr(guard, "termination_reason", "")),
+            "policy_failures": int(getattr(guard, "policy_failures", 0)),
+            "infrastructure_failures": int(getattr(guard, "infrastructure_failures", 0)),
+            "timeouts": int(getattr(guard, "timeouts", 0)),
+            "timings": dict(getattr(guard, "timings", {})),
+        }
+    except Exception as exc:
+        result.update(
+            {
+                "status": "setup_or_runner_error",
+                "error_class": "infrastructure",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+    finally:
+        if state is not None:
+            try:
+                await mode.cleanup_session(state)
+            except Exception as exc:
+                result["cleanup_error"] = f"{type(exc).__name__}: {exc}"
+        result["finished_at"] = utc_now()
+        result["wall_seconds"] = round(time.monotonic() - started, 4)
+    return result
+
+
+def summarize_probe_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    statuses = Counter(str(row.get("status") or "unknown") for row in rows)
+    available = [row for row in rows if row.get("status") == "available"]
+    attempts = [
+        int((row.get("setup") or {}).get("attempts") or 0)
+        for row in rows
+        if row.get("setup")
+    ]
+    wall = [float(row["wall_seconds"]) for row in rows if row.get("wall_seconds") is not None]
+    return {
+        "tasks": len(rows),
+        "statuses": dict(sorted(statuses.items())),
+        "availability_rate": len(available) / len(rows) if rows else None,
+        "setup_attempts": {
+            "mean": round(statistics.fmean(attempts), 4) if attempts else None,
+            "max": max(attempts) if attempts else None,
+        },
+        "wall_seconds": {
+            "mean": round(statistics.fmean(wall), 4) if wall else None,
+            "max": round(max(wall), 4) if wall else None,
+        },
+    }
+
+
 def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     statuses = Counter(str(row.get("status") or "unknown") for row in rows)
     final_answer_statuses = Counter(
@@ -963,6 +1066,117 @@ async def run_evaluation(args: argparse.Namespace) -> int:
     return 0
 
 
+async def run_probe(args: argparse.Namespace) -> int:
+    if args.env_file:
+        parse_env_file(args.env_file.resolve())
+    from lexbrowser_webvoyager_no_anti_bot.environment import LexmountDOMMode
+
+    tasks = load_jsonl_tasks(args.tasks.resolve())
+    if args.task_id:
+        requested_ids = set(args.task_id)
+        tasks = [task for task in tasks if task.task_id in requested_ids]
+        missing_ids = sorted(requested_ids - {task.task_id for task in tasks})
+        if missing_ids:
+            raise RuntimeError(f"requested task ids are absent from manifest: {missing_ids}")
+    if args.limit is not None:
+        tasks = tasks[: args.limit]
+    if not tasks:
+        raise RuntimeError("selected task manifest is empty")
+
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_path = output_dir / "results.jsonl"
+    rows: list[dict[str, Any]] = []
+    completed_ids: set[str] = set()
+    if args.resume and results_path.exists():
+        for line in results_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                continue
+            rows.append(row)
+            task = row.get("task") or {}
+            if row.get("backend") == args.backend and task.get("task_id"):
+                completed_ids.add(str(task["task_id"]))
+
+    if args.backend == "lexmount":
+        api_key = _required_env("LEXMOUNT_API_KEY")
+        project_id = _required_env("LEXMOUNT_PROJECT_ID")
+    else:
+        api_key = None
+        project_id = None
+    mode = LexmountDOMMode(
+        api_key=api_key,
+        project_id=project_id,
+        browser_backend=args.backend,
+        dom_backend="cdp",
+        stagehand_model="",
+        policy_model="",
+        proxy_model_to_stagehand=False,
+        browser_mode="normal",
+        official_proxy=args.lexmount_official_proxy,
+        external_proxy=None,
+        local_chrome_executable_path=args.local_chrome_executable,
+        local_chrome_headless=not args.local_chrome_headed,
+        local_proxy_server=args.local_proxy_server,
+        local_proxy_bypass=args.local_proxy_bypass,
+        max_concurrent_sessions=1,
+        session_create_timeout_s=args.session_create_timeout,
+        stagehand_ready_timeout_s=30.0,
+        setup_navigation_timeout_s=args.setup_navigation_timeout,
+        per_tool_timeout_s=args.per_tool_timeout,
+        episode_timeout_s=args.episode_timeout,
+        max_repeated_tool_calls=3,
+    )
+    manifest = {
+        "schema_version": 1,
+        "protocol": "webvoyager-browser-probe-v1",
+        "started_at": utc_now(),
+        "host": {"hostname": socket.gethostname(), "platform": platform.platform()},
+        "backend": args.backend,
+        "tasks": str(args.tasks.resolve()),
+        "tasks_sha256": sha256_file(args.tasks.resolve()),
+        "selected_tasks": len(tasks),
+        "evaluator": {
+            "script_sha256": sha256_file(Path(__file__).resolve()),
+            "repository_revision": repository_revision(),
+        },
+        "browser": {
+            "protocol": "fresh_session -> start_url -> observe",
+            "dom_backend": "cdp",
+            "setup_attempts": args.setup_attempts,
+            "local_chrome_headless": not args.local_chrome_headed,
+            "local_proxy_configured": bool(args.local_proxy_server),
+            "lexmount_official_proxy": args.lexmount_official_proxy,
+        },
+    }
+    atomic_json(output_dir / "run_manifest.json", manifest)
+    try:
+        for task in tasks:
+            if task.task_id in completed_ids:
+                continue
+            row = await probe_task(task=task, mode=mode, args=args)
+            append_jsonl(results_path, row)
+            rows.append(row)
+            atomic_json(output_dir / "summary.json", summarize_probe_results(rows))
+            print(
+                json.dumps(
+                    {
+                        "task_id": task.task_id,
+                        "status": row["status"],
+                        "wall_seconds": row.get("wall_seconds"),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+    finally:
+        await mode.teardown()
+    print(str(output_dir / "summary.json"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1007,6 +1221,27 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-proxy-server")
     run.add_argument("--local-proxy-bypass")
     run.add_argument("--lexmount-official-proxy", action="store_true")
+
+    probe = subparsers.add_parser(
+        "probe", help="measure browser usable-DOM availability without a policy"
+    )
+    probe.add_argument("--tasks", type=Path, required=True)
+    probe.add_argument("--output-dir", type=Path, required=True)
+    probe.add_argument("--backend", choices=("lexmount", "local"), required=True)
+    probe.add_argument("--env-file", type=Path)
+    probe.add_argument("--task-id", action="append", default=[])
+    probe.add_argument("--limit", type=int)
+    probe.add_argument("--resume", action="store_true")
+    probe.add_argument("--setup-attempts", type=int, default=4)
+    probe.add_argument("--session-create-timeout", type=float, default=60.0)
+    probe.add_argument("--setup-navigation-timeout", type=float, default=30.0)
+    probe.add_argument("--per-tool-timeout", type=float, default=25.0)
+    probe.add_argument("--episode-timeout", type=float, default=180.0)
+    probe.add_argument("--local-chrome-executable")
+    probe.add_argument("--local-chrome-headed", action="store_true")
+    probe.add_argument("--local-proxy-server")
+    probe.add_argument("--local-proxy-bypass")
+    probe.add_argument("--lexmount-official-proxy", action="store_true")
     return parser
 
 
@@ -1016,6 +1251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return prepare_splits(args)
     if args.command == "run":
         return asyncio.run(run_evaluation(args))
+    if args.command == "probe":
+        return asyncio.run(run_probe(args))
     raise AssertionError(f"unsupported command: {args.command}")
 
 
