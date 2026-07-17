@@ -1260,16 +1260,26 @@ class LexmountDOMMode:
             await self.stagehand_client.close()
             self.stagehand_client = None
 
-    async def navigate(self, url: str, session: Any, guard: TrajectoryGuard) -> str:
+    async def navigate(
+        self,
+        url: str,
+        session: Any,
+        guard: TrajectoryGuard,
+        *,
+        timeout_s: float | None = None,
+    ) -> str:
         """Navigate the browser directly to a URL."""
         blocked = guard.before_tool("navigate", url)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        navigation_timeout_s = timeout_s if timeout_s is not None else guard.per_tool_timeout_s
+        if navigation_timeout_s <= 0:
+            raise ValueError("navigation timeout must be positive")
         started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
                 await asyncio.wait_for(
-                    asyncio.to_thread(session.navigate, url), timeout=guard.per_tool_timeout_s
+                    asyncio.to_thread(session.navigate, url), timeout=navigation_timeout_s
                 )
                 # CDP ``Page.navigate`` acknowledges before the target page
                 # is readable.  Do not hand the policy an empty interstitial
@@ -1278,9 +1288,9 @@ class LexmountDOMMode:
                 await asyncio.wait_for(
                     asyncio.to_thread(
                         session.wait_for_usable_document,
-                        max(0.1, guard.per_tool_timeout_s - 0.5),
+                        max(0.1, navigation_timeout_s - 0.5),
                     ),
-                    timeout=guard.per_tool_timeout_s,
+                    timeout=navigation_timeout_s,
                 )
                 return f"Navigated to {url}"
             await asyncio.wait_for(
@@ -1290,11 +1300,11 @@ class LexmountDOMMode:
                     # navigation into an unbounded network-idle wait.
                     options={
                         "wait_until": "domcontentloaded",
-                        "timeout": int(guard.per_tool_timeout_s * 1000),
+                        "timeout": int(navigation_timeout_s * 1000),
                     },
-                    timeout=guard.per_tool_timeout_s + 5.0,
+                    timeout=navigation_timeout_s + 5.0,
                 ),
-                timeout=guard.per_tool_timeout_s + 5.0,
+                timeout=navigation_timeout_s + 5.0,
             )
             return f"Navigated to {url}"
         except asyncio.TimeoutError:

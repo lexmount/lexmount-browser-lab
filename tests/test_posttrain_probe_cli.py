@@ -61,6 +61,32 @@ def test_browser_setup_error_preserves_timeout_type() -> None:
         asyncio.run(module._open_browser_state(FailingMode(), task, args))
 
 
+def test_browser_setup_uses_dedicated_navigation_timeout() -> None:
+    module = load_script_module()
+    observed: dict[str, float] = {}
+
+    class SetupMode:
+        async def setup_state(self, state):
+            state["browser_session"] = object()
+            state["trajectory_guard"] = object()
+            return state
+
+        async def navigate(self, url, session, guard, *, timeout_s):
+            observed["timeout_s"] = timeout_s
+            return f"Navigated to {url}"
+
+        async def cleanup_session(self, state):
+            return None
+
+    args = types.SimpleNamespace(setup_attempts=1, setup_navigation_timeout=60.0)
+    task = module.Task("task", "question", "https://example.test", "example")
+
+    _, attempts = asyncio.run(module._open_browser_state(SetupMode(), task, args))
+
+    assert attempts == 1
+    assert observed == {"timeout_s": 60.0}
+
+
 def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None:
     module = load_script_module()
     tasks_path = tmp_path / "tasks.jsonl"

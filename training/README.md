@@ -133,6 +133,8 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 套到带 policy 的质量评测，否则模型服务排队会与浏览器会话容量混在一起。
 为避免 Python 默认 32 线程池把大于 32 的会话请求悄悄排队，probe 会同步记录实际使用的
 `blocking_thread_workers`。
+首个 `start_url` 使用 `--setup-navigation-timeout`，后续 policy 浏览器动作仍使用
+`--per-tool-timeout`；两者及建会超时都会写入 manifest，不能用其中一个替代另一个解释结果。
 
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。

@@ -540,7 +540,12 @@ async def _open_browser_state(mode: Any, task: Task, args: argparse.Namespace) -
             session = state["browser_session"]
             if callable(getattr(session, "set_task_query", None)):
                 session.set_task_query(task.question)
-            result = await mode.navigate(task.start_url, session, state["trajectory_guard"])
+            result = await mode.navigate(
+                task.start_url,
+                session,
+                state["trajectory_guard"],
+                timeout_s=args.setup_navigation_timeout,
+            )
             if _error_classification(result):
                 raise RuntimeError(result)
             state["setup_navigation_result"] = result
@@ -1199,6 +1204,9 @@ async def run_probe(args: argparse.Namespace) -> int:
             "setup_attempts": args.setup_attempts,
             "concurrency": args.concurrency,
             "blocking_thread_workers": blocking_thread_workers,
+            "session_create_timeout_seconds": args.session_create_timeout,
+            "setup_navigation_timeout_seconds": args.setup_navigation_timeout,
+            "per_tool_timeout_seconds": args.per_tool_timeout,
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
