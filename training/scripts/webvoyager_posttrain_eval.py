@@ -738,22 +738,39 @@ async def evaluate_task(
 
 def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     statuses = Counter(str(row.get("status") or "unknown") for row in rows)
+    final_answer_statuses = Counter(
+        str(row.get("final_answer_status") or "unknown") for row in rows
+    )
     judge_rows = [row.get("judge") for row in rows if isinstance(row.get("judge"), dict)]
     judged = [row for row in judge_rows if row.get("reward") is not None]
     rewards = [float(row["reward"]) for row in judged]
     errors = Counter()
+    policy_failure_episodes = 0
+    infrastructure_failure_episodes = 0
+    timeout_episodes = 0
     for row in rows:
         if row.get("status") != "completed":
             errors[str(row.get("error") or "unknown").split(":", 1)[0]] += 1
         guard = row.get("guard") or {}
         if guard.get("infrastructure_failures"):
             errors["infrastructure_episode"] += 1
+            infrastructure_failure_episodes += 1
         if guard.get("policy_failures"):
             errors["policy_episode"] += 1
+            policy_failure_episodes += 1
+        if guard.get("timeouts"):
+            errors["timeout_episode"] += 1
+            timeout_episodes += 1
     wall = [float(row["wall_seconds"]) for row in rows if row.get("wall_seconds") is not None]
     return {
         "tasks": len(rows),
         "statuses": dict(sorted(statuses.items())),
+        "final_answer_statuses": dict(sorted(final_answer_statuses.items())),
+        "trajectory": {
+            "policy_failure_episodes": policy_failure_episodes,
+            "infrastructure_failure_episodes": infrastructure_failure_episodes,
+            "timeout_episodes": timeout_episodes,
+        },
         "judge": {
             "judged": len(judged),
             "successes": int(sum(rewards)),
