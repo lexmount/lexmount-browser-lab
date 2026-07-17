@@ -545,6 +545,13 @@ class LexmountCDPSession:
         return candidates[0][1]
 
     def _run_action(self, verb: str, selector: str, value: str = "") -> str:
+        observed_selectors = {
+            str(control.get("selector", "")) for control in self._observed_controls
+        }
+        if selector not in observed_selectors:
+            raise ValueError(
+                f"Selector {selector!r} was not returned by the latest observe call"
+            )
         payload = json.dumps(value)
         selector_json = json.dumps(selector)
         before_url = ""
