@@ -142,3 +142,15 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
 5090 上应传入 `--gpu-index 0`，避免另一张 GPU 的负载污染统计；该 profiler 会在 tmux/SSH
 后台运行时自动恢复用户级 systemd bus。
+
+成对运行结束后，用审计器生成不含原始轨迹和凭据的摘要。它把原始 judge 通过率、
+去除浏览器/网络基础设施故障后的质量分母、逐题差异和资源口径分开；若任务清单、
+checkpoint、采样、judge 或浏览器控制参数不一致，`--strict-contract` 会拒绝产出比较。
+
+```bash
+python training/scripts/audit_webvoyager_posttrain_pair.py \
+  --lexmount-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-lexmount-smoke \
+  --local-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-local-smoke \
+  --output /data/wf/sxh/webvoyager-posttrain/runs/step150-smoke-paired-audit.json \
+  --strict-contract
+```
