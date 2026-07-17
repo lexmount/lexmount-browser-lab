@@ -24,6 +24,7 @@ import random
 import re
 import socket
 import statistics
+import subprocess
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
@@ -148,6 +149,22 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def repository_revision() -> str | None:
+    root = Path(__file__).resolve().parents[2]
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    revision = result.stdout.strip()
+    return revision or None
 
 
 def atomic_json(path: Path, payload: Any) -> None:
@@ -803,6 +820,11 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         tasks = tasks[: args.limit]
     if not tasks:
         raise RuntimeError("selected task manifest is empty")
+    if args.model_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", args.model_sha256):
+        raise ValueError("--model-sha256 must be a 64-character hexadecimal SHA-256")
+    model_artifact = args.model_artifact.resolve() if args.model_artifact else None
+    if model_artifact is not None and not model_artifact.exists():
+        raise FileNotFoundError(f"model artifact directory does not exist: {model_artifact}")
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
@@ -875,7 +897,16 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         "tasks": str(args.tasks.resolve()),
         "tasks_sha256": sha256_file(args.tasks.resolve()),
         "selected_tasks": len(tasks),
-        "model": {"id": args.model, "base_url": policy_base_url.rstrip("/")},
+        "model": {
+            "id": args.model,
+            "base_url": policy_base_url.rstrip("/"),
+            "artifact_dir": str(model_artifact) if model_artifact else None,
+            "safetensors_sha256": args.model_sha256.lower() if args.model_sha256 else None,
+        },
+        "evaluator": {
+            "script_sha256": sha256_file(Path(__file__).resolve()),
+            "repository_revision": repository_revision(),
+        },
         "generation": {
             "temperature": args.temperature,
             "top_p": args.top_p,
@@ -949,6 +980,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir", type=Path, required=True)
     run.add_argument("--backend", choices=("lexmount", "local"), required=True)
     run.add_argument("--model", required=True)
+    run.add_argument("--model-artifact", type=Path)
+    run.add_argument("--model-sha256")
     run.add_argument("--env-file", type=Path)
     run.add_argument("--policy-base-url")
     run.add_argument("--policy-api-key")
