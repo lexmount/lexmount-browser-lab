@@ -143,6 +143,32 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 实际的浏览器 language/locale/timezone。它们不能替代同一出口代理：站点仍可能按出口 IP 返回
 不同内容，因此该诊断必须与原始直连条件分开报告。
 
+要验证浏览器实现而不是出口网络，Lexmount 与本地 Chrome 必须经由同一个外部出口。评测器为
+Lexmount 提供了显式的、默认关闭的认证上游代理开关；凭据只从环境变量读取，结果和 manifest
+只记录是否已配置，不写入 server、用户名或密码。不要同时启用官方代理。
+
+```bash
+export LEXMOUNT_EXTERNAL_PROXY_SERVER='https://proxy.example:8443'
+export LEXMOUNT_EXTERNAL_PROXY_USERNAME='...'
+export LEXMOUNT_EXTERNAL_PROXY_PASSWORD='...'
+
+# Lexmount 使用同一外部出口；本地 Chrome 指向一个不在命令行携带凭据的代理桥。
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py probe \
+  --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl \
+  --backend lexmount --env-file /data/wf/sxh/webvoyager-posttrain/eval.env \
+  --lexmount-external-proxy-from-env --output-dir /data/wf/sxh/webvoyager-posttrain/probes/lexmount-shared-egress
+
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py probe \
+  --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl \
+  --backend local --local-proxy-server http://127.0.0.1:18080 \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/probes/local-shared-egress
+```
+
+本地代理桥与 Lexmount 外部代理必须实际指向同一出口；仅两边都“配置了代理”并不构成该前提。
+先用相同 `start_url` 的 `probe` 核对站点返回的地域内容，再运行带 policy 的成对质量评测。
+
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
 5090 上应传入 `--gpu-index 0`，避免另一张 GPU 的负载污染统计；该 profiler 会在 tmux/SSH

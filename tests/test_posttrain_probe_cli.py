@@ -72,6 +72,66 @@ def test_parser_accepts_explicit_browser_context_overrides() -> None:
     }
 
 
+def test_parser_accepts_explicit_lexmount_external_proxy() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "probe",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "lexmount",
+            "--lexmount-external-proxy-from-env",
+        ]
+    )
+
+    assert args.lexmount_external_proxy_from_env is True
+
+
+def test_external_proxy_requires_complete_lexmount_environment(monkeypatch) -> None:
+    module = load_script_module()
+    args = types.SimpleNamespace(
+        backend="lexmount",
+        lexmount_external_proxy_from_env=True,
+        lexmount_official_proxy=False,
+    )
+    for name in (
+        "LEXMOUNT_EXTERNAL_PROXY_SERVER",
+        "LEXMOUNT_EXTERNAL_PROXY_USERNAME",
+        "LEXMOUNT_EXTERNAL_PROXY_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(ValueError, match="LEXMOUNT_EXTERNAL_PROXY_SERVER"):
+        module.lexmount_external_proxy_from_env(args)
+
+
+def test_external_proxy_is_explicit_and_does_not_use_official_proxy(monkeypatch) -> None:
+    module = load_script_module()
+    args = types.SimpleNamespace(
+        backend="lexmount",
+        lexmount_external_proxy_from_env=True,
+        lexmount_official_proxy=False,
+    )
+    monkeypatch.setenv("LEXMOUNT_EXTERNAL_PROXY_SERVER", "https://proxy.example.test:8443")
+    monkeypatch.setenv("LEXMOUNT_EXTERNAL_PROXY_USERNAME", "test-user")
+    monkeypatch.setenv("LEXMOUNT_EXTERNAL_PROXY_PASSWORD", "test-password")
+
+    assert module.lexmount_external_proxy_from_env(args) == {
+        "type": "external",
+        "server": "https://proxy.example.test:8443",
+        "username": "test-user",
+        "password": "test-password",
+    }
+
+    args.lexmount_official_proxy = True
+    with pytest.raises(ValueError, match="cannot be combined"):
+        module.lexmount_external_proxy_from_env(args)
+
+
 def test_parser_rejects_invalid_context_geolocation() -> None:
     module = load_script_module()
 

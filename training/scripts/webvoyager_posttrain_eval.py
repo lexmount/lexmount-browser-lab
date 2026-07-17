@@ -417,6 +417,33 @@ def browser_context_overrides(args: argparse.Namespace) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
 
 
+def lexmount_external_proxy_from_env(args: argparse.Namespace) -> dict[str, str] | None:
+    """Resolve an explicit Lexmount upstream proxy without persisting credentials."""
+
+    if not getattr(args, "lexmount_external_proxy_from_env", False):
+        return None
+    if args.backend != "lexmount":
+        raise ValueError("--lexmount-external-proxy-from-env requires --backend lexmount")
+    if args.lexmount_official_proxy:
+        raise ValueError(
+            "--lexmount-external-proxy-from-env cannot be combined with "
+            "--lexmount-official-proxy"
+        )
+
+    names = {
+        "server": "LEXMOUNT_EXTERNAL_PROXY_SERVER",
+        "username": "LEXMOUNT_EXTERNAL_PROXY_USERNAME",
+        "password": "LEXMOUNT_EXTERNAL_PROXY_PASSWORD",
+    }
+    values = {field: os.environ.get(name, "").strip() for field, name in names.items()}
+    missing = [name for field, name in names.items() if not values[field]]
+    if missing:
+        raise ValueError(
+            "--lexmount-external-proxy-from-env requires " + ", ".join(missing)
+        )
+    return {"type": "external", **values}
+
+
 def _tool_call_dicts(message: Any) -> list[dict[str, str]]:
     calls: list[dict[str, str]] = []
     for call in getattr(message, "tool_calls", None) or []:
@@ -1046,6 +1073,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
     else:
         api_key = None
         project_id = None
+    external_proxy = lexmount_external_proxy_from_env(args)
     mode = LexmountDOMMode(
         api_key=api_key,
         project_id=project_id,
@@ -1056,7 +1084,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         proxy_model_to_stagehand=False,
         browser_mode="normal",
         official_proxy=args.lexmount_official_proxy,
-        external_proxy=None,
+        external_proxy=external_proxy,
         local_chrome_executable_path=args.local_chrome_executable,
         local_chrome_headless=not args.local_chrome_headed,
         local_proxy_server=args.local_proxy_server,
@@ -1108,6 +1136,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
+            "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
         },
         "judge": {
@@ -1211,6 +1240,7 @@ async def run_probe(args: argparse.Namespace) -> int:
     else:
         api_key = None
         project_id = None
+    external_proxy = lexmount_external_proxy_from_env(args)
     mode = LexmountDOMMode(
         api_key=api_key,
         project_id=project_id,
@@ -1221,7 +1251,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         proxy_model_to_stagehand=False,
         browser_mode="normal",
         official_proxy=args.lexmount_official_proxy,
-        external_proxy=None,
+        external_proxy=external_proxy,
         local_chrome_executable_path=args.local_chrome_executable,
         local_chrome_headless=not args.local_chrome_headed,
         local_proxy_server=args.local_proxy_server,
@@ -1260,6 +1290,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
+            "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
         },
     }
@@ -1341,6 +1372,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-proxy-server")
     run.add_argument("--local-proxy-bypass")
     run.add_argument("--lexmount-official-proxy", action="store_true")
+    run.add_argument(
+        "--lexmount-external-proxy-from-env",
+        action="store_true",
+        help="use the authenticated Lexmount upstream proxy from environment variables",
+    )
     run.add_argument("--context-locale")
     run.add_argument("--context-timezone-id")
     run.add_argument("--context-geolocation", type=parse_context_geolocation)
@@ -1371,6 +1407,11 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--local-proxy-server")
     probe.add_argument("--local-proxy-bypass")
     probe.add_argument("--lexmount-official-proxy", action="store_true")
+    probe.add_argument(
+        "--lexmount-external-proxy-from-env",
+        action="store_true",
+        help="use the authenticated Lexmount upstream proxy from environment variables",
+    )
     probe.add_argument("--context-locale")
     probe.add_argument("--context-timezone-id")
     probe.add_argument("--context-geolocation", type=parse_context_geolocation)
