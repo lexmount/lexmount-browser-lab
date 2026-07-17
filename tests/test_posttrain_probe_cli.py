@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -112,3 +113,7 @@ def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None
     assert asyncio.run(module.run_probe(args)) == 0
     assert observed == {"active": 0, "peak": 2, "mode_concurrency": 2}
     assert json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))["tasks"] == 4
+    manifest = json.loads((output_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["browser"]["blocking_thread_workers"] == max(
+        2, min(32, (os.cpu_count() or 1) + 4)
+    )

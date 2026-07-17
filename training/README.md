@@ -131,6 +131,8 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 `probe` 支持 `--concurrency N`，并将该值写入 `run_manifest.json`。先以 `N=1` 固定同一
 任务清单、超时和代理模式完成基线，再以 `N=64` 重跑同一清单测会话容量；不要把该并发值直接
 套到带 policy 的质量评测，否则模型服务排队会与浏览器会话容量混在一起。
+为避免 Python 默认 32 线程池把大于 32 的会话请求悄悄排队，probe 会同步记录实际使用的
+`blocking_thread_workers`。
 
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。

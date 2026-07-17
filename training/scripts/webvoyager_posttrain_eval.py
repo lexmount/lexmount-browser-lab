@@ -28,6 +28,7 @@ import subprocess
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1113,6 +1114,21 @@ async def run_probe(args: argparse.Namespace) -> int:
     if args.concurrency < 1:
         raise ValueError("--concurrency must be at least 1")
 
+    # The CDP adapter and the Lexmount SDK are synchronous. asyncio.to_thread
+    # otherwise uses Python's default executor (at most 32 workers), which
+    # silently turns a requested 64-session probe into a 32-session queue.
+    # This command is invoked through asyncio.run, so its event loop owns and
+    # shuts down this executor after all late session cleanup has completed.
+    blocking_thread_workers = max(
+        args.concurrency, min(32, (os.cpu_count() or 1) + 4)
+    )
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(
+            max_workers=blocking_thread_workers,
+            thread_name_prefix="webvoyager-probe",
+        )
+    )
+
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
@@ -1177,6 +1193,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "dom_backend": "cdp",
             "setup_attempts": args.setup_attempts,
             "concurrency": args.concurrency,
+            "blocking_thread_workers": blocking_thread_workers,
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
