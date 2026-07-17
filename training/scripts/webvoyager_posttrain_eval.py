@@ -552,7 +552,12 @@ async def _open_browser_state(mode: Any, task: Task, args: argparse.Namespace) -
             if attempt < args.setup_attempts:
                 await asyncio.sleep(0.5 * attempt)
     assert last_error is not None
-    raise RuntimeError(f"browser setup failed after {args.setup_attempts} attempts: {last_error}") from last_error
+    error_detail = str(last_error).strip()
+    error_name = type(last_error).__name__
+    rendered_error = f"{error_name}: {error_detail}" if error_detail else error_name
+    raise RuntimeError(
+        f"browser setup failed after {args.setup_attempts} attempts: {rendered_error}"
+    ) from last_error
 
 
 async def evaluate_task(

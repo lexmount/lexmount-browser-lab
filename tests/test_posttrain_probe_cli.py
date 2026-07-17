@@ -8,6 +8,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "training" / "scripts" / "webvoyager_posttrain_eval.py"
 
@@ -40,6 +42,23 @@ def test_probe_parser_accepts_explicit_concurrency() -> None:
     )
 
     assert args.concurrency == 64
+
+
+def test_browser_setup_error_preserves_timeout_type() -> None:
+    module = load_script_module()
+
+    class FailingMode:
+        async def setup_state(self, state):
+            raise TimeoutError
+
+        async def cleanup_session(self, state):
+            return None
+
+    args = types.SimpleNamespace(setup_attempts=1)
+    task = module.Task("task", "question", "https://example.test", "example")
+
+    with pytest.raises(RuntimeError, match="TimeoutError"):
+        asyncio.run(module._open_browser_state(FailingMode(), task, args))
 
 
 def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None:

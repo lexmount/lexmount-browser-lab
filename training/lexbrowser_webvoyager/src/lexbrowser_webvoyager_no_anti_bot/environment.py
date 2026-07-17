@@ -1245,6 +1245,17 @@ class LexmountDOMMode:
             self._release_slot(state)
 
     async def teardown(self) -> None:
+        if self._background_session_cleanup_tasks:
+            # A timed-out synchronous create can still return a real remote
+            # session.  Drain its cleanup task before asyncio.run tears down
+            # the event loop; otherwise the late browser remains active and
+            # consumes project capacity for the next experiment.
+            results = await asyncio.gather(
+                *tuple(self._background_session_cleanup_tasks), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    self.logger.warning("Late Lexmount session cleanup failed: %r", result)
         if self.stagehand_client is not None:
             await self.stagehand_client.close()
             self.stagehand_client = None
