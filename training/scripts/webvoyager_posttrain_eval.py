@@ -119,6 +119,8 @@ Policy Final Response:
 TOOL_CALL_PATTERN = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 THINK_PATTERN = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.DOTALL)
 GIB = 1024**3
+MIN_USABLE_VISIBLE_TEXT_CHARS = 160
+MIN_USABLE_ACTIONABLE_ELEMENTS = 2
 
 
 @dataclass(frozen=True)
@@ -793,17 +795,22 @@ async def probe_task(
                 "visible_text": visible_text,
                 "element_count": len(elements) if isinstance(elements, list) else 0,
             }
+            document = {
+                "url": evidence["url"],
+                "visible_text_chars": len(visible_text),
+                "element_count": evidence["element_count"],
+                "fingerprint_sha256": hashlib.sha256(
+                    json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+            }
+            usable = (
+                document["visible_text_chars"] >= MIN_USABLE_VISIBLE_TEXT_CHARS
+                and document["element_count"] >= MIN_USABLE_ACTIONABLE_ELEMENTS
+            )
             result.update(
                 {
-                    "status": "available",
-                    "document": {
-                        "url": evidence["url"],
-                        "visible_text_chars": len(visible_text),
-                        "element_count": evidence["element_count"],
-                        "fingerprint_sha256": hashlib.sha256(
-                            json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
-                        ).hexdigest(),
-                    },
+                    "status": "available" if usable else "degraded_document",
+                    "document": document,
                 }
             )
         result["guard"] = {
@@ -834,7 +841,15 @@ async def probe_task(
 
 def summarize_probe_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     statuses = Counter(str(row.get("status") or "unknown") for row in rows)
-    available = [row for row in rows if row.get("status") == "available"]
+    available = [
+        row
+        for row in rows
+        if row.get("status") == "available"
+        and int((row.get("document") or {}).get("visible_text_chars") or 0)
+        >= MIN_USABLE_VISIBLE_TEXT_CHARS
+        and int((row.get("document") or {}).get("element_count") or 0)
+        >= MIN_USABLE_ACTIONABLE_ELEMENTS
+    ]
     attempts = [
         int((row.get("setup") or {}).get("attempts") or 0)
         for row in rows
@@ -845,6 +860,10 @@ def summarize_probe_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
         "tasks": len(rows),
         "statuses": dict(sorted(statuses.items())),
         "availability_rate": len(available) / len(rows) if rows else None,
+        "usable_document_threshold": {
+            "visible_text_chars": MIN_USABLE_VISIBLE_TEXT_CHARS,
+            "actionable_elements": MIN_USABLE_ACTIONABLE_ELEMENTS,
+        },
         "setup_attempts": {
             "mean": round(statistics.fmean(attempts), 4) if attempts else None,
             "max": max(attempts) if attempts else None,
