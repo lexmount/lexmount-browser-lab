@@ -132,6 +132,18 @@ def test_external_proxy_is_explicit_and_does_not_use_official_proxy(monkeypatch)
         module.lexmount_external_proxy_from_env(args)
 
 
+def test_tool_error_metadata_distinguishes_policy_initiated_infrastructure() -> None:
+    module = load_script_module()
+
+    assert module.tool_error_metadata(
+        "ERROR_INFRASTRUCTURE_NAVIGATE: infrastructure_anti_bot_challenge"
+    ) == {
+        "error_class": "infrastructure",
+        "error_code": "ERROR_INFRASTRUCTURE_NAVIGATE",
+    }
+    assert module.tool_error_metadata("Navigated to https://example.test") == {}
+
+
 def test_parser_rejects_invalid_context_geolocation() -> None:
     module = load_script_module()
 

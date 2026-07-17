@@ -528,6 +528,19 @@ def _error_classification(text: str) -> str | None:
     return None
 
 
+def tool_error_metadata(text: str) -> dict[str, str]:
+    """Return structured, non-secret metadata for a policy tool response."""
+
+    error_class = _error_classification(text)
+    if error_class is None:
+        return {}
+    match = re.match(r"^\s*(ERROR_(?:INFRASTRUCTURE|ENVIRONMENT|POLICY)_[A-Z0-9_]+)", text.upper())
+    return {
+        "error_class": error_class,
+        "error_code": match.group(1) if match else "ERROR_UNCLASSIFIED",
+    }
+
+
 async def _final_snapshot(session: Any) -> tuple[str, str]:
     try:
         snapshot = await asyncio.wait_for(asyncio.to_thread(session.observe), timeout=25.0)
@@ -753,6 +766,7 @@ async def evaluate_task(
                 },
                 "result": str(tool_result),
             }
+            event.update(tool_error_metadata(str(tool_result)))
             events.append(event)
             messages.append(
                 {"role": "tool", "tool_call_id": call["id"], "content": str(tool_result)}
@@ -775,6 +789,28 @@ async def evaluate_task(
             "final_answer_status": final_answer_status,
             "transcript_truncated": transcript_truncated,
             "browser_error": "",
+        }
+        policy_initiated_infrastructure = [
+            event for event in events if event.get("error_class") == "infrastructure"
+        ]
+        result["policy_initiated_infrastructure"] = {
+            "event_count": len(policy_initiated_infrastructure),
+            "operations": dict(
+                sorted(
+                    Counter(
+                        str((event.get("parameters") or {}).get("operation") or "")
+                        for event in policy_initiated_infrastructure
+                    ).items()
+                )
+            ),
+            "error_codes": dict(
+                sorted(
+                    Counter(
+                        str(event.get("error_code") or "ERROR_UNCLASSIFIED")
+                        for event in policy_initiated_infrastructure
+                    ).items()
+                )
+            ),
         }
         if judge_client is None:
             judge = {"status": "disabled", "reward": None, "verdict": None, "reason": ""}
@@ -972,6 +1008,8 @@ def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     errors = Counter()
     policy_failure_episodes = 0
     infrastructure_failure_episodes = 0
+    policy_initiated_infrastructure_episodes = 0
+    policy_initiated_infrastructure_events = 0
     timeout_episodes = 0
     for row in rows:
         if row.get("status") != "completed":
@@ -980,6 +1018,11 @@ def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if guard.get("infrastructure_failures"):
             errors["infrastructure_episode"] += 1
             infrastructure_failure_episodes += 1
+        policy_initiated = row.get("policy_initiated_infrastructure") or {}
+        event_count = int(policy_initiated.get("event_count") or 0)
+        if event_count:
+            policy_initiated_infrastructure_episodes += 1
+            policy_initiated_infrastructure_events += event_count
         if guard.get("policy_failures"):
             errors["policy_episode"] += 1
             policy_failure_episodes += 1
@@ -994,6 +1037,8 @@ def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "trajectory": {
             "policy_failure_episodes": policy_failure_episodes,
             "infrastructure_failure_episodes": infrastructure_failure_episodes,
+            "policy_initiated_infrastructure_episodes": policy_initiated_infrastructure_episodes,
+            "policy_initiated_infrastructure_events": policy_initiated_infrastructure_events,
             "timeout_episodes": timeout_episodes,
         },
         "judge": {

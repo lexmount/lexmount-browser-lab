@@ -106,6 +106,9 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 `summary.json` 中的 `statuses.completed` 只表示 runner 已结束；模型效果以
 `judge.success_rate` 为准，并结合 `final_answer_statuses`、`trajectory` 与原始 JSONL
 区分策略失败和基础设施失败。不要把 `completed` 当作成功率。
+`trajectory.policy_initiated_infrastructure_*` 进一步统计 policy 已开始执行后收到的
+基础设施错误，例如模型主动导航到反爬搜索页；这类事件不同于起始 session 或 `start_url`
+本身不可用，二者都不能直接算作模型正确答案失败。
 训练配置中的 `gpt-5.5` judge 使用模型默认采样参数；不要显式传 `temperature=0`，因为当前
 接入端只接受该模型的默认温度。只有确认目标 judge 支持时才传 `--judge-temperature`。
 
