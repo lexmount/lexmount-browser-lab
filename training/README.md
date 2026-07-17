@@ -128,6 +128,10 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
   --output-dir /data/wf/sxh/webvoyager-posttrain/probes/lexmount-official-smoke
 ```
 
+`probe` 支持 `--concurrency N`，并将该值写入 `run_manifest.json`。先以 `N=1` 固定同一
+任务清单、超时和代理模式完成基线，再以 `N=64` 重跑同一清单测会话容量；不要把该并发值直接
+套到带 policy 的质量评测，否则模型服务排队会与浏览器会话容量混在一起。
+
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
 5090 上应传入 `--gpu-index 0`，避免另一张 GPU 的负载污染统计；该 profiler 会在 tmux/SSH

@@ -1110,6 +1110,8 @@ async def run_probe(args: argparse.Namespace) -> int:
         tasks = tasks[: args.limit]
     if not tasks:
         raise RuntimeError("selected task manifest is empty")
+    if args.concurrency < 1:
+        raise ValueError("--concurrency must be at least 1")
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1149,7 +1151,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         local_chrome_headless=not args.local_chrome_headed,
         local_proxy_server=args.local_proxy_server,
         local_proxy_bypass=args.local_proxy_bypass,
-        max_concurrent_sessions=1,
+        max_concurrent_sessions=args.concurrency,
         session_create_timeout_s=args.session_create_timeout,
         stagehand_ready_timeout_s=30.0,
         setup_navigation_timeout_s=args.setup_navigation_timeout,
@@ -1174,6 +1176,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "protocol": "fresh_session -> start_url -> observe",
             "dom_backend": "cdp",
             "setup_attempts": args.setup_attempts,
+            "concurrency": args.concurrency,
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
@@ -1181,17 +1184,20 @@ async def run_probe(args: argparse.Namespace) -> int:
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
     try:
-        for task in tasks:
-            if task.task_id in completed_ids:
-                continue
-            row = await probe_task(task=task, mode=mode, args=args)
+        pending = [task for task in tasks if task.task_id not in completed_ids]
+        probe_futures = [
+            asyncio.create_task(probe_task(task=task, mode=mode, args=args))
+            for task in pending
+        ]
+        for future in asyncio.as_completed(probe_futures):
+            row = await future
             append_jsonl(results_path, row)
             rows.append(row)
             atomic_json(output_dir / "summary.json", summarize_probe_results(rows))
             print(
                 json.dumps(
                     {
-                        "task_id": task.task_id,
+                        "task_id": (row.get("task") or {}).get("task_id"),
                         "status": row["status"],
                         "wall_seconds": row.get("wall_seconds"),
                     },
@@ -1260,6 +1266,12 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--task-id", action="append", default=[])
     probe.add_argument("--limit", type=int)
     probe.add_argument("--resume", action="store_true")
+    probe.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="maximum simultaneous browser sessions (default: 1)",
+    )
     probe.add_argument("--setup-attempts", type=int, default=4)
     probe.add_argument("--session-create-timeout", type=float, default=60.0)
     probe.add_argument("--setup-navigation-timeout", type=float, default=30.0)
