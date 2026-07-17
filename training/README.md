@@ -154,3 +154,15 @@ python training/scripts/audit_webvoyager_posttrain_pair.py \
   --output /data/wf/sxh/webvoyager-posttrain/runs/step150-smoke-paired-audit.json \
   --strict-contract
 ```
+
+训练前/后对比只允许模型元数据不同；相同任务、浏览器、采样、judge 和评测版本必须保持一致。
+`compare_webvoyager_posttrain_models.py` 会报告每个 checkpoint 的原始与可评估分母，以及两者
+共同可评估任务上的成对变化。
+
+```bash
+python training/scripts/compare_webvoyager_posttrain_models.py \
+  --base-dir /data/wf/sxh/webvoyager-posttrain/runs/base-lexmount-smoke \
+  --trained-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-lexmount-smoke \
+  --output /data/wf/sxh/webvoyager-posttrain/runs/base-vs-step150-smoke.json \
+  --strict-controls
+```
