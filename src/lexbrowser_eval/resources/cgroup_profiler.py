@@ -12,10 +12,11 @@ import subprocess
 import time
 import urllib.request
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 GIB = 1024**3
+UTC = timezone.utc  # noqa: UP017 - Python 3.10 is used on the evaluation host.
 CHROME_MARKERS = ("chrome", "chromium", "headless_shell")
 
 
@@ -111,28 +112,35 @@ def _process_memory(cgroup: Path) -> tuple[int, int, int]:
     return total_pss, chrome_pss, sampled
 
 
-def _gpu_sample() -> tuple[float | None, float | None, float | None]:
+def _gpu_sample(gpu_index: int | None = None) -> tuple[float | None, float | None, float | None]:
     if shutil.which("nvidia-smi") is None:
         return None, None, None
     command = [
         "nvidia-smi",
-        "--query-gpu=utilization.gpu,memory.used,power.draw",
+        "--query-gpu=index,utilization.gpu,memory.used,power.draw",
         "--format=csv,noheader,nounits",
     ]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return None, None, None
-    rows: list[tuple[float, float, float]] = []
+    rows: list[tuple[int, float, float, float]] = []
     for line in result.stdout.splitlines():
         try:
-            utilization, memory_mib, power_w = [float(value.strip()) for value in line.split(",")]
+            index_text, utilization, memory_mib, power_w = [
+                value.strip() for value in line.split(",")
+            ]
+            index = int(index_text)
+            utilization = float(utilization)
+            memory_mib = float(memory_mib)
+            power_w = float(power_w)
         except (ValueError, TypeError):
             continue
-        rows.append((utilization, memory_mib, power_w))
+        if gpu_index is None or index == gpu_index:
+            rows.append((index, utilization, memory_mib, power_w))
     if not rows:
         return None, None, None
-    return tuple(statistics.fmean(row[index] for row in rows) for index in range(3))
+    return tuple(statistics.fmean(row[column] for row in rows) for column in range(1, 4))
 
 
 _VLLM_METRIC = re.compile(
@@ -193,6 +201,11 @@ def main() -> int:
     parser.add_argument("--min-host-available-gib", type=float, default=32.0)
     parser.add_argument("--planned-tasks", type=int)
     parser.add_argument("--vllm-metrics-url")
+    parser.add_argument(
+        "--gpu-index",
+        type=int,
+        help="Sample this GPU only instead of averaging every GPU visible to nvidia-smi.",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -257,7 +270,7 @@ def main() -> int:
                 memory_current = _read_int(cgroup / "memory.current")
                 memory_peak = _read_int(cgroup / "memory.peak")
                 host_available = _read_host_available_bytes()
-                gpu_util, gpu_memory_mib, gpu_power_w = _gpu_sample()
+                gpu_util, gpu_memory_mib, gpu_power_w = _gpu_sample(args.gpu_index)
                 vllm_running, vllm_waiting = _vllm_sample(args.vllm_metrics_url)
                 rows.append(
                     {
@@ -352,6 +365,7 @@ def main() -> int:
         ),
         "memory_max": args.memory_max,
         "min_host_available_gib_guard": args.min_host_available_gib,
+        "gpu_index": args.gpu_index,
         "metrics": {
             "cpu_cores_mean": _round(average_cpu_cores),
             "pss_gib": {
