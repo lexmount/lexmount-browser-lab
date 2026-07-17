@@ -736,10 +736,19 @@ async def evaluate_task(
             }
         )
     except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        setup_match = re.search(r"after (\d+) attempts", error)
+        error_class = (
+            "infrastructure"
+            if "browser setup failed" in error or "ERROR_INFRASTRUCTURE" in error
+            else "runner"
+        )
         result.update(
             {
                 "status": "setup_or_runner_error",
-                "error": f"{type(exc).__name__}: {exc}",
+                "error_class": error_class,
+                "error": error,
+                "setup_attempts": int(setup_match.group(1)) if setup_match else setup_attempts,
                 "final_answer": final_answer,
                 "final_answer_status": final_answer_status,
             }
@@ -889,7 +898,7 @@ def summarize_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     timeout_episodes = 0
     for row in rows:
         if row.get("status") != "completed":
-            errors[str(row.get("error") or "unknown").split(":", 1)[0]] += 1
+            errors[str(row.get("error_class") or "runner")] += 1
         guard = row.get("guard") or {}
         if guard.get("infrastructure_failures"):
             errors["infrastructure_episode"] += 1
