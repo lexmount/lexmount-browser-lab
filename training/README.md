@@ -134,7 +134,8 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 任务清单、超时和代理模式完成基线，再以 `N=64` 重跑同一清单测会话容量；不要把该并发值直接
 套到带 policy 的质量评测，否则模型服务排队会与浏览器会话容量混在一起。
 为避免 Python 默认 32 线程池把大于 32 的会话请求悄悄排队，probe 会同步记录实际使用的
-`blocking_thread_workers`。
+`blocking_thread_workers`。任务也会在实际进入并发 worker 后才创建 episode deadline，因此
+低于任务总数的并发不会把排队时间误算为浏览器 episode 超时。
 首个 `start_url` 使用 `--setup-navigation-timeout`，后续 policy 浏览器动作仍使用
 `--per-tool-timeout`；两者及建会超时都会写入 manifest，不能用其中一个替代另一个解释结果。
 

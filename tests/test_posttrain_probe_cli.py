@@ -255,27 +255,25 @@ def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None
         def __init__(self, **kwargs) -> None:
             observed["mode_concurrency"] = kwargs["max_concurrent_sessions"]
             observed["context_overrides"] = kwargs["context_overrides"]
-            self.slots = asyncio.Semaphore(kwargs["max_concurrent_sessions"])
 
         async def teardown(self) -> None:
             return None
 
     async def fake_probe_task(*, task, mode, args):
-        async with mode.slots:
-            observed["active"] += 1
-            observed["peak"] = max(observed["peak"], observed["active"])
-            try:
-                await asyncio.sleep(0.01)
-                return {
-                    "task": task.as_dict(),
-                    "backend": args.backend,
-                    "status": "available",
-                    "document": {"visible_text_chars": 160, "element_count": 2},
-                    "setup": {"attempts": 1},
-                    "wall_seconds": 0.01,
-                }
-            finally:
-                observed["active"] -= 1
+        observed["active"] += 1
+        observed["peak"] = max(observed["peak"], observed["active"])
+        try:
+            await asyncio.sleep(0.01)
+            return {
+                "task": task.as_dict(),
+                "backend": args.backend,
+                "status": "available",
+                "document": {"visible_text_chars": 160, "element_count": 2},
+                "setup": {"attempts": 1},
+                "wall_seconds": 0.01,
+            }
+        finally:
+            observed["active"] -= 1
 
     package = types.ModuleType("lexbrowser_webvoyager_no_anti_bot")
     environment = types.ModuleType("lexbrowser_webvoyager_no_anti_bot.environment")

@@ -1295,11 +1295,18 @@ async def run_probe(args: argparse.Namespace) -> int:
         },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
+    async def run_probe_when_scheduled(task: Task, scheduler: asyncio.Semaphore) -> dict[str, Any]:
+        # Do not create a TrajectoryGuard until a probe worker is actually free.
+        # Otherwise queued tasks can spend their entire episode timeout waiting
+        # behind earlier browser sessions when concurrency is below task count.
+        async with scheduler:
+            return await probe_task(task=task, mode=mode, args=args)
+
     try:
         pending = [task for task in tasks if task.task_id not in completed_ids]
+        scheduler = asyncio.Semaphore(args.concurrency)
         probe_futures = [
-            asyncio.create_task(probe_task(task=task, mode=mode, args=args))
-            for task in pending
+            asyncio.create_task(run_probe_when_scheduled(task, scheduler)) for task in pending
         ]
         for future in asyncio.as_completed(probe_futures):
             row = await future
