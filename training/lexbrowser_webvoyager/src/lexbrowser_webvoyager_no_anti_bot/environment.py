@@ -31,6 +31,20 @@ from stagehand import AsyncStagehand
 
 LOGGER = logging.getLogger(__name__)
 
+
+def _is_anti_bot_challenge(url: str, visible_text: str) -> bool:
+    normalized_url = url.lower()
+    normalized_text = visible_text.lower()
+    return (
+        "/sorry/" in normalized_url
+        or "unusual traffic" in normalized_text
+        or "our systems have detected" in normalized_text
+        or "verify you are human" in normalized_text
+        or "checking your browser" in normalized_text
+        or "just a moment" in normalized_text
+        or "captcha" in normalized_text
+    )
+
 EXPECTED_DATASET_ROWS = 600
 EXPECTED_DATASET_SHA256 = "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097"
 # The judge must see the rendered evidence that the agent based its answer on.
@@ -409,11 +423,7 @@ class LexmountCDPSession:
                     f"{reason.group(0) if reason else last_url}"
                 )
             if last_url and last_url != "about:blank" and len(last_text) >= 20:
-                if re.search(
-                    r"cloudflare|verify you are human|checking your browser|just a moment",
-                    last_text,
-                    flags=re.IGNORECASE,
-                ):
+                if _is_anti_bot_challenge(last_url, last_text):
                     raise RuntimeError("infrastructure_anti_bot_challenge")
                 return
             time.sleep(0.25)
@@ -477,6 +487,8 @@ class LexmountCDPSession:
                 "infrastructure_browser_error_page: "
                 f"{reason.group(0) if reason else url}"
             )
+        if _is_anti_bot_challenge(url, visible_text):
+            raise RuntimeError("infrastructure_anti_bot_challenge")
         self._observed_controls = list(snapshot.get("elements") or [])
         return snapshot
 
