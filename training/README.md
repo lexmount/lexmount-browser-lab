@@ -85,6 +85,8 @@ EVAL_PY=/home/wf/sxh/lexmount-browser-lab-eval/.venv-webvoyager/bin/python
 COMMON=(
   --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl
   --model qwen3-8b-webvoyager-grpo-step150
+  --model-artifact /data/wf/sxh/webrl_trained_models/qwen3-8b-webvoyager-grpo-global_step_150-hf
+  --model-sha256 e986f56675a265e96bc7ad52992e0c317967bebec26a599f5a9dba9f8a3355b7
   --policy-base-url http://127.0.0.1:18088/v1
   --env-file /data/wf/sxh/webvoyager-posttrain/eval.env
   --judge training
@@ -101,5 +103,32 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
   --output-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-lexmount-smoke
 ```
 
+`summary.json` 中的 `statuses.completed` 只表示 runner 已结束；模型效果以
+`judge.success_rate` 为准，并结合 `final_answer_statuses`、`trajectory` 与原始 JSONL
+区分策略失败和基础设施失败。不要把 `completed` 当作成功率。
+
+在解释模型效果前，先跑同一清单的 browser availability probe。它不调用 policy、不执行
+用户任务动作，只验证 `fresh session -> start_url -> observe` 是否获得可用 DOM，因此能把
+浏览器/出口稳定性与 checkpoint 能力分开。Lexmount 的代理模式是实验变量，必须在 manifest
+中保留；例如下列命令明确使用官方代理。
+
+```bash
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py probe \
+  --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl \
+  --backend local --local-chrome-executable /usr/bin/google-chrome \
+  --per-tool-timeout 25 \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/probes/local-smoke
+
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py probe \
+  --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl \
+  --backend lexmount --env-file /data/wf/sxh/webvoyager-posttrain/eval.env \
+  --lexmount-official-proxy --per-tool-timeout 25 \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/probes/lexmount-official-smoke
+```
+
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
+5090 上应传入 `--gpu-index 0`，避免另一张 GPU 的负载污染统计；该 profiler 会在 tmux/SSH
+后台运行时自动恢复用户级 systemd bus。
