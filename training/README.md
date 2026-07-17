@@ -54,3 +54,52 @@ tensorboard --logdir logs/lexbrowser-grpo --host 0.0.0.0 --port 6006
 ```
 
 正式 checkpoint 写入 `results/lexbrowser-grpo/train-<timestamp>/`；日志、trajectory audit 和 GPU 采样文件写入 `logs/lexbrowser-grpo/`。
+
+## 5. 训练后 checkpoint 对比
+
+`training/scripts/webvoyager_posttrain_eval.py` 复刻 910B Qwen3-8B WebVoyager
+训练时的策略接口：单个 `browser(operation, instruction)` 工具、CDP DOM、每回合
+最多 1024 tokens、最多 6 个 assistant 回合。两端只替换浏览器会话实现，因此可用于
+训练后模型的 Lexmount / 5090 Local Chrome 成对比较。
+
+先从训练 parquet 与完整 WebVoyager 任务集生成固定清单。输出包含 20-task smoke、
+100-task training-overlap 和 43-task holdout；600 个 overlap 只用于回放/环境等价性，
+43 个 holdout 都来自 Cambridge Dictionary，不能视为广泛泛化结论。
+
+```bash
+PYTHONPATH=training/lexbrowser_webvoyager/src \
+  /home/wf/sxh/lexmount-browser-lab-eval/.venv-webvoyager/bin/python \
+  training/scripts/webvoyager_posttrain_eval.py prepare-splits \
+  --training-parquet /data/wf/sxh/workspace/nemorl-webagent/training/data/webvoyager/verl-train-task-only.parquet \
+  --benchmark-jsonl /home/wf/sxh/browseruse-agent-bench/browseruse_bench/data/WebVoyager/task.jsonl \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/splits
+```
+
+待 checkpoint 的 `model.safetensors` 校验完成后，先各跑同一 smoke 清单。`eval.env`
+仅在运行机保存，包含 policy/Judge/Lexmount 的既有变量；原始轨迹和资源采样也只留在
+运行机。`--judge training` 使用训练期的 evidence/final-answer judge；smoke 可先用
+`--judge off` 确认工具协议和浏览器路径。
+
+```bash
+EVAL_PY=/home/wf/sxh/lexmount-browser-lab-eval/.venv-webvoyager/bin/python
+COMMON=(
+  --tasks /data/wf/sxh/webvoyager-posttrain/splits/smoke_20.jsonl
+  --model qwen3-8b-webvoyager-grpo-step150
+  --policy-base-url http://127.0.0.1:18088/v1
+  --env-file /data/wf/sxh/webvoyager-posttrain/eval.env
+  --judge training
+)
+
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py run \
+  "${COMMON[@]}" --backend local --local-chrome-executable /usr/bin/google-chrome \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-local-smoke
+
+PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
+  training/scripts/webvoyager_posttrain_eval.py run \
+  "${COMMON[@]}" --backend lexmount \
+  --output-dir /data/wf/sxh/webvoyager-posttrain/runs/step150-lexmount-smoke
+```
+
+用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
+CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
