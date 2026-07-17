@@ -386,6 +386,37 @@ def openai_base_url(value: str) -> str:
     return normalized if normalized.endswith("/v1") else normalized + "/v1"
 
 
+def parse_context_geolocation(value: str) -> dict[str, float]:
+    """Parse ``latitude,longitude[,accuracy]`` for an opt-in CDP diagnostic."""
+
+    try:
+        parts = [float(part.strip()) for part in value.split(",")]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "context geolocation must be latitude,longitude[,accuracy]"
+        ) from exc
+    if len(parts) not in {2, 3}:
+        raise argparse.ArgumentTypeError(
+            "context geolocation must be latitude,longitude[,accuracy]"
+        )
+    latitude, longitude = parts[:2]
+    accuracy = parts[2] if len(parts) == 3 else 100.0
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180 or accuracy < 0:
+        raise argparse.ArgumentTypeError(
+            "context geolocation latitude/longitude/accuracy is out of range"
+        )
+    return {"latitude": latitude, "longitude": longitude, "accuracy": accuracy}
+
+
+def browser_context_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    values = {
+        "locale": args.context_locale,
+        "timezone_id": args.context_timezone_id,
+        "geolocation": args.context_geolocation,
+    }
+    return {key: value for key, value in values.items() if value is not None}
+
+
 def _tool_call_dicts(message: Any) -> list[dict[str, str]]:
     calls: list[dict[str, str]] = []
     for call in getattr(message, "tool_calls", None) or []:
@@ -607,6 +638,7 @@ async def evaluate_task(
         result["setup"] = {
             "attempts": setup_attempts,
             "navigation_result": state.get("setup_navigation_result", ""),
+            "browser_context": state.get("browser_context"),
         }
         for turn in range(1, args.max_assistant_turns + 1):
             request_started = time.monotonic()
@@ -801,6 +833,7 @@ async def probe_task(
         result["setup"] = {
             "attempts": attempts,
             "navigation_result": state.get("setup_navigation_result", ""),
+            "browser_context": state.get("browser_context"),
         }
         if error_class:
             result.update(
@@ -1035,6 +1068,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         per_tool_timeout_s=args.per_tool_timeout,
         episode_timeout_s=args.episode_timeout,
         max_repeated_tool_calls=3,
+        context_overrides=browser_context_overrides(args),
     )
     manifest = {
         "schema_version": 1,
@@ -1074,6 +1108,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
+            "context_overrides": browser_context_overrides(args),
         },
         "judge": {
             "mode": args.judge,
@@ -1198,6 +1233,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         per_tool_timeout_s=args.per_tool_timeout,
         episode_timeout_s=args.episode_timeout,
         max_repeated_tool_calls=3,
+        context_overrides=browser_context_overrides(args),
     )
     manifest = {
         "schema_version": 1,
@@ -1224,6 +1260,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
             "lexmount_official_proxy": args.lexmount_official_proxy,
+            "context_overrides": browser_context_overrides(args),
         },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
@@ -1304,6 +1341,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-proxy-server")
     run.add_argument("--local-proxy-bypass")
     run.add_argument("--lexmount-official-proxy", action="store_true")
+    run.add_argument("--context-locale")
+    run.add_argument("--context-timezone-id")
+    run.add_argument("--context-geolocation", type=parse_context_geolocation)
 
     probe = subparsers.add_parser(
         "probe", help="measure browser usable-DOM availability without a policy"
@@ -1331,6 +1371,9 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--local-proxy-server")
     probe.add_argument("--local-proxy-bypass")
     probe.add_argument("--lexmount-official-proxy", action="store_true")
+    probe.add_argument("--context-locale")
+    probe.add_argument("--context-timezone-id")
+    probe.add_argument("--context-geolocation", type=parse_context_geolocation)
     return parser
 
 

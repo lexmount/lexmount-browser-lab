@@ -138,6 +138,11 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 首个 `start_url` 使用 `--setup-navigation-timeout`，后续 policy 浏览器动作仍使用
 `--per-tool-timeout`；两者及建会超时都会写入 manifest，不能用其中一个替代另一个解释结果。
 
+对按地域返回不同内容的网站，可用 `--context-locale`、`--context-timezone-id` 和
+`--context-geolocation latitude,longitude[,accuracy]` 做 CDP 敏感性诊断；每个结果会记录
+实际的浏览器 language/locale/timezone。它们不能替代同一出口代理：站点仍可能按出口 IP 返回
+不同内容，因此该诊断必须与原始直连条件分开报告。
+
 用已有 `src/lexbrowser_eval/resources/cgroup_profiler.py` 包裹上述命令，可同时保存
 CPU、PSS、Chrome PSS、GPU、显存和 vLLM 队列采样，资源指标口径与 LexBench 压力实验一致。
 5090 上应传入 `--gpu-index 0`，避免另一张 GPU 的负载污染统计；该 profiler 会在 tmux/SSH

@@ -366,6 +366,67 @@ class LexmountCDPSession:
         """
         self._task_query = query
 
+    def configure_context(
+        self,
+        *,
+        locale: str | None = None,
+        timezone_id: str | None = None,
+        geolocation: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
+        """Apply explicit CDP context controls and record non-sensitive state.
+
+        Real sites can vary by browser locale, timezone, and geolocation. The
+        controls are opt-in so training-compatible runs preserve their original
+        context, while diagnostic runs can make these variables explicit.
+        """
+
+        requested = {
+            "locale": locale,
+            "timezone_id": timezone_id,
+            "geolocation": dict(geolocation) if geolocation else None,
+        }
+        applied: dict[str, Any] = {}
+        if locale:
+            self.call("Network.enable", session_id=self._session_id)
+            user_agent = str(self.evaluate("navigator.userAgent") or "")
+            self.call(
+                "Network.setUserAgentOverride",
+                {"userAgent": user_agent, "acceptLanguage": locale},
+                session_id=self._session_id,
+            )
+            self.call(
+                "Emulation.setLocaleOverride",
+                {"locale": locale},
+                session_id=self._session_id,
+            )
+            applied["locale"] = locale
+        if timezone_id:
+            self.call(
+                "Emulation.setTimezoneOverride",
+                {"timezoneId": timezone_id},
+                session_id=self._session_id,
+            )
+            applied["timezone_id"] = timezone_id
+        if geolocation:
+            self.call(
+                "Emulation.setGeolocationOverride",
+                dict(geolocation),
+                session_id=self._session_id,
+            )
+            applied["geolocation"] = dict(geolocation)
+        raw = self.evaluate(
+            """(() => JSON.stringify({
+              language: navigator.language,
+              languages: Array.from(navigator.languages || []),
+              locale: Intl.DateTimeFormat().resolvedOptions().locale,
+              timezone_id: Intl.DateTimeFormat().resolvedOptions().timeZone
+            }))()"""
+        )
+        observed = json.loads(str(raw or "{}"))
+        if not isinstance(observed, dict):
+            observed = {}
+        return {"requested": requested, "applied": applied, "observed": observed}
+
     def close(self) -> None:
         try:
             self._ws.close()
@@ -893,6 +954,7 @@ class LexmountDOMMode:
         per_tool_timeout_s: float,
         episode_timeout_s: float,
         max_repeated_tool_calls: int,
+        context_overrides: dict[str, Any] | None = None,
     ) -> None:
         if dom_backend not in {"stagehand", "cdp"}:
             raise ValueError(f"Unsupported dom_backend={dom_backend!r}")
@@ -927,6 +989,9 @@ class LexmountDOMMode:
         self.local_chrome_headless = local_chrome_headless
         self.local_proxy_server = local_proxy_server
         self.local_proxy_bypass = local_proxy_bypass
+        self.context_overrides = dict(context_overrides or {})
+        if self.context_overrides and dom_backend != "cdp":
+            raise ValueError("Browser context overrides require dom_backend='cdp'")
         self.stagehand_ready_timeout_s = stagehand_ready_timeout_s
         # This deadline is intentionally separate from a policy tool-call
         # deadline.  Initial navigation can require a cold real-site load and
@@ -941,6 +1006,9 @@ class LexmountDOMMode:
         self.session_create_timeout_s = session_create_timeout_s
         self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
         self.logger = LOGGER
+
+    def _configure_cdp_context(self, session: LexmountCDPSession) -> dict[str, Any]:
+        return session.configure_context(**self.context_overrides)
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
         self.logger = env.logger
@@ -998,6 +1066,15 @@ class LexmountDOMMode:
                     proxy_server=self.local_proxy_server,
                     proxy_bypass=self.local_proxy_bypass,
                     timeout_s=self.setup_navigation_timeout_s,
+                )
+                context_started_at = time.monotonic()
+                state["browser_context"] = await asyncio.to_thread(
+                    self._configure_cdp_context, state["browser_session"]
+                )
+                guard.record_timing(
+                    "browser_context_configure_seconds",
+                    context_started_at,
+                    phase="browser_context_configure",
                 )
                 guard.record_timing(
                     "local_browser_create_seconds",
@@ -1085,6 +1162,15 @@ class LexmountDOMMode:
             if self.dom_backend == "cdp":
                 state["browser_session"] = await asyncio.to_thread(
                     LexmountCDPSession, cdp_url, self.setup_navigation_timeout_s
+                )
+                context_started_at = time.monotonic()
+                state["browser_context"] = await asyncio.to_thread(
+                    self._configure_cdp_context, state["browser_session"]
+                )
+                guard.record_timing(
+                    "browser_context_configure_seconds",
+                    context_started_at,
+                    phase="browser_context_configure",
                 )
             else:
                 client = await self._get_stagehand_client()

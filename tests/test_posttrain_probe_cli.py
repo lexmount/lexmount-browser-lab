@@ -44,6 +44,53 @@ def test_probe_parser_accepts_explicit_concurrency() -> None:
     assert args.concurrency == 64
 
 
+def test_parser_accepts_explicit_browser_context_overrides() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "probe",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "local",
+            "--context-locale",
+            "en-US",
+            "--context-timezone-id",
+            "America/New_York",
+            "--context-geolocation",
+            "40.7128,-74.0060,50",
+        ]
+    )
+
+    assert module.browser_context_overrides(args) == {
+        "locale": "en-US",
+        "timezone_id": "America/New_York",
+        "geolocation": {"latitude": 40.7128, "longitude": -74.006, "accuracy": 50.0},
+    }
+
+
+def test_parser_rejects_invalid_context_geolocation() -> None:
+    module = load_script_module()
+
+    with pytest.raises(SystemExit):
+        module.build_parser().parse_args(
+            [
+                "probe",
+                "--tasks",
+                "tasks.jsonl",
+                "--output-dir",
+                "out",
+                "--backend",
+                "local",
+                "--context-geolocation",
+                "200,0",
+            ]
+        )
+
+
 def test_browser_setup_error_preserves_timeout_type() -> None:
     module = load_script_module()
 
@@ -137,11 +184,17 @@ def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None
         + "\n",
         encoding="utf-8",
     )
-    observed: dict[str, int] = {"active": 0, "peak": 0, "mode_concurrency": 0}
+    observed: dict[str, int | dict] = {
+        "active": 0,
+        "peak": 0,
+        "mode_concurrency": 0,
+        "context_overrides": {},
+    }
 
     class FakeMode:
         def __init__(self, **kwargs) -> None:
             observed["mode_concurrency"] = kwargs["max_concurrent_sessions"]
+            observed["context_overrides"] = kwargs["context_overrides"]
             self.slots = asyncio.Semaphore(kwargs["max_concurrent_sessions"])
 
         async def teardown(self) -> None:
@@ -188,7 +241,12 @@ def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None
     )
 
     assert asyncio.run(module.run_probe(args)) == 0
-    assert observed == {"active": 0, "peak": 2, "mode_concurrency": 2}
+    assert observed == {
+        "active": 0,
+        "peak": 2,
+        "mode_concurrency": 2,
+        "context_overrides": {},
+    }
     assert json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))["tasks"] == 4
     manifest = json.loads((output_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["browser"]["blocking_thread_workers"] == max(
