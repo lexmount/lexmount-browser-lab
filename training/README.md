@@ -157,8 +157,8 @@ python training/scripts/audit_webvoyager_posttrain_pair.py \
 
 当共同可评估题目太少时，先用不同但固定的 policy seed 重复同一对条件，而不是把单轮
 Lexmount/local 差异当成结论。每轮目录应仅包含 `lexmount/` 与 `local/` 两个已完成运行；
-`aggregate_webvoyager_posttrain_repeats.py` 只允许 `generation.seed_base` 在轮次间变化，并把
-重复观察数与去重后的题目数分开输出。
+`aggregate_webvoyager_posttrain_repeats.py` 只允许 `generation.seed_base` 及不改变 evaluator
+脚本哈希的仓库提交号在轮次间变化，并把重复观察数与去重后的题目数分开输出。
 
 ```bash
 python training/scripts/aggregate_webvoyager_posttrain_repeats.py --run-dir /data/wf/sxh/webvoyager-posttrain/runs/common-five-seed-1 --run-dir /data/wf/sxh/webvoyager-posttrain/runs/common-five-seed-2 --run-dir /data/wf/sxh/webvoyager-posttrain/runs/common-five-seed-3 --output /data/wf/sxh/webvoyager-posttrain/runs/common-five-repeated-audit.json --strict-contract

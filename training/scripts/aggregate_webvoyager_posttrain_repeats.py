@@ -25,7 +25,6 @@ CONTROL_KEYS = (
     "tasks",
     "tasks_sha256",
     "selected_tasks",
-    "evaluator",
     "judge",
     "model",
     "browser",
@@ -41,9 +40,16 @@ def run_control_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(generation, Mapping)
         else generation
     )
+    evaluator = manifest.get("evaluator")
+    normalized_evaluator = (
+        {"script_sha256": evaluator.get("script_sha256")}
+        if isinstance(evaluator, Mapping)
+        else evaluator
+    )
     return {
         **{key: manifest.get(key) for key in CONTROL_KEYS},
         "generation": normalized_generation,
+        "evaluator": normalized_evaluator,
     }
 
 
@@ -166,7 +172,10 @@ def aggregate_repeats(run_dirs: Sequence[Path]) -> dict[str, Any]:
         "schema_version": 1,
         "repeat_control_contract": {
             "matches": not control_mismatches and not pair_contract_mismatches,
-            "allowed_variation": ["generation.seed_base"],
+            "allowed_variation": [
+                "generation.seed_base",
+                "evaluator.repository_revision (when evaluator.script_sha256 matches)",
+            ],
             "control_differences": control_mismatches,
             "within_pair_differences": pair_contract_mismatches,
         },

@@ -26,7 +26,9 @@ def load_script_module() -> types.ModuleType:
         sys.path.pop(0)
 
 
-def manifest(*, backend: str, seed: int, temperature: float = 1.0) -> dict:
+def manifest(
+    *, backend: str, seed: int, temperature: float = 1.0, revision: str = "revision"
+) -> dict:
     return {
         "backend": backend,
         "protocol": "webvoyager-posttrain-v1",
@@ -34,7 +36,7 @@ def manifest(*, backend: str, seed: int, temperature: float = 1.0) -> dict:
         "tasks": "/tmp/common-five.jsonl",
         "tasks_sha256": "tasks-sha",
         "selected_tasks": 2,
-        "evaluator": {"repository_revision": "revision", "script_sha256": "script-sha"},
+        "evaluator": {"repository_revision": revision, "script_sha256": "script-sha"},
         "generation": {"seed_base": seed, "temperature": temperature, "top_p": 1.0},
         "judge": {"mode": "training", "model": "gpt-5.5", "temperature": None},
         "model": {"id": "step150", "safetensors_sha256": "model-sha"},
@@ -60,11 +62,20 @@ def record(task_id: str, verdict: str) -> dict:
 
 
 def write_arm(
-    path: Path, *, backend: str, seed: int, rows: list[dict], temperature: float = 1.0
+    path: Path,
+    *,
+    backend: str,
+    seed: int,
+    rows: list[dict],
+    temperature: float = 1.0,
+    revision: str = "revision",
 ) -> None:
     path.mkdir(parents=True)
     (path / "run_manifest.json").write_text(
-        json.dumps(manifest(backend=backend, seed=seed, temperature=temperature)), encoding="utf-8"
+        json.dumps(
+            manifest(backend=backend, seed=seed, temperature=temperature, revision=revision)
+        ),
+        encoding="utf-8",
     )
     (path / "results.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
@@ -78,6 +89,7 @@ def write_run(
     lexmount_rows: list[dict],
     local_rows: list[dict],
     temperature: float = 1.0,
+    revision: str = "revision",
 ) -> None:
     write_arm(
         path / "lexmount",
@@ -85,6 +97,7 @@ def write_run(
         seed=seed,
         rows=lexmount_rows,
         temperature=temperature,
+        revision=revision,
     )
     write_arm(
         path / "local",
@@ -92,6 +105,7 @@ def write_run(
         seed=seed,
         rows=local_rows,
         temperature=temperature,
+        revision=revision,
     )
 
 
@@ -171,3 +185,16 @@ def test_aggregate_flags_non_seed_control_difference(tmp_path: Path) -> None:
     assert set(aggregate["repeat_control_contract"]["control_differences"][str(second)]) == {
         "generation"
     }
+
+
+def test_aggregate_allows_unrelated_repository_revision_change(tmp_path: Path) -> None:
+    module = load_script_module()
+    first = tmp_path / "seed-1"
+    second = tmp_path / "seed-2"
+    rows = [record("task-1", "no")]
+    write_run(first, seed=1, lexmount_rows=rows, local_rows=rows, revision="first")
+    write_run(second, seed=2, lexmount_rows=rows, local_rows=rows, revision="second")
+
+    aggregate = module.aggregate_repeats([first, second])
+
+    assert aggregate["repeat_control_contract"]["matches"] is True
