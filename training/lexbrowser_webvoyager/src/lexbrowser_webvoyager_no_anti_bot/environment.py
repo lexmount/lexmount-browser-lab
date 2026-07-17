@@ -11,17 +11,23 @@ import json
 import logging
 import os
 import re
+import shutil
+import signal
+import subprocess
+import tempfile
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import verifiers as vf
+import websocket
 from datasets import Dataset
 from lexmount import Lexmount
 from openai import AsyncOpenAI
 from stagehand import AsyncStagehand
-import websocket
 
 LOGGER = logging.getLogger(__name__)
 
@@ -688,6 +694,121 @@ class LexmountCDPSession:
         )
 
 
+class LocalChromeSession(LexmountCDPSession):
+    """A fresh local Chrome profile connected through the same CDP adapter.
+
+    The policy-facing browser API intentionally remains ``LexmountCDPSession``:
+    only session ownership changes. This keeps a Lexmount/local comparison on
+    the same DOM observations and grounded action grammar.
+    """
+
+    def __init__(
+        self,
+        *,
+        executable_path: str | None,
+        headless: bool,
+        proxy_server: str | None,
+        proxy_bypass: str | None,
+        timeout_s: float,
+    ) -> None:
+        self._profile_dir = Path(tempfile.mkdtemp(prefix="lexbrowser-webvoyager-"))
+        self._process: subprocess.Popen[bytes] | None = None
+        self._cdp_connected = False
+        executable = self._resolve_executable(executable_path)
+        command = [
+            executable,
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=0",
+            # Chrome 136+ rejects a non-DevTools WebSocket Origin unless this
+            # is explicit. The endpoint remains loopback-only and belongs to
+            # this short-lived profile.
+            "--remote-allow-origins=*",
+            f"--user-data-dir={self._profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+        ]
+        if headless:
+            command.append("--headless=new")
+        if os.geteuid() == 0:
+            command.append("--no-sandbox")
+        if proxy_server:
+            command.append(f"--proxy-server={proxy_server}")
+        if proxy_bypass:
+            command.append(f"--proxy-bypass-list={proxy_bypass}")
+
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            super().__init__(self._wait_for_cdp_url(timeout_s), timeout_s)
+            self._cdp_connected = True
+        except Exception:
+            self.close()
+            raise
+
+    @staticmethod
+    def _resolve_executable(configured_path: str | None) -> str:
+        if configured_path:
+            resolved = shutil.which(configured_path) if not os.path.isabs(configured_path) else configured_path
+            if resolved and os.path.isfile(resolved) and os.access(resolved, os.X_OK):
+                return resolved
+            raise RuntimeError(f"Configured local Chrome executable is not runnable: {configured_path}")
+        for candidate in ("google-chrome", "chromium", "chromium-browser"):
+            if resolved := shutil.which(candidate):
+                return resolved
+        raise RuntimeError(
+            "No local Chrome executable found. Set local_chrome_executable_path "
+            "or LOCAL_CHROME_EXECUTABLE_PATH."
+        )
+
+    def _wait_for_cdp_url(self, timeout_s: float) -> str:
+        deadline = time.monotonic() + timeout_s
+        active_port = self._profile_dir / "DevToolsActivePort"
+        while time.monotonic() < deadline:
+            if self._process is not None and self._process.poll() is not None:
+                raise RuntimeError(
+                    f"Local Chrome exited during startup with code {self._process.returncode}"
+                )
+            try:
+                lines = active_port.read_text(encoding="utf-8").splitlines()
+                port = int(lines[0])
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/version", timeout=1.0
+                ) as response:
+                    payload = json.load(response)
+                cdp_url = str(payload.get("webSocketDebuggerUrl") or "")
+                if cdp_url:
+                    return cdp_url
+            except (FileNotFoundError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+                pass
+            time.sleep(0.1)
+        raise TimeoutError("Local Chrome did not expose a CDP endpoint before startup timeout")
+
+    def close(self) -> None:
+        if self._cdp_connected:
+            super().close()
+            self._cdp_connected = False
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=5.0)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        self._process = None
+        shutil.rmtree(self._profile_dir, ignore_errors=True)
+
+
 def load_webvoyager_dataset(num_examples: int = -1, web_filter: str | None = None) -> Dataset:
     dataset_path = Path(__file__).parent / "datasets" / "WebVoyager_data_clean.jsonl"
     digest = hashlib.sha256(dataset_path.read_bytes()).hexdigest()
@@ -727,13 +848,14 @@ def load_webvoyager_dataset(num_examples: int = -1, web_filter: str | None = Non
 
 
 class LexmountDOMMode:
-    """Stagehand DOM mode attached to a Lexmount-provisioned Chrome over CDP."""
+    """Own a Lexmount or local Chrome session while preserving the DOM tool API."""
 
     def __init__(
         self,
         *,
-        api_key: str,
-        project_id: str,
+        api_key: str | None,
+        project_id: str | None,
+        browser_backend: str,
         dom_backend: str,
         stagehand_model: str,
         policy_model: str,
@@ -741,6 +863,10 @@ class LexmountDOMMode:
         browser_mode: str,
         official_proxy: bool,
         external_proxy: dict[str, str] | None,
+        local_chrome_executable_path: str | None,
+        local_chrome_headless: bool,
+        local_proxy_server: str | None,
+        local_proxy_bypass: str | None,
         max_concurrent_sessions: int,
         session_create_timeout_s: float,
         stagehand_ready_timeout_s: float,
@@ -749,19 +875,28 @@ class LexmountDOMMode:
         episode_timeout_s: float,
         max_repeated_tool_calls: int,
     ) -> None:
-        # Keep a preflight-selected Lexmount region for every real rollout;
-        # otherwise a successful regional smoke test and a training session
-        # could silently use different egress paths.
-        lexmount_kwargs: dict[str, str] = {
-            "api_key": api_key,
-            "project_id": project_id,
-        }
-        region = os.environ.get("LEXMOUNT_REGION", "").strip()
-        if region:
-            lexmount_kwargs["region"] = region
-        self.lexmount = Lexmount(**lexmount_kwargs)
         if dom_backend not in {"stagehand", "cdp"}:
             raise ValueError(f"Unsupported dom_backend={dom_backend!r}")
+        if browser_backend not in {"lexmount", "local"}:
+            raise ValueError(f"Unsupported browser_backend={browser_backend!r}")
+        if browser_backend == "local" and dom_backend != "cdp":
+            raise ValueError("Local Chrome supports only the deterministic dom_backend='cdp'")
+        self.browser_backend = browser_backend
+        self.lexmount: Lexmount | None = None
+        if browser_backend == "lexmount":
+            if not api_key or not project_id:
+                raise ValueError("Lexmount backend requires api_key and project_id")
+            # Keep a preflight-selected Lexmount region for every real rollout;
+            # otherwise a successful regional smoke test and a training session
+            # could silently use different egress paths.
+            lexmount_kwargs: dict[str, str] = {
+                "api_key": api_key,
+                "project_id": project_id,
+            }
+            region = os.environ.get("LEXMOUNT_REGION", "").strip()
+            if region:
+                lexmount_kwargs["region"] = region
+            self.lexmount = Lexmount(**lexmount_kwargs)
         self.dom_backend = dom_backend
         self.stagehand_model = stagehand_model
         self.policy_model = policy_model
@@ -769,6 +904,10 @@ class LexmountDOMMode:
         self.browser_mode = browser_mode
         self.official_proxy = official_proxy
         self.external_proxy = external_proxy
+        self.local_chrome_executable_path = local_chrome_executable_path
+        self.local_chrome_headless = local_chrome_headless
+        self.local_proxy_server = local_proxy_server
+        self.local_proxy_bypass = local_proxy_bypass
         self.stagehand_ready_timeout_s = stagehand_ready_timeout_s
         # This deadline is intentionally separate from a policy tool-call
         # deadline.  Initial navigation can require a cold real-site load and
@@ -830,6 +969,32 @@ class LexmountDOMMode:
             "browser_slot_wait_seconds", slot_started_at, phase="browser_slot_wait"
         )
         state["lexbrowser_slot_acquired"] = True
+        if self.browser_backend == "local":
+            local_started_at = time.monotonic()
+            try:
+                state["browser_session"] = await asyncio.to_thread(
+                    LocalChromeSession,
+                    executable_path=self.local_chrome_executable_path,
+                    headless=self.local_chrome_headless,
+                    proxy_server=self.local_proxy_server,
+                    proxy_bypass=self.local_proxy_bypass,
+                    timeout_s=self.setup_navigation_timeout_s,
+                )
+                guard.record_timing(
+                    "local_browser_create_seconds",
+                    local_started_at,
+                    phase="local_browser_create",
+                )
+                return state
+            except Exception as exc:
+                guard.record_timing(
+                    "local_browser_create_seconds",
+                    local_started_at,
+                    phase="local_browser_create",
+                    status=f"error:{type(exc).__name__}",
+                )
+                self._release_slot(state)
+                raise
         lexmount_session = None
         try:
             session_kwargs: dict[str, Any] = {"browser_mode": self.browser_mode}
@@ -841,6 +1006,7 @@ class LexmountDOMMode:
             else:
                 session_kwargs["official_proxy"] = self.official_proxy
             create_started_at = time.monotonic()
+            assert self.lexmount is not None
             create_task: asyncio.Task[Any] = asyncio.create_task(
                 asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs)
             )
@@ -974,7 +1140,7 @@ class LexmountDOMMode:
                 reason,
                 exc,
             )
-        if session_id:
+        if session_id and self.lexmount is not None:
             try:
                 await asyncio.wait_for(
                     asyncio.to_thread(
@@ -1045,6 +1211,8 @@ class LexmountDOMMode:
                     await stagehand_session.end()
                 except Exception as exc:
                     self.logger.warning("Failed to end Stagehand session: %s", exc)
+            elif isinstance(browser_session, LocalChromeSession):
+                await asyncio.to_thread(browser_session.close)
             elif isinstance(browser_session, LexmountCDPSession):
                 await asyncio.to_thread(browser_session.close)
             lexmount_session = state.pop("lexmount_session", None)
@@ -1420,6 +1588,7 @@ def _external_proxy_from_env() -> dict[str, str] | None:
 
 def load_environment(
     mode: str = "dom",
+    browser_backend: str = "lexmount",
     dom_backend: str = "stagehand",
     max_turns: int = 30,
     judge_model: str = "gpt-5.5",
@@ -1430,6 +1599,10 @@ def load_environment(
     proxy_model_to_stagehand: bool = True,
     browser_mode: str = "normal",
     official_proxy: bool = False,
+    local_chrome_executable_path: str | None = None,
+    local_chrome_headless: bool = True,
+    local_proxy_server: str | None = None,
+    local_proxy_bypass: str | None = None,
     max_concurrent_sessions: int = 20,
     session_create_timeout_s: float = 60.0,
     stagehand_ready_timeout_s: float = 60.0,
@@ -1441,6 +1614,10 @@ def load_environment(
 ) -> vf.Environment:
     if mode != "dom":
         raise ValueError("lexbrowser/webvoyager-no-anti-bot currently supports mode='dom' only")
+    if browser_backend not in {"lexmount", "local"}:
+        raise ValueError(f"Unsupported browser_backend={browser_backend!r}")
+    if browser_backend == "local" and dom_backend != "cdp":
+        raise ValueError("Local Chrome supports only the deterministic dom_backend='cdp'")
 
     if configured_model := os.environ.get("OPENAI_MODEL"):
         judge_model = configured_model.removeprefix("openai/")
@@ -1466,16 +1643,34 @@ def load_environment(
     )
     rubric.add_reward_func(judge_task_completion, weight=1.0)
 
+    if browser_backend == "local":
+        local_chrome_executable_path = (
+            local_chrome_executable_path
+            or os.environ.get("LOCAL_CHROME_EXECUTABLE_PATH", "").strip()
+            or None
+        )
+        local_proxy_server = (
+            local_proxy_server or os.environ.get("LOCAL_CHROME_PROXY_SERVER", "").strip() or None
+        )
+        local_proxy_bypass = (
+            local_proxy_bypass or os.environ.get("LOCAL_CHROME_PROXY_BYPASS", "").strip() or None
+        )
+
     mode_impl = LexmountDOMMode(
-        api_key=_required_env("LEXMOUNT_API_KEY"),
-        project_id=_required_env("LEXMOUNT_PROJECT_ID"),
+        api_key=_required_env("LEXMOUNT_API_KEY") if browser_backend == "lexmount" else None,
+        project_id=_required_env("LEXMOUNT_PROJECT_ID") if browser_backend == "lexmount" else None,
+        browser_backend=browser_backend,
         dom_backend=dom_backend,
         stagehand_model=stagehand_model,
         policy_model=policy_model,
         proxy_model_to_stagehand=proxy_model_to_stagehand,
         browser_mode=browser_mode,
         official_proxy=official_proxy,
-        external_proxy=_external_proxy_from_env(),
+        external_proxy=_external_proxy_from_env() if browser_backend == "lexmount" else None,
+        local_chrome_executable_path=local_chrome_executable_path,
+        local_chrome_headless=local_chrome_headless,
+        local_proxy_server=local_proxy_server,
+        local_proxy_bypass=local_proxy_bypass,
         max_concurrent_sessions=max_concurrent_sessions,
         session_create_timeout_s=session_create_timeout_s,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,

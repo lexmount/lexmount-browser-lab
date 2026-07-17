@@ -13,6 +13,7 @@ dependencies = [
     "openai>=1.0",
     "stagehand==3.21.0",
     "verifiers==0.1.9.post3",
+    "websocket-client>=1.8",
 ]
 
 [tool.setuptools.package-data]
