@@ -614,7 +614,11 @@ def prepare_judge_source(
 
 
 def build_rollout_command(
-    checkout: pathlib.Path, config: pathlib.Path, backend: str, timestamp: str
+    checkout: pathlib.Path,
+    config: pathlib.Path,
+    backend: str,
+    timestamp: str,
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
 ) -> list[str]:
     if backend not in BACKENDS:
         raise ValueError(f"unknown backend: {backend}")
@@ -636,7 +640,7 @@ def build_rollout_command(
         "--mode",
         "all",
         "--concurrency",
-        str(ROLLOUT_CONCURRENCY),
+        str(rollout_concurrency),
         "--skip-completed",
         "--timestamp",
         timestamp,
@@ -1280,6 +1284,7 @@ def write_report(
     judge: dict[str, Any],
     run_dir: pathlib.Path,
     policy_model: Mapping[str, str | None],
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
     task_count: int = TASK_COUNT,
 ) -> None:
     if not rollout.get("complete") or not judge.get("complete"):
@@ -1296,7 +1301,7 @@ def write_report(
 | WebJudge 失败 | {judge["failed_tasks"]} |
 | 内容策略强制失败 | {judge.get("forced_failure_count", 0)} |
 | Success rate | {judge["success_rate"]:.2f}% |
-| Rollout concurrency | {ROLLOUT_CONCURRENCY} |
+| Rollout concurrency | {rollout_concurrency} |
 | Judge concurrency | {JUDGE_CONCURRENCY} |
 
 ## 固定配置与可复现性
@@ -1338,6 +1343,7 @@ def write_comparison_report(
     campaign: str,
     states: Mapping[str, tuple[pathlib.Path, dict[str, Any], dict[str, Any] | None]],
     policy_model: Mapping[str, str | None],
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
     task_count: int = TASK_COUNT,
 ) -> None:
     if set(states) != set(BACKENDS):
@@ -1352,7 +1358,7 @@ def write_comparison_report(
     delta = local["success_rate"] - lexmount["success_rate"]
     text = f"""# Online-Mind2Web：Lexmount Browser 与 Local Chrome 对比
 
-本轮使用同一 `{policy_model["label"]}`、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency=10。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
+本轮使用同一 `{policy_model["label"]}`、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency={rollout_concurrency}。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
 
 ## 最终质量指标
 
@@ -1372,7 +1378,7 @@ def write_comparison_report(
 - Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
 - Dataset: `osunlp/Online-Mind2Web@{HF_REVISION}`，{task_count} tasks（固定前 {task_count} 条；全量300条先完成哈希与结构校验）
 - Schema: `{SCHEMA_VERSION}`
-- Rollout: qwen3-8B，concurrency={ROLLOUT_CONCURRENCY}，两后端同配置
+- Rollout: qwen3-8B，concurrency={rollout_concurrency}，两后端同配置
 - Judge: 仅 `WebJudge_Online_Mind2Web_eval`，gpt-5.4，temperature={JUDGE_TEMPERATURE}，concurrency={JUDGE_CONCURRENCY}
 - 官方 Judge 参数：max_tokens={JUDGE_MAX_TOKENS}，max_tries={JUDGE_MAX_TRIES}，score_threshold={JUDGE_SCORE_THRESHOLD}
 - 指标：`Success Rate = predicted_label=1 / {task_count} × 100%`
@@ -1415,6 +1421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--policy-label", default="Qwen3-8B")
     parser.add_argument("--policy-artifact", type=pathlib.Path)
     parser.add_argument("--policy-sha256", default="")
+    parser.add_argument("--rollout-concurrency", type=int, default=ROLLOUT_CONCURRENCY)
     parser.add_argument(
         "--task-count",
         type=int,
@@ -1429,6 +1436,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 1 <= args.task_count <= TASK_COUNT:
         parser.error(f"--task-count must be in 1..{TASK_COUNT}")
+    if args.rollout_concurrency < 1:
+        parser.error("--rollout-concurrency must be positive")
 
     policy_model = resolve_policy_metadata(args)
     env_values = validate_environment(os.environ)
@@ -1494,7 +1503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "judge_source_patch": judge_source_patch,
         "task_file_sha256": hashlib.sha256(task_file.read_bytes()).hexdigest(),
         "selected_task_count": len(tasks),
-        "rollout_concurrency": ROLLOUT_CONCURRENCY,
+        "rollout_concurrency": args.rollout_concurrency,
         "judge": {
             "model": JUDGE_MODEL,
             "concurrency": JUDGE_CONCURRENCY,
@@ -1525,7 +1534,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{backend}: rollout pass {attempt}, valid={rollout['valid_count']}/{len(tasks)}"
                 )
                 result = run(
-                    build_rollout_command(checkout, config, backend, timestamp),
+                    build_rollout_command(
+                        checkout,
+                        config,
+                        backend,
+                        timestamp,
+                        args.rollout_concurrency,
+                    ),
                     cwd=checkout,
                     env=os.environ,
                     check=False,
@@ -1583,6 +1598,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 judge,
                 run_dir,
                 policy_model,
+                args.rollout_concurrency,
                 len(tasks),
             )
         write_comparison_report(
@@ -1590,6 +1606,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.campaign,
             states,
             policy_model,
+            args.rollout_concurrency,
             len(tasks),
         )
     return 0

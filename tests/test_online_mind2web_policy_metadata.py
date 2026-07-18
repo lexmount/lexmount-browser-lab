@@ -1,8 +1,9 @@
 import argparse
+import pathlib
 
 import pytest
 
-from lexbrowser_eval.online_mind2web.cli import resolve_policy_metadata
+from lexbrowser_eval.online_mind2web.cli import build_rollout_command, resolve_policy_metadata
 
 
 def test_resolve_policy_metadata_records_checkpoint(tmp_path):
@@ -39,3 +40,15 @@ def test_resolve_policy_metadata_rejects_sidecar_mismatch(tmp_path):
                 policy_sha256="b" * 64,
             )
         )
+
+
+def test_build_rollout_command_records_requested_concurrency():
+    command = build_rollout_command(
+        pathlib.Path("/benchmark"),
+        pathlib.Path("/benchmark/config.yaml"),
+        "local",
+        "20260718_230000",
+        rollout_concurrency=1,
+    )
+
+    assert command[command.index("--concurrency") + 1] == "1"
