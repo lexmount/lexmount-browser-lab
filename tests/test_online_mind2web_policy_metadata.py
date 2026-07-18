@@ -3,7 +3,11 @@ import pathlib
 
 import pytest
 
-from lexbrowser_eval.online_mind2web.cli import build_rollout_command, resolve_policy_metadata
+from lexbrowser_eval.online_mind2web.cli import (
+    build_rollout_command,
+    resolve_policy_metadata,
+    write_config,
+)
 
 
 def test_resolve_policy_metadata_records_checkpoint(tmp_path):
@@ -52,3 +56,16 @@ def test_build_rollout_command_records_requested_concurrency():
     )
 
     assert command[command.index("--concurrency") + 1] == "1"
+
+
+def test_write_config_records_explicit_policy_temperature(tmp_path):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    config = tmp_path / "config.yaml"
+
+    write_config(config, checkout, policy_temperature=0.0)
+
+    assert "temperature: 0.0" in config.read_text(encoding="utf-8")
+    assert config.read_text(encoding="utf-8") == (checkout / "config.yaml").read_text(
+        encoding="utf-8"
+    )

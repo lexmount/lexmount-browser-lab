@@ -93,6 +93,7 @@ models:
     model_id: $QWEN_MODEL_ID
     api_key: $QWEN_API_KEY
     base_url: $QWEN_BASE_URL
+    temperature: __POLICY_TEMPERATURE__
     frequency_penalty: null
     dont_force_structured_output: false
     add_schema_to_system_prompt: true
@@ -523,10 +524,11 @@ def write_dataset_for_bubench(
     return path
 
 
-def write_config(path: pathlib.Path, checkout: pathlib.Path) -> None:
+def write_config(path: pathlib.Path, checkout: pathlib.Path, policy_temperature: float) -> None:
+    text = CONFIG_TEMPLATE.replace("__POLICY_TEMPERATURE__", str(policy_temperature))
     path.parent.mkdir(parents=True, exist_ok=True)
     for target in (path, checkout / "config.yaml"):
-        target.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        target.write_text(text, encoding="utf-8")
         target.chmod(0o600)
 
 
@@ -1285,6 +1287,7 @@ def write_report(
     run_dir: pathlib.Path,
     policy_model: Mapping[str, str | None],
     rollout_concurrency: int = ROLLOUT_CONCURRENCY,
+    policy_temperature: float = 0.0,
     task_count: int = TASK_COUNT,
 ) -> None:
     if not rollout.get("complete") or not judge.get("complete"):
@@ -1311,6 +1314,7 @@ def write_report(
 - Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
 - Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
 - Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
+- Policy temperature: `{policy_temperature}`
 - Browser backend: `{label}`
 - Bubench revision: `{BUBENCH_COMMIT}`
 - OSU evaluator revision: `{OSU_COMMIT}`
@@ -1344,6 +1348,7 @@ def write_comparison_report(
     states: Mapping[str, tuple[pathlib.Path, dict[str, Any], dict[str, Any] | None]],
     policy_model: Mapping[str, str | None],
     rollout_concurrency: int = ROLLOUT_CONCURRENCY,
+    policy_temperature: float = 0.0,
     task_count: int = TASK_COUNT,
 ) -> None:
     if set(states) != set(BACKENDS):
@@ -1376,6 +1381,7 @@ def write_comparison_report(
 - Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
 - Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
 - Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
+- Policy temperature: `{policy_temperature}`
 - Dataset: `osunlp/Online-Mind2Web@{HF_REVISION}`，{task_count} tasks（固定前 {task_count} 条；全量300条先完成哈希与结构校验）
 - Schema: `{SCHEMA_VERSION}`
 - Rollout: qwen3-8B，concurrency={rollout_concurrency}，两后端同配置
@@ -1421,6 +1427,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--policy-label", default="Qwen3-8B")
     parser.add_argument("--policy-artifact", type=pathlib.Path)
     parser.add_argument("--policy-sha256", default="")
+    parser.add_argument("--policy-temperature", type=float, default=0.0)
     parser.add_argument("--rollout-concurrency", type=int, default=ROLLOUT_CONCURRENCY)
     parser.add_argument(
         "--task-count",
@@ -1438,6 +1445,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"--task-count must be in 1..{TASK_COUNT}")
     if args.rollout_concurrency < 1:
         parser.error("--rollout-concurrency must be positive")
+    if not 0 <= args.policy_temperature <= 2:
+        parser.error("--policy-temperature must be in 0..2")
 
     policy_model = resolve_policy_metadata(args)
     env_values = validate_environment(os.environ)
@@ -1490,7 +1499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_tag=args.backend,
         )
     task_file = write_dataset_for_bubench(checkout, tasks)
-    write_config(config, checkout)
+    write_config(config, checkout, args.policy_temperature)
     manifest = {
         "created_at": utc_now(),
         "campaign": args.campaign,
@@ -1498,6 +1507,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "osu_commit": OSU_COMMIT,
         "dataset": dataset_manifest,
         "policy_model": policy_model,
+        "policy_generation": {"temperature": args.policy_temperature},
         "recording_adapter": adapter,
         "osu_integrity": official_osu_integrity,
         "judge_source_patch": judge_source_patch,
@@ -1599,6 +1609,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_dir,
                 policy_model,
                 args.rollout_concurrency,
+                args.policy_temperature,
                 len(tasks),
             )
         write_comparison_report(
@@ -1607,6 +1618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             states,
             policy_model,
             args.rollout_concurrency,
+            args.policy_temperature,
             len(tasks),
         )
     return 0
