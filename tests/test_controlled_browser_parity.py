@@ -44,6 +44,8 @@ def test_task_manifest_has_exact_rubric_and_public_base_url(tmp_path: Path) -> N
     rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
     assert [row["task_id"] for row in rows] == ["catalog-001", "catalog-002"]
     assert {row["start_url"] for row in rows} == {"https://fixture.example/"}
+    assert "Do not navigate away or search the web" in rows[0]["question"]
+    assert "First observe the current page" in rows[0]["question"]
     assert rows[0]["expected_answer"] == {
         "must_include": ["$17.13", "15 units"],
         "minimum_act_events": 2,

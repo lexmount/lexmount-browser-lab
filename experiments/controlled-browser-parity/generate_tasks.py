@@ -24,7 +24,9 @@ def task_for(index: int, base_url: str) -> dict[str, object]:
     return {
         "task_id": f"catalog-{index:03d}",
         "question": (
-            f"Use the Catalog Lookup page to search product SKU {sku}. "
+            "Use the Catalog Lookup page that is already open in the browser. "
+            "Do not navigate away or search the web. First observe the current page, "
+            f"then fill Product SKU with {sku} and click Search catalog. "
             "Report its exact listed price and current stock count."
         ),
         "start_url": base_url,
