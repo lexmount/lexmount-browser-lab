@@ -165,3 +165,27 @@ def test_audit_marks_manifest_control_differences(tmp_path: Path) -> None:
 
     assert audit["comparison_contract"]["matches"] is False
     assert set(audit["comparison_contract"]["differences"]) == {"generation"}
+
+
+def test_audit_allows_expected_local_automation_difference(tmp_path: Path) -> None:
+    module = load_script_module()
+    lexmount_dir = tmp_path / "lexmount"
+    local_dir = tmp_path / "local"
+    write_run(lexmount_dir, backend="lexmount", rows=[record("task-1", verdict="yes")])
+    write_run(local_dir, backend="local", rows=[record("task-1", verdict="yes")])
+    lexmount_manifest = json.loads((lexmount_dir / "run_manifest.json").read_text())
+    local_manifest = json.loads((local_dir / "run_manifest.json").read_text())
+    lexmount_manifest["browser"]["local_disable_automation_controlled"] = False
+    local_manifest["browser"]["local_disable_automation_controlled"] = True
+    (lexmount_dir / "run_manifest.json").write_text(json.dumps(lexmount_manifest))
+    (local_dir / "run_manifest.json").write_text(json.dumps(local_manifest))
+
+    audit = module.audit_pair(lexmount_dir, local_dir)
+
+    assert audit["comparison_contract"] == {
+        "matches": True,
+        "differences": {},
+        "intentional_backend_differences": {
+            "browser.local_disable_automation_controlled": {"lexmount": False, "local": True}
+        },
+    }

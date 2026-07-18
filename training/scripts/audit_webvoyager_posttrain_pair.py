@@ -46,6 +46,9 @@ RESOURCE_METRICS = (
     "vllm_running_nonzero_fraction",
     "vllm_waiting_nonzero_fraction",
 )
+INTENTIONAL_BACKEND_BROWSER_DIFFERENCES = (
+    "local_disable_automation_controlled",
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -198,12 +201,29 @@ def resource_summary(run_dir: Path) -> dict[str, Any] | None:
 def comparison_contract(
     lexmount_manifest: Mapping[str, Any], local_manifest: Mapping[str, Any]
 ) -> dict[str, Any]:
-    differences = {
-        key: {"lexmount": lexmount_manifest.get(key), "local": local_manifest.get(key)}
-        for key in CONTRACT_KEYS
-        if lexmount_manifest.get(key) != local_manifest.get(key)
+    normalized_lexmount = dict(lexmount_manifest)
+    normalized_local = dict(local_manifest)
+    lexmount_browser = dict(lexmount_manifest.get("browser") or {})
+    local_browser = dict(local_manifest.get("browser") or {})
+    intentional_backend_differences = {
+        f"browser.{key}": {"lexmount": lexmount_browser.get(key), "local": local_browser.get(key)}
+        for key in INTENTIONAL_BACKEND_BROWSER_DIFFERENCES
+        if lexmount_browser.get(key) != local_browser.get(key)
     }
-    return {"matches": not differences, "differences": differences}
+    for key in INTENTIONAL_BACKEND_BROWSER_DIFFERENCES:
+        lexmount_browser.pop(key, None)
+        local_browser.pop(key, None)
+    normalized_lexmount["browser"] = lexmount_browser
+    normalized_local["browser"] = local_browser
+    differences = {
+        key: {"lexmount": normalized_lexmount.get(key), "local": normalized_local.get(key)}
+        for key in CONTRACT_KEYS
+        if normalized_lexmount.get(key) != normalized_local.get(key)
+    }
+    result = {"matches": not differences, "differences": differences}
+    if intentional_backend_differences:
+        result["intentional_backend_differences"] = intentional_backend_differences
+    return result
 
 
 def audit_pair(lexmount_dir: Path, local_dir: Path) -> dict[str, Any]:
