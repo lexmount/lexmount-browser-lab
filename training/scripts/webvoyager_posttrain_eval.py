@@ -711,6 +711,7 @@ async def _judge_task(
     *,
     model: str,
     temperature: float | None,
+    timeout_s: float,
     task: Task,
     transcript: str,
     final_answer: str,
@@ -738,8 +739,9 @@ async def _judge_task(
         }
         if temperature is not None:
             request["temperature"] = temperature
-        response = await client.chat.completions.create(
-            **request
+        response = await asyncio.wait_for(
+            client.chat.completions.create(**request),
+            timeout=timeout_s,
         )
         raw = str(response.choices[0].message.content or "").strip()
         payload = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE))
@@ -976,6 +978,7 @@ async def evaluate_task(
                 judge_client,
                 model=args.judge_model,
                 temperature=args.judge_temperature,
+                timeout_s=args.judge_timeout,
                 task=task,
                 transcript=transcript,
                 final_answer=final_answer,
@@ -1228,6 +1231,8 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         tasks = tasks[: args.limit]
     if not tasks:
         raise RuntimeError("selected task manifest is empty")
+    if args.judge_timeout <= 0:
+        raise ValueError("--judge-timeout must be positive")
     if args.model_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", args.model_sha256):
         raise ValueError("--model-sha256 must be a 64-character hexadecimal SHA-256")
     model_artifact = args.model_artifact.resolve() if args.model_artifact else None
@@ -1347,6 +1352,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "mode": args.judge,
             "model": args.judge_model if judge_client else None,
             "temperature": args.judge_temperature if judge_client else None,
+            "timeout_seconds": args.judge_timeout if judge_client else None,
         },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
@@ -1577,6 +1583,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--judge-temperature",
         type=float,
         help="optional judge sampling temperature; omit to use the judge model default",
+    )
+    run.add_argument(
+        "--judge-timeout",
+        type=float,
+        default=60.0,
+        help="maximum seconds to wait for one external judge response",
     )
     run.add_argument("--judge-base-url")
     run.add_argument("--judge-api-key")
