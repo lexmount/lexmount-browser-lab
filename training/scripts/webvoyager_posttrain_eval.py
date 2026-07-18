@@ -1134,6 +1134,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         local_chrome_headless=not args.local_chrome_headed,
         local_proxy_server=args.local_proxy_server,
         local_proxy_bypass=args.local_proxy_bypass,
+        network_change_retries=args.network_change_retries,
         max_concurrent_sessions=1,
         session_create_timeout_s=args.session_create_timeout,
         stagehand_ready_timeout_s=30.0,
@@ -1180,6 +1181,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "episode_timeout_seconds": args.episode_timeout,
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
+            "network_change_retries": args.network_change_retries,
             "lexmount_official_proxy": args.lexmount_official_proxy,
             "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
@@ -1301,6 +1303,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         local_chrome_headless=not args.local_chrome_headed,
         local_proxy_server=args.local_proxy_server,
         local_proxy_bypass=args.local_proxy_bypass,
+        network_change_retries=args.network_change_retries,
         max_concurrent_sessions=args.concurrency,
         session_create_timeout_s=args.session_create_timeout,
         stagehand_ready_timeout_s=30.0,
@@ -1334,6 +1337,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "per_tool_timeout_seconds": args.per_tool_timeout,
             "local_chrome_headless": not args.local_chrome_headed,
             "local_proxy_configured": bool(args.local_proxy_server),
+            "network_change_retries": args.network_change_retries,
             "lexmount_official_proxy": args.lexmount_official_proxy,
             "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
@@ -1423,6 +1427,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--local-chrome-headed", action="store_true")
     run.add_argument("--local-proxy-server")
     run.add_argument("--local-proxy-bypass")
+    run.add_argument(
+        "--network-change-retries",
+        type=int,
+        default=1,
+        help="extra in-session retries after CDP reports ERR_NETWORK_CHANGED",
+    )
     run.add_argument("--lexmount-official-proxy", action="store_true")
     run.add_argument(
         "--lexmount-external-proxy-from-env",
@@ -1458,6 +1468,12 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--local-chrome-headed", action="store_true")
     probe.add_argument("--local-proxy-server")
     probe.add_argument("--local-proxy-bypass")
+    probe.add_argument(
+        "--network-change-retries",
+        type=int,
+        default=1,
+        help="extra in-session retries after CDP reports ERR_NETWORK_CHANGED",
+    )
     probe.add_argument("--lexmount-official-proxy", action="store_true")
     probe.add_argument(
         "--lexmount-external-proxy-from-env",

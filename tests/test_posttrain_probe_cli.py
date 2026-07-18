@@ -44,6 +44,26 @@ def test_probe_parser_accepts_explicit_concurrency() -> None:
     assert args.concurrency == 64
 
 
+def test_probe_parser_accepts_network_change_retries() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "probe",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "local",
+            "--network-change-retries",
+            "2",
+        ]
+    )
+
+    assert args.network_change_retries == 2
+
+
 def test_parser_accepts_explicit_browser_context_overrides() -> None:
     module = load_script_module()
 

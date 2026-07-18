@@ -56,6 +56,7 @@ TOOL_RESULT_CHAR_LIMIT = 1024
 TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 SETUP_NAVIGATION_MAX_ATTEMPTS = 3
+TRANSIENT_NETWORK_CHANGE_ERROR = "ERR_NETWORK_CHANGED"
 
 TASK_JUDGE_PROMPT = """You are evaluating whether a browser automation agent successfully completed a web task.
 
@@ -355,6 +356,7 @@ class LexmountCDPSession:
         self.call("Runtime.enable", session_id=self._session_id)
         self._observed_controls: list[dict[str, str]] = []
         self._task_query = ""
+        self._navigation_network_errors: list[str] = []
 
     def set_task_query(self, query: str) -> None:
         """Expose the current user request only for an explicit policy placeholder.
@@ -433,6 +435,28 @@ class LexmountCDPSession:
         except Exception:
             pass
 
+    def _record_cdp_event(self, response: dict[str, Any]) -> None:
+        """Keep a small, secret-free record of failures for the active navigation."""
+
+        if response.get("method") != "Network.loadingFailed":
+            return
+        session_id = response.get("sessionId")
+        if session_id and session_id != self._session_id:
+            return
+        error_text = str((response.get("params") or {}).get("errorText") or "").strip()
+        if not error_text:
+            return
+        self._navigation_network_errors.append(error_text)
+        del self._navigation_network_errors[:-8]
+
+    def has_transient_network_change(self) -> bool:
+        return any(TRANSIENT_NETWORK_CHANGE_ERROR in error for error in self._navigation_network_errors)
+
+    def _network_error_suffix(self) -> str:
+        if not self._navigation_network_errors:
+            return ""
+        return " cdp_network_errors=" + ",".join(self._navigation_network_errors[-3:])
+
     def call(
         self, method: str, params: dict[str, Any] | None = None, *, session_id: str | None = None
     ) -> dict[str, Any]:
@@ -444,13 +468,19 @@ class LexmountCDPSession:
         while True:
             response = json.loads(self._ws.recv())
             if response.get("id") != self._next_id:
+                self._record_cdp_event(response)
                 continue
             if "error" in response:
                 raise RuntimeError(f"CDP {method} failed: {response['error']}")
             return response.get("result", {})
 
     def navigate(self, url: str) -> None:
-        self.call("Page.navigate", {"url": url}, session_id=self._session_id)
+        self._navigation_network_errors.clear()
+        result = self.call("Page.navigate", {"url": url}, session_id=self._session_id)
+        error_text = str(result.get("errorText") or "").strip()
+        if error_text:
+            self._navigation_network_errors.append(error_text)
+            raise RuntimeError(f"infrastructure_navigation_cdp_error: {error_text}")
 
     def wait_for_usable_document(self, timeout_s: float) -> None:
         """Confirm that a setup navigation yielded a real, usable document.
@@ -481,7 +511,7 @@ class LexmountCDPSession:
                 reason = re.search(r"\bERR_[A-Z_]+\b", last_text)
                 raise RuntimeError(
                     "infrastructure_browser_error_page: "
-                    f"{reason.group(0) if reason else last_url}"
+                    f"{reason.group(0) if reason else last_url}{self._network_error_suffix()}"
                 )
             if last_url and last_url != "about:blank" and len(last_text) >= 20:
                 if _is_anti_bot_challenge(last_url, last_text):
@@ -947,6 +977,7 @@ class LexmountDOMMode:
         local_chrome_headless: bool,
         local_proxy_server: str | None,
         local_proxy_bypass: str | None,
+        network_change_retries: int,
         max_concurrent_sessions: int,
         session_create_timeout_s: float,
         stagehand_ready_timeout_s: float,
@@ -962,6 +993,8 @@ class LexmountDOMMode:
             raise ValueError(f"Unsupported browser_backend={browser_backend!r}")
         if browser_backend == "local" and dom_backend != "cdp":
             raise ValueError("Local Chrome supports only the deterministic dom_backend='cdp'")
+        if network_change_retries < 0:
+            raise ValueError("network_change_retries must be non-negative")
         self.browser_backend = browser_backend
         self.lexmount: Lexmount | None = None
         if browser_backend == "lexmount":
@@ -989,6 +1022,7 @@ class LexmountDOMMode:
         self.local_chrome_headless = local_chrome_headless
         self.local_proxy_server = local_proxy_server
         self.local_proxy_bypass = local_proxy_bypass
+        self.network_change_retries = network_change_retries
         self.context_overrides = dict(context_overrides or {})
         if self.context_overrides and dom_backend != "cdp":
             raise ValueError("Browser context overrides require dom_backend='cdp'")
@@ -1346,6 +1380,64 @@ class LexmountDOMMode:
             await self.stagehand_client.close()
             self.stagehand_client = None
 
+    async def _navigate_cdp_with_network_change_recovery(
+        self,
+        session: LexmountCDPSession,
+        url: str,
+        *,
+        timeout_s: float,
+    ) -> int:
+        """Navigate once, retrying only a transient Chrome network reset in place.
+
+        A fresh local Chrome profile can observe a host-wide network interface
+        change while its first real-site request is in flight. Recreating the
+        profile immediately repeats that startup race. Reusing the existing CDP
+        session is safe for this narrow transport error and preserves the
+        policy-facing DOM/action contract for both backends.
+        """
+
+        deadline = time.monotonic() + timeout_s
+        last_error: Exception | None = None
+        for attempt in range(self.network_change_retries + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.1:
+                break
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(session.navigate, url), timeout=remaining
+                )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.1:
+                    raise TimeoutError("CDP navigation exhausted its time budget")
+                await asyncio.wait_for(
+                    asyncio.to_thread(session.wait_for_usable_document, remaining),
+                    timeout=remaining,
+                )
+                return attempt
+            except Exception as exc:
+                last_error = exc
+                transient_change = (
+                    TRANSIENT_NETWORK_CHANGE_ERROR in str(exc)
+                    or session.has_transient_network_change()
+                )
+                if not transient_change or attempt >= self.network_change_retries:
+                    raise
+                delay = min(0.5 * (attempt + 1), max(0.0, deadline - time.monotonic()))
+                if delay <= 0.0:
+                    break
+                self.logger.warning(
+                    "Retrying CDP navigation after %s (%s/%s, url=%s): %s",
+                    TRANSIENT_NETWORK_CHANGE_ERROR,
+                    attempt + 1,
+                    self.network_change_retries,
+                    url,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise TimeoutError("CDP navigation exhausted its time budget")
+
     async def navigate(
         self,
         url: str,
@@ -1364,20 +1456,14 @@ class LexmountDOMMode:
         started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
-                await asyncio.wait_for(
-                    asyncio.to_thread(session.navigate, url), timeout=navigation_timeout_s
+                network_change_retries = await self._navigate_cdp_with_network_change_recovery(
+                    session, url, timeout_s=navigation_timeout_s
                 )
-                # CDP ``Page.navigate`` acknowledges before the target page
-                # is readable.  Do not hand the policy an empty interstitial
-                # and let it hallucinate a final answer: wait for rendered DOM
-                # evidence within this tool's bounded budget.
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        session.wait_for_usable_document,
-                        max(0.1, navigation_timeout_s - 0.5),
-                    ),
-                    timeout=navigation_timeout_s,
-                )
+                if network_change_retries:
+                    guard.timings["browser_network_change_retries"] = (
+                        guard.timings.get("browser_network_change_retries", 0.0)
+                        + float(network_change_retries)
+                    )
                 return f"Navigated to {url}"
             await asyncio.wait_for(
                 session.navigate(
@@ -1579,20 +1665,13 @@ class LexBrowserEnv(vf.StatefulToolEnv):
                     navigation_started_at = time.monotonic()
                     try:
                         session = state["browser_session"]
-                        attempt_deadline = time.monotonic() + self._mode_impl.setup_navigation_timeout_s
                         if isinstance(session, LexmountCDPSession):
-                            await asyncio.wait_for(
-                                asyncio.to_thread(session.navigate, start_url),
-                                timeout=self._mode_impl.setup_navigation_timeout_s,
+                            network_change_retries = await self._mode_impl._navigate_cdp_with_network_change_recovery(
+                                session,
+                                start_url,
+                                timeout_s=self._mode_impl.setup_navigation_timeout_s,
                             )
-                            remaining = max(0.1, attempt_deadline - time.monotonic())
-                            await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    session.wait_for_usable_document,
-                                    remaining,
-                                ),
-                                timeout=remaining + 1.0,
-                            )
+                            state["setup_navigation_network_change_retries"] = network_change_retries
                         else:
                             await asyncio.wait_for(
                                 session.navigate(
@@ -1729,6 +1808,7 @@ def load_environment(
     local_chrome_headless: bool = True,
     local_proxy_server: str | None = None,
     local_proxy_bypass: str | None = None,
+    network_change_retries: int = 1,
     max_concurrent_sessions: int = 20,
     session_create_timeout_s: float = 60.0,
     stagehand_ready_timeout_s: float = 60.0,
@@ -1797,6 +1877,7 @@ def load_environment(
         local_chrome_headless=local_chrome_headless,
         local_proxy_server=local_proxy_server,
         local_proxy_bypass=local_proxy_bypass,
+        network_change_retries=network_change_retries,
         max_concurrent_sessions=max_concurrent_sessions,
         session_create_timeout_s=session_create_timeout_s,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,
