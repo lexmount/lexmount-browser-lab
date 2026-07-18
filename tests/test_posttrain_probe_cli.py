@@ -250,6 +250,74 @@ def test_run_parser_accepts_bounded_judge_timeout() -> None:
     assert args.judge_timeout == 45.0
 
 
+def test_run_parser_accepts_exact_judge() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "run",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "local",
+            "--model",
+            "qwen3_8B",
+            "--judge",
+            "exact",
+        ]
+    )
+
+    assert args.judge == "exact"
+
+
+def test_exact_judge_requires_all_task_terms() -> None:
+    module = load_script_module()
+    task = module.Task(
+        "catalog-001",
+        "lookup",
+        "https://example.test",
+        "catalog",
+        expected_answer={"must_include": ["$17.13", "15 units"]},
+    )
+
+    passed = module._exact_judge(
+        task,
+        "The price is $17.13 and stock is 15 units.",
+        [{"parameters": {"operation": "act"}}],
+    )
+    failed = module._exact_judge(
+        task,
+        "The price is $17.13.",
+        [{"parameters": {"operation": "act"}}],
+    )
+
+    assert passed["verdict"] == "yes"
+    assert failed["verdict"] == "no"
+    assert "15 units" in failed["reason"]
+
+
+def test_exact_judge_can_require_browser_actions() -> None:
+    module = load_script_module()
+    task = module.Task(
+        "catalog-001",
+        "lookup",
+        "https://example.test",
+        "catalog",
+        expected_answer={"must_include": ["$17.13"], "minimum_act_events": 2},
+    )
+
+    result = module._exact_judge(
+        task,
+        "$17.13",
+        [{"parameters": {"operation": "act"}}],
+    )
+
+    assert result["verdict"] == "no"
+    assert "required at least 2" in result["reason"]
+
+
 def test_parser_accepts_explicit_lexmount_external_proxy() -> None:
     module = load_script_module()
 

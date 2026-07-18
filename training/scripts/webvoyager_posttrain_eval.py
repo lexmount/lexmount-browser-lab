@@ -131,15 +131,19 @@ class Task:
     start_url: str
     website: str
     split: str = "unspecified"
+    expected_answer: dict[str, Any] | None = None
 
-    def as_dict(self) -> dict[str, str]:
-        return {
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "task_id": self.task_id,
             "question": self.question,
             "start_url": self.start_url,
             "website": self.website,
             "split": self.split,
         }
+        if self.expected_answer is not None:
+            payload["expected_answer"] = self.expected_answer
+        return payload
 
 
 def utc_now() -> str:
@@ -209,9 +213,13 @@ def task_from_mapping(row: Mapping[str, Any], *, split: str = "unspecified") -> 
     start_url = str(row.get("start_url") or row.get("web") or "").strip()
     website = str(row.get("website") or row.get("web_name") or "unknown").strip() or "unknown"
     resolved_split = str(row.get("split") or split).strip() or split
+    raw_expected_answer = row.get("expected_answer")
+    if raw_expected_answer is not None and not isinstance(raw_expected_answer, Mapping):
+        raise ValueError("task expected_answer must be an object when provided")
+    expected_answer = dict(raw_expected_answer) if isinstance(raw_expected_answer, Mapping) else None
     if not task_id or not question or not start_url:
         raise ValueError(f"task record is missing task_id/question/start_url: {dict(row)!r}")
-    return Task(task_id, question, start_url, website, resolved_split)
+    return Task(task_id, question, start_url, website, resolved_split, expected_answer)
 
 
 def load_jsonl_tasks(path: Path) -> list[Task]:
@@ -764,6 +772,64 @@ async def _judge_task(
         }
 
 
+def _normalize_exact_answer(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _exact_judge(
+    task: Task, final_answer: str, events: Sequence[Mapping[str, Any]] = ()
+) -> dict[str, Any]:
+    """Score a controlled task from its deterministic must-include rubric."""
+
+    rubric = task.expected_answer
+    raw_terms = rubric.get("must_include") if isinstance(rubric, Mapping) else None
+    if not isinstance(raw_terms, list) or not raw_terms or not all(
+        isinstance(term, str) and term.strip() for term in raw_terms
+    ):
+        return {
+            "status": "error",
+            "reward": None,
+            "verdict": None,
+            "reason": "exact judge requires task.expected_answer.must_include as a non-empty string list",
+            "latency_seconds": 0.0,
+        }
+
+    minimum_act_events = rubric.get("minimum_act_events", 0)
+    if not isinstance(minimum_act_events, int) or minimum_act_events < 0:
+        return {
+            "status": "error",
+            "reward": None,
+            "verdict": None,
+            "reason": "exact judge minimum_act_events must be a non-negative integer",
+            "latency_seconds": 0.0,
+        }
+    act_events = sum(
+        1
+        for event in events
+        if isinstance(event.get("parameters"), Mapping)
+        and event["parameters"].get("operation") == "act"
+    )
+    if act_events < minimum_act_events:
+        return {
+            "status": "ok",
+            "reward": 0.0,
+            "verdict": "no",
+            "reason": f"required at least {minimum_act_events} browser actions; observed {act_events}",
+            "latency_seconds": 0.0,
+        }
+
+    normalized_answer = _normalize_exact_answer(final_answer)
+    missing = [term for term in raw_terms if _normalize_exact_answer(term) not in normalized_answer]
+    verdict = "no" if missing else "yes"
+    return {
+        "status": "ok",
+        "reward": 1.0 if verdict == "yes" else 0.0,
+        "verdict": verdict,
+        "reason": "all required answer terms present" if not missing else f"missing required terms: {missing}",
+        "latency_seconds": 0.0,
+    }
+
+
 async def _open_browser_state(mode: Any, task: Task, args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     last_error: BaseException | None = None
     for attempt in range(1, args.setup_attempts + 1):
@@ -969,7 +1035,9 @@ async def evaluate_task(
                 )
             ),
         }
-        if judge_client is None:
+        if args.judge == "exact":
+            judge = _exact_judge(task, final_answer, events)
+        elif judge_client is None:
             judge = {"status": "disabled", "reward": None, "verdict": None, "reason": ""}
         elif not events:
             judge = {"status": "skipped", "reward": 0.0, "verdict": "no", "reason": "no_tool_calls"}
@@ -1577,7 +1645,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--env-file", type=Path)
     run.add_argument("--policy-base-url")
     run.add_argument("--policy-api-key")
-    run.add_argument("--judge", choices=("off", "training"), default="off")
+    run.add_argument("--judge", choices=("off", "training", "exact"), default="off")
     run.add_argument("--judge-model", default="")
     run.add_argument(
         "--judge-temperature",

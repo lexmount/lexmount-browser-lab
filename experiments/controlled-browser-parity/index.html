@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Catalog Lookup</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem auto; max-width: 44rem; color: #172033; }
+      form { display: flex; gap: 0.75rem; margin: 1.25rem 0; }
+      input { flex: 1; min-width: 0; padding: 0.65rem; }
+      button { padding: 0.65rem 1rem; }
+      #result { border-top: 1px solid #c8d0df; padding-top: 1rem; min-height: 6rem; }
+      dt { font-weight: 700; margin-top: 0.6rem; }
+      dd { margin-left: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Catalog Lookup</h1>
+      <p>Search a product SKU to view its current listed price and stock count.</p>
+      <form id="catalog-form">
+        <label for="sku">Product SKU</label>
+        <input id="sku" name="sku" aria-label="Product SKU" placeholder="Enter SKU, for example PRD-0001" autocomplete="off">
+        <button type="submit">Search catalog</button>
+      </form>
+      <section id="result" aria-live="polite">Enter a product SKU and select Search catalog.</section>
+    </main>
+    <script>
+      function recordFor(index) {
+        const dollars = 10 + ((index * 7) % 89);
+        const cents = (index * 13) % 100;
+        const stock = 4 + ((index * 11) % 53);
+        return {
+          sku: `PRD-${String(index).padStart(4, "0")}`,
+          price: `$${dollars}.${String(cents).padStart(2, "0")}`,
+          stock: `${stock} units`,
+        };
+      }
+
+      const form = document.querySelector("#catalog-form");
+      const input = document.querySelector("#sku");
+      const result = document.querySelector("#result");
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const match = input.value.trim().toUpperCase().match(/^PRD-(\d{4})$/);
+        const index = match ? Number(match[1]) : 0;
+        if (index < 1 || index > 50) {
+          result.textContent = "No catalog record was found for that SKU.";
+          return;
+        }
+        const record = recordFor(index);
+        result.innerHTML = `
+          <h2>Catalog record</h2>
+          <dl>
+            <dt>SKU</dt><dd>${record.sku}</dd>
+            <dt>Listed price</dt><dd>${record.price}</dd>
+            <dt>Current stock</dt><dd>${record.stock}</dd>
+          </dl>`;
+      });
+    </script>
+  </body>
+</html>
