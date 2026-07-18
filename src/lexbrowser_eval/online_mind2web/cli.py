@@ -202,6 +202,41 @@ def validate_environment(environ: Mapping[str, str]) -> dict[str, str]:
     return values
 
 
+def resolve_policy_metadata(args: argparse.Namespace) -> dict[str, str | None]:
+    """Record the evaluated checkpoint separately from its served API alias."""
+    label = args.policy_label.strip()
+    if not label:
+        raise ValueError("--policy-label must not be empty")
+
+    artifact_dir: pathlib.Path | None = None
+    if args.policy_artifact is not None:
+        artifact_dir = args.policy_artifact.expanduser().resolve()
+        if not artifact_dir.is_dir():
+            raise FileNotFoundError(f"policy artifact directory does not exist: {artifact_dir}")
+
+    safetensors_sha256 = args.policy_sha256.strip().lower()
+    if safetensors_sha256 and not re.fullmatch(r"[0-9a-f]{64}", safetensors_sha256):
+        raise ValueError("--policy-sha256 must be a 64-character hexadecimal SHA-256")
+    if artifact_dir is not None and safetensors_sha256:
+        sidecar = artifact_dir / "model.safetensors.sha256"
+        if sidecar.is_file():
+            fields = sidecar.read_text(encoding="utf-8").strip().split()
+            if not fields:
+                raise ValueError(f"empty SHA-256 sidecar: {sidecar}")
+            recorded = fields[0].lower()
+            if recorded != safetensors_sha256:
+                raise ValueError(
+                    "--policy-sha256 does not match "
+                    f"{sidecar}: expected {recorded}, got {safetensors_sha256}"
+                )
+
+    return {
+        "label": label,
+        "artifact_dir": str(artifact_dir) if artifact_dir is not None else None,
+        "safetensors_sha256": safetensors_sha256 or None,
+    }
+
+
 def _request_bytes(url: str, headers: Mapping[str, str] | None = None) -> bytes:
     request = urllib.request.Request(url, headers=dict(headers or {}))
     last_error: BaseException | None = None
@@ -1244,12 +1279,13 @@ def write_report(
     rollout: dict[str, Any],
     judge: dict[str, Any],
     run_dir: pathlib.Path,
+    policy_model: Mapping[str, str | None],
     task_count: int = TASK_COUNT,
 ) -> None:
     if not rollout.get("complete") or not judge.get("complete"):
         raise RuntimeError("refusing to publish an incomplete formal report")
     label = "Lexmount" if backend == "lexmount" else "Chrome-Local (5090)"
-    text = f"""# Online-Mind2Web — qwen3-8B + {label}
+    text = f"""# Online-Mind2Web — {policy_model["label"]} + {label}
 
 ## 结果
 
@@ -1266,7 +1302,10 @@ def write_report(
 ## 固定配置与可复现性
 
 - Campaign: `{campaign}`
-- Agent model: `{MODEL_ID}`（Qwen3-8B）
+- Policy checkpoint: `{policy_model["label"]}`
+- Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
+- Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
+- Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
 - Browser backend: `{label}`
 - Bubench revision: `{BUBENCH_COMMIT}`
 - OSU evaluator revision: `{OSU_COMMIT}`
@@ -1298,6 +1337,7 @@ def write_comparison_report(
     path: pathlib.Path,
     campaign: str,
     states: Mapping[str, tuple[pathlib.Path, dict[str, Any], dict[str, Any] | None]],
+    policy_model: Mapping[str, str | None],
     task_count: int = TASK_COUNT,
 ) -> None:
     if set(states) != set(BACKENDS):
@@ -1312,7 +1352,7 @@ def write_comparison_report(
     delta = local["success_rate"] - lexmount["success_rate"]
     text = f"""# Online-Mind2Web：Lexmount Browser 与 Local Chrome 对比
 
-本轮使用同一 Qwen3-8B、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency=10。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
+本轮使用同一 `{policy_model["label"]}`、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency=10。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
 
 ## 最终质量指标
 
@@ -1326,6 +1366,10 @@ def write_comparison_report(
 ## 评测口径
 
 - Campaign: `{campaign}`
+- Policy checkpoint: `{policy_model["label"]}`
+- Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
+- Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
+- Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
 - Dataset: `osunlp/Online-Mind2Web@{HF_REVISION}`，{task_count} tasks（固定前 {task_count} 条；全量300条先完成哈希与结构校验）
 - Schema: `{SCHEMA_VERSION}`
 - Rollout: qwen3-8B，concurrency={ROLLOUT_CONCURRENCY}，两后端同配置
@@ -1368,6 +1412,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--max-rollout-passes", type=int, default=3)
+    parser.add_argument("--policy-label", default="Qwen3-8B")
+    parser.add_argument("--policy-artifact", type=pathlib.Path)
+    parser.add_argument("--policy-sha256", default="")
     parser.add_argument(
         "--task-count",
         type=int,
@@ -1383,7 +1430,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not 1 <= args.task_count <= TASK_COUNT:
         parser.error(f"--task-count must be in 1..{TASK_COUNT}")
 
+    policy_model = resolve_policy_metadata(args)
     env_values = validate_environment(os.environ)
+    policy_model["endpoint_model_id"] = env_values["QWEN_MODEL_ID"]
     runtime = args.runtime_root.resolve()
     root = runtime / ".online_mind2web_v2"
     checkout = root / f"browseruse-agent-bench-{BUBENCH_COMMIT[:12]}"
@@ -1439,6 +1488,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "bubench_commit": BUBENCH_COMMIT,
         "osu_commit": OSU_COMMIT,
         "dataset": dataset_manifest,
+        "policy_model": policy_model,
         "recording_adapter": adapter,
         "osu_integrity": official_osu_integrity,
         "judge_source_patch": judge_source_patch,
@@ -1532,12 +1582,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rollout,
                 judge,
                 run_dir,
+                policy_model,
                 len(tasks),
             )
         write_comparison_report(
             reports_dir / "README.md",
             args.campaign,
             states,
+            policy_model,
             len(tasks),
         )
     return 0
