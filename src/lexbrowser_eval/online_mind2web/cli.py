@@ -93,6 +93,7 @@ models:
     model_id: $QWEN_MODEL_ID
     api_key: $QWEN_API_KEY
     base_url: $QWEN_BASE_URL
+    temperature: __POLICY_TEMPERATURE__
     frequency_penalty: null
     dont_force_structured_output: false
     add_schema_to_system_prompt: true
@@ -200,6 +201,41 @@ def validate_environment(environ: Mapping[str, str]) -> dict[str, str]:
     if values["QWEN_MODEL_ID"] != MODEL_ID:
         raise RuntimeError(f"QWEN_MODEL_ID must be {MODEL_ID!r}")
     return values
+
+
+def resolve_policy_metadata(args: argparse.Namespace) -> dict[str, str | None]:
+    """Record the evaluated checkpoint separately from its served API alias."""
+    label = args.policy_label.strip()
+    if not label:
+        raise ValueError("--policy-label must not be empty")
+
+    artifact_dir: pathlib.Path | None = None
+    if args.policy_artifact is not None:
+        artifact_dir = args.policy_artifact.expanduser().resolve()
+        if not artifact_dir.is_dir():
+            raise FileNotFoundError(f"policy artifact directory does not exist: {artifact_dir}")
+
+    safetensors_sha256 = args.policy_sha256.strip().lower()
+    if safetensors_sha256 and not re.fullmatch(r"[0-9a-f]{64}", safetensors_sha256):
+        raise ValueError("--policy-sha256 must be a 64-character hexadecimal SHA-256")
+    if artifact_dir is not None and safetensors_sha256:
+        sidecar = artifact_dir / "model.safetensors.sha256"
+        if sidecar.is_file():
+            fields = sidecar.read_text(encoding="utf-8").strip().split()
+            if not fields:
+                raise ValueError(f"empty SHA-256 sidecar: {sidecar}")
+            recorded = fields[0].lower()
+            if recorded != safetensors_sha256:
+                raise ValueError(
+                    "--policy-sha256 does not match "
+                    f"{sidecar}: expected {recorded}, got {safetensors_sha256}"
+                )
+
+    return {
+        "label": label,
+        "artifact_dir": str(artifact_dir) if artifact_dir is not None else None,
+        "safetensors_sha256": safetensors_sha256 or None,
+    }
 
 
 def _request_bytes(url: str, headers: Mapping[str, str] | None = None) -> bytes:
@@ -488,10 +524,11 @@ def write_dataset_for_bubench(
     return path
 
 
-def write_config(path: pathlib.Path, checkout: pathlib.Path) -> None:
+def write_config(path: pathlib.Path, checkout: pathlib.Path, policy_temperature: float) -> None:
+    text = CONFIG_TEMPLATE.replace("__POLICY_TEMPERATURE__", str(policy_temperature))
     path.parent.mkdir(parents=True, exist_ok=True)
     for target in (path, checkout / "config.yaml"):
-        target.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        target.write_text(text, encoding="utf-8")
         target.chmod(0o600)
 
 
@@ -579,7 +616,11 @@ def prepare_judge_source(
 
 
 def build_rollout_command(
-    checkout: pathlib.Path, config: pathlib.Path, backend: str, timestamp: str
+    checkout: pathlib.Path,
+    config: pathlib.Path,
+    backend: str,
+    timestamp: str,
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
 ) -> list[str]:
     if backend not in BACKENDS:
         raise ValueError(f"unknown backend: {backend}")
@@ -601,7 +642,7 @@ def build_rollout_command(
         "--mode",
         "all",
         "--concurrency",
-        str(ROLLOUT_CONCURRENCY),
+        str(rollout_concurrency),
         "--skip-completed",
         "--timestamp",
         timestamp,
@@ -952,6 +993,60 @@ def normalize_run(run_dir: pathlib.Path, tasks: list[dict[str, Any]]) -> dict[st
     }
 
 
+def archive_invalid_rollout_tasks(
+    run_dir: pathlib.Path,
+    campaign_dir: pathlib.Path,
+    backend: str,
+    attempt: int,
+    invalid: Mapping[str, str],
+) -> list[dict[str, str]]:
+    """Preserve invalid task attempts, then make them eligible for a fresh-session retry.
+
+    Bubench's ``--skip-completed`` considers any ``bubench_result.json`` a
+    completed task.  A task can still be invalid for this evaluator when its
+    browser transport died before the exact trajectory was recorded.  Archive
+    those artifacts outside the official run directory before the next pass so
+    Bubench reruns only the invalid tasks instead of silently skipping them.
+    """
+    if backend not in BACKENDS:
+        raise ValueError(f"unknown backend: {backend}")
+    if attempt < 1:
+        raise ValueError("attempt must be positive")
+
+    source_root = run_dir / "tasks"
+    archive_root = campaign_dir / backend / "rollout_attempts" / f"pass-{attempt:03d}"
+    archived: list[dict[str, str]] = []
+    for task_id, reason in sorted(invalid.items()):
+        source = source_root / task_id
+        if not source.exists():
+            continue
+        destination = archive_root / task_id
+        if destination.exists():
+            raise RuntimeError(f"retry archive already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+        archived.append(
+            {
+                "task_id": task_id,
+                "reason": reason,
+                "archived_path": str(destination),
+            }
+        )
+
+    if archived:
+        atomic_json(
+            archive_root / "retry_manifest.json",
+            {
+                "archived_at": utc_now(),
+                "backend": backend,
+                "attempt": attempt,
+                "source_run_dir": str(run_dir),
+                "tasks": archived,
+            },
+        )
+    return archived
+
+
 def judge_output_path(output_dir: pathlib.Path) -> pathlib.Path:
     return output_dir / (
         f"WebJudge_Online_Mind2Web_eval_{JUDGE_MODEL}_score_threshold_"
@@ -1244,12 +1339,15 @@ def write_report(
     rollout: dict[str, Any],
     judge: dict[str, Any],
     run_dir: pathlib.Path,
+    policy_model: Mapping[str, str | None],
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
+    policy_temperature: float = 0.0,
     task_count: int = TASK_COUNT,
 ) -> None:
     if not rollout.get("complete") or not judge.get("complete"):
         raise RuntimeError("refusing to publish an incomplete formal report")
     label = "Lexmount" if backend == "lexmount" else "Chrome-Local (5090)"
-    text = f"""# Online-Mind2Web — qwen3-8B + {label}
+    text = f"""# Online-Mind2Web — {policy_model["label"]} + {label}
 
 ## 结果
 
@@ -1260,13 +1358,17 @@ def write_report(
 | WebJudge 失败 | {judge["failed_tasks"]} |
 | 内容策略强制失败 | {judge.get("forced_failure_count", 0)} |
 | Success rate | {judge["success_rate"]:.2f}% |
-| Rollout concurrency | {ROLLOUT_CONCURRENCY} |
+| Rollout concurrency | {rollout_concurrency} |
 | Judge concurrency | {JUDGE_CONCURRENCY} |
 
 ## 固定配置与可复现性
 
 - Campaign: `{campaign}`
-- Agent model: `{MODEL_ID}`（Qwen3-8B）
+- Policy checkpoint: `{policy_model["label"]}`
+- Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
+- Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
+- Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
+- Policy temperature: `{policy_temperature}`
 - Browser backend: `{label}`
 - Bubench revision: `{BUBENCH_COMMIT}`
 - OSU evaluator revision: `{OSU_COMMIT}`
@@ -1298,6 +1400,9 @@ def write_comparison_report(
     path: pathlib.Path,
     campaign: str,
     states: Mapping[str, tuple[pathlib.Path, dict[str, Any], dict[str, Any] | None]],
+    policy_model: Mapping[str, str | None],
+    rollout_concurrency: int = ROLLOUT_CONCURRENCY,
+    policy_temperature: float = 0.0,
     task_count: int = TASK_COUNT,
 ) -> None:
     if set(states) != set(BACKENDS):
@@ -1312,7 +1417,7 @@ def write_comparison_report(
     delta = local["success_rate"] - lexmount["success_rate"]
     text = f"""# Online-Mind2Web：Lexmount Browser 与 Local Chrome 对比
 
-本轮使用同一 Qwen3-8B、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency=10。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
+本轮使用同一 `{policy_model["label"]}`、固定 {task_count}-task 数据集切片、相同 Agent 配置和 rollout concurrency={rollout_concurrency}。两端只运行官方 `WebJudge_Online_Mind2Web_eval` 分支，Judge backbone 为 gpt-5.4、temperature=1、concurrency=10。内容策略拒绝且经官方重试仍无记录的任务按用户批准计失败。
 
 ## 最终质量指标
 
@@ -1326,9 +1431,14 @@ def write_comparison_report(
 ## 评测口径
 
 - Campaign: `{campaign}`
+- Policy checkpoint: `{policy_model["label"]}`
+- Served endpoint model ID: `{policy_model["endpoint_model_id"]}`
+- Policy artifact: `{policy_model["artifact_dir"] or "not recorded"}`
+- Policy safetensors SHA-256: `{policy_model["safetensors_sha256"] or "not recorded"}`
+- Policy temperature: `{policy_temperature}`
 - Dataset: `osunlp/Online-Mind2Web@{HF_REVISION}`，{task_count} tasks（固定前 {task_count} 条；全量300条先完成哈希与结构校验）
 - Schema: `{SCHEMA_VERSION}`
-- Rollout: qwen3-8B，concurrency={ROLLOUT_CONCURRENCY}，两后端同配置
+- Rollout: qwen3-8B，concurrency={rollout_concurrency}，两后端同配置
 - Judge: 仅 `WebJudge_Online_Mind2Web_eval`，gpt-5.4，temperature={JUDGE_TEMPERATURE}，concurrency={JUDGE_CONCURRENCY}
 - 官方 Judge 参数：max_tokens={JUDGE_MAX_TOKENS}，max_tries={JUDGE_MAX_TRIES}，score_threshold={JUDGE_SCORE_THRESHOLD}
 - 指标：`Success Rate = predicted_label=1 / {task_count} × 100%`
@@ -1368,6 +1478,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--uv", default="uv")
     parser.add_argument("--max-rollout-passes", type=int, default=3)
+    parser.add_argument("--policy-label", default="Qwen3-8B")
+    parser.add_argument("--policy-artifact", type=pathlib.Path)
+    parser.add_argument("--policy-sha256", default="")
+    parser.add_argument("--policy-temperature", type=float, default=0.0)
+    parser.add_argument("--rollout-concurrency", type=int, default=ROLLOUT_CONCURRENCY)
     parser.add_argument(
         "--task-count",
         type=int,
@@ -1382,8 +1497,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 1 <= args.task_count <= TASK_COUNT:
         parser.error(f"--task-count must be in 1..{TASK_COUNT}")
+    if args.rollout_concurrency < 1:
+        parser.error("--rollout-concurrency must be positive")
+    if not 0 <= args.policy_temperature <= 2:
+        parser.error("--policy-temperature must be in 0..2")
 
+    policy_model = resolve_policy_metadata(args)
     env_values = validate_environment(os.environ)
+    policy_model["endpoint_model_id"] = env_values["QWEN_MODEL_ID"]
     runtime = args.runtime_root.resolve()
     root = runtime / ".online_mind2web_v2"
     checkout = root / f"browseruse-agent-bench-{BUBENCH_COMMIT[:12]}"
@@ -1432,19 +1553,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             source_tag=args.backend,
         )
     task_file = write_dataset_for_bubench(checkout, tasks)
-    write_config(config, checkout)
+    write_config(config, checkout, args.policy_temperature)
     manifest = {
         "created_at": utc_now(),
         "campaign": args.campaign,
         "bubench_commit": BUBENCH_COMMIT,
         "osu_commit": OSU_COMMIT,
         "dataset": dataset_manifest,
+        "policy_model": policy_model,
+        "policy_generation": {"temperature": args.policy_temperature},
         "recording_adapter": adapter,
         "osu_integrity": official_osu_integrity,
         "judge_source_patch": judge_source_patch,
         "task_file_sha256": hashlib.sha256(task_file.read_bytes()).hexdigest(),
         "selected_task_count": len(tasks),
-        "rollout_concurrency": ROLLOUT_CONCURRENCY,
+        "rollout_concurrency": args.rollout_concurrency,
         "judge": {
             "model": JUDGE_MODEL,
             "concurrency": JUDGE_CONCURRENCY,
@@ -1475,7 +1598,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{backend}: rollout pass {attempt}, valid={rollout['valid_count']}/{len(tasks)}"
                 )
                 result = run(
-                    build_rollout_command(checkout, config, backend, timestamp),
+                    build_rollout_command(
+                        checkout,
+                        config,
+                        backend,
+                        timestamp,
+                        args.rollout_concurrency,
+                    ),
                     cwd=checkout,
                     env=os.environ,
                     check=False,
@@ -1485,7 +1614,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if rollout["complete"]:
                     break
                 log(f"{backend}: bubench exit={result.returncode}; resume remains incomplete")
-        atomic_json(campaign_dir / backend / "rollout_audit.json", rollout)
+                if attempt < args.max_rollout_passes:
+                    archived = archive_invalid_rollout_tasks(
+                        run_dir,
+                        campaign_dir,
+                        backend,
+                        attempt,
+                        rollout["invalid"],
+                    )
+                    if archived:
+                        log(
+                            f"{backend}: archived {len(archived)} invalid task attempts "
+                            "for fresh-session retry"
+                        )
+            atomic_json(campaign_dir / backend / "rollout_audit.json", rollout)
         if args.stage == "rollout":
             states[backend] = (run_dir, rollout, None)
             continue
@@ -1532,12 +1674,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rollout,
                 judge,
                 run_dir,
+                policy_model,
+                args.rollout_concurrency,
+                args.policy_temperature,
                 len(tasks),
             )
         write_comparison_report(
             reports_dir / "README.md",
             args.campaign,
             states,
+            policy_model,
+            args.rollout_concurrency,
+            args.policy_temperature,
             len(tasks),
         )
     return 0

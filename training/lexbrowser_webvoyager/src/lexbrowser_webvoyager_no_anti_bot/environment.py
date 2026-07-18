@@ -11,19 +11,39 @@ import json
 import logging
 import os
 import re
+import shutil
+import signal
+import subprocess
+import tempfile
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import verifiers as vf
+import websocket
 from datasets import Dataset
 from lexmount import Lexmount
 from openai import AsyncOpenAI
 from stagehand import AsyncStagehand
-import websocket
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _is_anti_bot_challenge(url: str, visible_text: str) -> bool:
+    normalized_url = url.lower()
+    normalized_text = visible_text.lower()
+    return (
+        "/sorry/" in normalized_url
+        or "unusual traffic" in normalized_text
+        or "our systems have detected" in normalized_text
+        or "verify you are human" in normalized_text
+        or "checking your browser" in normalized_text
+        or "just a moment" in normalized_text
+        or "captcha" in normalized_text
+    )
 
 EXPECTED_DATASET_ROWS = 600
 EXPECTED_DATASET_SHA256 = "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097"
@@ -36,6 +56,7 @@ TOOL_RESULT_CHAR_LIMIT = 1024
 TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 SETUP_NAVIGATION_MAX_ATTEMPTS = 3
+TRANSIENT_NETWORK_CHANGE_ERROR = "ERR_NETWORK_CHANGED"
 
 TASK_JUDGE_PROMPT = """You are evaluating whether a browser automation agent successfully completed a web task.
 
@@ -322,6 +343,7 @@ class LexmountCDPSession:
             http_proxy_port=None,
         )
         self._next_id = 0
+        self._navigation_network_errors: list[str] = []
         targets = self.call("Target.getTargets").get("targetInfos", [])
         page = next((item for item in targets if item.get("type") == "page"), None)
         if page is None:
@@ -346,11 +368,144 @@ class LexmountCDPSession:
         """
         self._task_query = query
 
+    def configure_context(
+        self,
+        *,
+        locale: str | None = None,
+        timezone_id: str | None = None,
+        geolocation: dict[str, float] | None = None,
+        user_agent: str | None = None,
+        viewport: dict[str, int] | None = None,
+        screen: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Apply explicit CDP context controls and record browser fingerprints.
+
+        Real sites can vary by browser locale, timezone, geolocation, user
+        agent, viewport, and screen dimensions. The controls are opt-in so
+        training-compatible runs preserve their original context, while
+        diagnostic runs can make these variables explicit.
+        """
+
+        requested = {
+            "locale": locale,
+            "timezone_id": timezone_id,
+            "geolocation": dict(geolocation) if geolocation else None,
+            "user_agent": user_agent,
+            "viewport": dict(viewport) if viewport else None,
+            "screen": dict(screen) if screen else None,
+        }
+        applied: dict[str, Any] = {}
+        if locale or user_agent:
+            self.call("Network.enable", session_id=self._session_id)
+            effective_user_agent = user_agent or str(self.evaluate("navigator.userAgent") or "")
+            user_agent_override: dict[str, str] = {"userAgent": effective_user_agent}
+            if locale:
+                user_agent_override["acceptLanguage"] = locale
+            self.call(
+                "Network.setUserAgentOverride",
+                user_agent_override,
+                session_id=self._session_id,
+            )
+            if user_agent:
+                applied["user_agent"] = user_agent
+        if locale:
+            self.call(
+                "Emulation.setLocaleOverride",
+                {"locale": locale},
+                session_id=self._session_id,
+            )
+            applied["locale"] = locale
+        if timezone_id:
+            self.call(
+                "Emulation.setTimezoneOverride",
+                {"timezoneId": timezone_id},
+                session_id=self._session_id,
+            )
+            applied["timezone_id"] = timezone_id
+        if geolocation:
+            self.call(
+                "Emulation.setGeolocationOverride",
+                dict(geolocation),
+                session_id=self._session_id,
+            )
+            applied["geolocation"] = dict(geolocation)
+        if viewport or screen:
+            raw_metrics = self.evaluate(
+                """(() => JSON.stringify({
+                  inner_width: innerWidth,
+                  inner_height: innerHeight,
+                  screen_width: screen.width,
+                  screen_height: screen.height,
+                  device_scale_factor: devicePixelRatio
+                }))()"""
+            )
+            current_metrics = json.loads(str(raw_metrics or "{}"))
+            viewport = dict(viewport or {})
+            screen = dict(screen or {})
+            device_metrics = {
+                "width": int(viewport.get("width", current_metrics.get("inner_width", 0))),
+                "height": int(viewport.get("height", current_metrics.get("inner_height", 0))),
+                "deviceScaleFactor": float(current_metrics.get("device_scale_factor", 1)),
+                "mobile": False,
+                "screenWidth": int(screen.get("width", current_metrics.get("screen_width", 0))),
+                "screenHeight": int(screen.get("height", current_metrics.get("screen_height", 0))),
+            }
+            self.call(
+                "Emulation.setDeviceMetricsOverride",
+                device_metrics,
+                session_id=self._session_id,
+            )
+            if requested["viewport"]:
+                applied["viewport"] = requested["viewport"]
+            if requested["screen"]:
+                applied["screen"] = requested["screen"]
+        raw = self.evaluate(
+            """(() => JSON.stringify({
+              language: navigator.language,
+              languages: Array.from(navigator.languages || []),
+              locale: Intl.DateTimeFormat().resolvedOptions().locale,
+              timezone_id: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              user_agent: navigator.userAgent,
+              platform: navigator.platform,
+              webdriver: navigator.webdriver,
+              viewport: {width: innerWidth, height: innerHeight},
+              screen: {width: screen.width, height: screen.height},
+              device_scale_factor: devicePixelRatio,
+              color_depth: screen.colorDepth
+            }))()"""
+        )
+        observed = json.loads(str(raw or "{}"))
+        if not isinstance(observed, dict):
+            observed = {}
+        return {"requested": requested, "applied": applied, "observed": observed}
+
     def close(self) -> None:
         try:
             self._ws.close()
         except Exception:
             pass
+
+    def _record_cdp_event(self, response: dict[str, Any]) -> None:
+        """Keep a small, secret-free record of failures for the active navigation."""
+
+        if response.get("method") != "Network.loadingFailed":
+            return
+        session_id = response.get("sessionId")
+        if session_id and session_id != self._session_id:
+            return
+        error_text = str((response.get("params") or {}).get("errorText") or "").strip()
+        if not error_text:
+            return
+        self._navigation_network_errors.append(error_text)
+        del self._navigation_network_errors[:-8]
+
+    def has_transient_network_change(self) -> bool:
+        return any(TRANSIENT_NETWORK_CHANGE_ERROR in error for error in self._navigation_network_errors)
+
+    def _network_error_suffix(self) -> str:
+        if not self._navigation_network_errors:
+            return ""
+        return " cdp_network_errors=" + ",".join(self._navigation_network_errors[-3:])
 
     def call(
         self, method: str, params: dict[str, Any] | None = None, *, session_id: str | None = None
@@ -363,13 +518,19 @@ class LexmountCDPSession:
         while True:
             response = json.loads(self._ws.recv())
             if response.get("id") != self._next_id:
+                self._record_cdp_event(response)
                 continue
             if "error" in response:
                 raise RuntimeError(f"CDP {method} failed: {response['error']}")
             return response.get("result", {})
 
     def navigate(self, url: str) -> None:
-        self.call("Page.navigate", {"url": url}, session_id=self._session_id)
+        self._navigation_network_errors.clear()
+        result = self.call("Page.navigate", {"url": url}, session_id=self._session_id)
+        error_text = str(result.get("errorText") or "").strip()
+        if error_text:
+            self._navigation_network_errors.append(error_text)
+            raise RuntimeError(f"infrastructure_navigation_cdp_error: {error_text}")
 
     def wait_for_usable_document(self, timeout_s: float) -> None:
         """Confirm that a setup navigation yielded a real, usable document.
@@ -400,14 +561,10 @@ class LexmountCDPSession:
                 reason = re.search(r"\bERR_[A-Z_]+\b", last_text)
                 raise RuntimeError(
                     "infrastructure_browser_error_page: "
-                    f"{reason.group(0) if reason else last_url}"
+                    f"{reason.group(0) if reason else last_url}{self._network_error_suffix()}"
                 )
             if last_url and last_url != "about:blank" and len(last_text) >= 20:
-                if re.search(
-                    r"cloudflare|verify you are human|checking your browser|just a moment",
-                    last_text,
-                    flags=re.IGNORECASE,
-                ):
+                if _is_anti_bot_challenge(last_url, last_text):
                     raise RuntimeError("infrastructure_anti_bot_challenge")
                 return
             time.sleep(0.25)
@@ -471,6 +628,8 @@ class LexmountCDPSession:
                 "infrastructure_browser_error_page: "
                 f"{reason.group(0) if reason else url}"
             )
+        if _is_anti_bot_challenge(url, visible_text):
+            raise RuntimeError("infrastructure_anti_bot_challenge")
         self._observed_controls = list(snapshot.get("elements") or [])
         return snapshot
 
@@ -539,6 +698,13 @@ class LexmountCDPSession:
         return candidates[0][1]
 
     def _run_action(self, verb: str, selector: str, value: str = "") -> str:
+        observed_selectors = {
+            str(control.get("selector", "")) for control in self._observed_controls
+        }
+        if selector not in observed_selectors:
+            raise ValueError(
+                f"Selector {selector!r} was not returned by the latest observe call"
+            )
         payload = json.dumps(value)
         selector_json = json.dumps(selector)
         before_url = ""
@@ -688,6 +854,124 @@ class LexmountCDPSession:
         )
 
 
+class LocalChromeSession(LexmountCDPSession):
+    """A fresh local Chrome profile connected through the same CDP adapter.
+
+    The policy-facing browser API intentionally remains ``LexmountCDPSession``:
+    only session ownership changes. This keeps a Lexmount/local comparison on
+    the same DOM observations and grounded action grammar.
+    """
+
+    def __init__(
+        self,
+        *,
+        executable_path: str | None,
+        headless: bool,
+        proxy_server: str | None,
+        proxy_bypass: str | None,
+        timeout_s: float,
+        disable_automation_controlled: bool = False,
+    ) -> None:
+        self._profile_dir = Path(tempfile.mkdtemp(prefix="lexbrowser-webvoyager-"))
+        self._process: subprocess.Popen[bytes] | None = None
+        self._cdp_connected = False
+        executable = self._resolve_executable(executable_path)
+        command = [
+            executable,
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=0",
+            # Chrome 136+ rejects a non-DevTools WebSocket Origin unless this
+            # is explicit. The endpoint remains loopback-only and belongs to
+            # this short-lived profile.
+            "--remote-allow-origins=*",
+            f"--user-data-dir={self._profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-sync",
+        ]
+        if disable_automation_controlled:
+            command.append("--disable-blink-features=AutomationControlled")
+        if headless:
+            command.append("--headless=new")
+        if os.geteuid() == 0:
+            command.append("--no-sandbox")
+        if proxy_server:
+            command.append(f"--proxy-server={proxy_server}")
+        if proxy_bypass:
+            command.append(f"--proxy-bypass-list={proxy_bypass}")
+
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            super().__init__(self._wait_for_cdp_url(timeout_s), timeout_s)
+            self._cdp_connected = True
+        except Exception:
+            self.close()
+            raise
+
+    @staticmethod
+    def _resolve_executable(configured_path: str | None) -> str:
+        if configured_path:
+            resolved = shutil.which(configured_path) if not os.path.isabs(configured_path) else configured_path
+            if resolved and os.path.isfile(resolved) and os.access(resolved, os.X_OK):
+                return resolved
+            raise RuntimeError(f"Configured local Chrome executable is not runnable: {configured_path}")
+        for candidate in ("google-chrome", "chromium", "chromium-browser"):
+            if resolved := shutil.which(candidate):
+                return resolved
+        raise RuntimeError(
+            "No local Chrome executable found. Set local_chrome_executable_path "
+            "or LOCAL_CHROME_EXECUTABLE_PATH."
+        )
+
+    def _wait_for_cdp_url(self, timeout_s: float) -> str:
+        deadline = time.monotonic() + timeout_s
+        active_port = self._profile_dir / "DevToolsActivePort"
+        while time.monotonic() < deadline:
+            if self._process is not None and self._process.poll() is not None:
+                raise RuntimeError(
+                    f"Local Chrome exited during startup with code {self._process.returncode}"
+                )
+            try:
+                lines = active_port.read_text(encoding="utf-8").splitlines()
+                port = int(lines[0])
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/version", timeout=1.0
+                ) as response:
+                    payload = json.load(response)
+                cdp_url = str(payload.get("webSocketDebuggerUrl") or "")
+                if cdp_url:
+                    return cdp_url
+            except (FileNotFoundError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+                pass
+            time.sleep(0.1)
+        raise TimeoutError("Local Chrome did not expose a CDP endpoint before startup timeout")
+
+    def close(self) -> None:
+        if self._cdp_connected:
+            super().close()
+            self._cdp_connected = False
+        process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=5.0)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+        self._process = None
+        shutil.rmtree(self._profile_dir, ignore_errors=True)
+
+
 def load_webvoyager_dataset(num_examples: int = -1, web_filter: str | None = None) -> Dataset:
     dataset_path = Path(__file__).parent / "datasets" / "WebVoyager_data_clean.jsonl"
     digest = hashlib.sha256(dataset_path.read_bytes()).hexdigest()
@@ -727,13 +1011,14 @@ def load_webvoyager_dataset(num_examples: int = -1, web_filter: str | None = Non
 
 
 class LexmountDOMMode:
-    """Stagehand DOM mode attached to a Lexmount-provisioned Chrome over CDP."""
+    """Own a Lexmount or local Chrome session while preserving the DOM tool API."""
 
     def __init__(
         self,
         *,
-        api_key: str,
-        project_id: str,
+        api_key: str | None,
+        project_id: str | None,
+        browser_backend: str,
         dom_backend: str,
         stagehand_model: str,
         policy_model: str,
@@ -741,6 +1026,11 @@ class LexmountDOMMode:
         browser_mode: str,
         official_proxy: bool,
         external_proxy: dict[str, str] | None,
+        local_chrome_executable_path: str | None,
+        local_chrome_headless: bool,
+        local_proxy_server: str | None,
+        local_proxy_bypass: str | None,
+        network_change_retries: int,
         max_concurrent_sessions: int,
         session_create_timeout_s: float,
         stagehand_ready_timeout_s: float,
@@ -748,20 +1038,33 @@ class LexmountDOMMode:
         per_tool_timeout_s: float,
         episode_timeout_s: float,
         max_repeated_tool_calls: int,
+        context_overrides: dict[str, Any] | None = None,
+        local_disable_automation_controlled: bool = False,
     ) -> None:
-        # Keep a preflight-selected Lexmount region for every real rollout;
-        # otherwise a successful regional smoke test and a training session
-        # could silently use different egress paths.
-        lexmount_kwargs: dict[str, str] = {
-            "api_key": api_key,
-            "project_id": project_id,
-        }
-        region = os.environ.get("LEXMOUNT_REGION", "").strip()
-        if region:
-            lexmount_kwargs["region"] = region
-        self.lexmount = Lexmount(**lexmount_kwargs)
         if dom_backend not in {"stagehand", "cdp"}:
             raise ValueError(f"Unsupported dom_backend={dom_backend!r}")
+        if browser_backend not in {"lexmount", "local"}:
+            raise ValueError(f"Unsupported browser_backend={browser_backend!r}")
+        if browser_backend == "local" and dom_backend != "cdp":
+            raise ValueError("Local Chrome supports only the deterministic dom_backend='cdp'")
+        if network_change_retries < 0:
+            raise ValueError("network_change_retries must be non-negative")
+        self.browser_backend = browser_backend
+        self.lexmount: Lexmount | None = None
+        if browser_backend == "lexmount":
+            if not api_key or not project_id:
+                raise ValueError("Lexmount backend requires api_key and project_id")
+            # Keep a preflight-selected Lexmount region for every real rollout;
+            # otherwise a successful regional smoke test and a training session
+            # could silently use different egress paths.
+            lexmount_kwargs: dict[str, str] = {
+                "api_key": api_key,
+                "project_id": project_id,
+            }
+            region = os.environ.get("LEXMOUNT_REGION", "").strip()
+            if region:
+                lexmount_kwargs["region"] = region
+            self.lexmount = Lexmount(**lexmount_kwargs)
         self.dom_backend = dom_backend
         self.stagehand_model = stagehand_model
         self.policy_model = policy_model
@@ -769,6 +1072,15 @@ class LexmountDOMMode:
         self.browser_mode = browser_mode
         self.official_proxy = official_proxy
         self.external_proxy = external_proxy
+        self.local_chrome_executable_path = local_chrome_executable_path
+        self.local_chrome_headless = local_chrome_headless
+        self.local_proxy_server = local_proxy_server
+        self.local_proxy_bypass = local_proxy_bypass
+        self.local_disable_automation_controlled = local_disable_automation_controlled
+        self.network_change_retries = network_change_retries
+        self.context_overrides = dict(context_overrides or {})
+        if self.context_overrides and dom_backend != "cdp":
+            raise ValueError("Browser context overrides require dom_backend='cdp'")
         self.stagehand_ready_timeout_s = stagehand_ready_timeout_s
         # This deadline is intentionally separate from a policy tool-call
         # deadline.  Initial navigation can require a cold real-site load and
@@ -783,6 +1095,9 @@ class LexmountDOMMode:
         self.session_create_timeout_s = session_create_timeout_s
         self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
         self.logger = LOGGER
+
+    def _configure_cdp_context(self, session: LexmountCDPSession) -> dict[str, Any]:
+        return session.configure_context(**self.context_overrides)
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
         self.logger = env.logger
@@ -830,6 +1145,42 @@ class LexmountDOMMode:
             "browser_slot_wait_seconds", slot_started_at, phase="browser_slot_wait"
         )
         state["lexbrowser_slot_acquired"] = True
+        if self.browser_backend == "local":
+            local_started_at = time.monotonic()
+            try:
+                state["browser_session"] = await asyncio.to_thread(
+                    LocalChromeSession,
+                    executable_path=self.local_chrome_executable_path,
+                    headless=self.local_chrome_headless,
+                    proxy_server=self.local_proxy_server,
+                    proxy_bypass=self.local_proxy_bypass,
+                    timeout_s=self.setup_navigation_timeout_s,
+                    disable_automation_controlled=self.local_disable_automation_controlled,
+                )
+                context_started_at = time.monotonic()
+                state["browser_context"] = await asyncio.to_thread(
+                    self._configure_cdp_context, state["browser_session"]
+                )
+                guard.record_timing(
+                    "browser_context_configure_seconds",
+                    context_started_at,
+                    phase="browser_context_configure",
+                )
+                guard.record_timing(
+                    "local_browser_create_seconds",
+                    local_started_at,
+                    phase="local_browser_create",
+                )
+                return state
+            except Exception as exc:
+                guard.record_timing(
+                    "local_browser_create_seconds",
+                    local_started_at,
+                    phase="local_browser_create",
+                    status=f"error:{type(exc).__name__}",
+                )
+                self._release_slot(state)
+                raise
         lexmount_session = None
         try:
             session_kwargs: dict[str, Any] = {"browser_mode": self.browser_mode}
@@ -841,6 +1192,7 @@ class LexmountDOMMode:
             else:
                 session_kwargs["official_proxy"] = self.official_proxy
             create_started_at = time.monotonic()
+            assert self.lexmount is not None
             create_task: asyncio.Task[Any] = asyncio.create_task(
                 asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs)
             )
@@ -900,6 +1252,15 @@ class LexmountDOMMode:
             if self.dom_backend == "cdp":
                 state["browser_session"] = await asyncio.to_thread(
                     LexmountCDPSession, cdp_url, self.setup_navigation_timeout_s
+                )
+                context_started_at = time.monotonic()
+                state["browser_context"] = await asyncio.to_thread(
+                    self._configure_cdp_context, state["browser_session"]
+                )
+                guard.record_timing(
+                    "browser_context_configure_seconds",
+                    context_started_at,
+                    phase="browser_context_configure",
                 )
             else:
                 client = await self._get_stagehand_client()
@@ -974,7 +1335,7 @@ class LexmountDOMMode:
                 reason,
                 exc,
             )
-        if session_id:
+        if session_id and self.lexmount is not None:
             try:
                 await asyncio.wait_for(
                     asyncio.to_thread(
@@ -1045,6 +1406,8 @@ class LexmountDOMMode:
                     await stagehand_session.end()
                 except Exception as exc:
                     self.logger.warning("Failed to end Stagehand session: %s", exc)
+            elif isinstance(browser_session, LocalChromeSession):
+                await asyncio.to_thread(browser_session.close)
             elif isinstance(browser_session, LexmountCDPSession):
                 await asyncio.to_thread(browser_session.close)
             lexmount_session = state.pop("lexmount_session", None)
@@ -1058,32 +1421,105 @@ class LexmountDOMMode:
             self._release_slot(state)
 
     async def teardown(self) -> None:
+        if self._background_session_cleanup_tasks:
+            # A timed-out synchronous create can still return a real remote
+            # session.  Drain its cleanup task before asyncio.run tears down
+            # the event loop; otherwise the late browser remains active and
+            # consumes project capacity for the next experiment.
+            results = await asyncio.gather(
+                *tuple(self._background_session_cleanup_tasks), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    self.logger.warning("Late Lexmount session cleanup failed: %r", result)
         if self.stagehand_client is not None:
             await self.stagehand_client.close()
             self.stagehand_client = None
 
-    async def navigate(self, url: str, session: Any, guard: TrajectoryGuard) -> str:
+    async def _navigate_cdp_with_network_change_recovery(
+        self,
+        session: LexmountCDPSession,
+        url: str,
+        *,
+        timeout_s: float,
+    ) -> int:
+        """Navigate once, retrying only a transient Chrome network reset in place.
+
+        A fresh local Chrome profile can observe a host-wide network interface
+        change while its first real-site request is in flight. Recreating the
+        profile immediately repeats that startup race. Reusing the existing CDP
+        session is safe for this narrow transport error and preserves the
+        policy-facing DOM/action contract for both backends.
+        """
+
+        deadline = time.monotonic() + timeout_s
+        last_error: Exception | None = None
+        for attempt in range(self.network_change_retries + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.1:
+                break
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(session.navigate, url), timeout=remaining
+                )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.1:
+                    raise TimeoutError("CDP navigation exhausted its time budget")
+                await asyncio.wait_for(
+                    asyncio.to_thread(session.wait_for_usable_document, remaining),
+                    timeout=remaining,
+                )
+                return attempt
+            except Exception as exc:
+                last_error = exc
+                transient_change = (
+                    TRANSIENT_NETWORK_CHANGE_ERROR in str(exc)
+                    or session.has_transient_network_change()
+                )
+                if not transient_change or attempt >= self.network_change_retries:
+                    raise
+                delay = min(0.5 * (attempt + 1), max(0.0, deadline - time.monotonic()))
+                if delay <= 0.0:
+                    break
+                self.logger.warning(
+                    "Retrying CDP navigation after %s (%s/%s, url=%s): %s",
+                    TRANSIENT_NETWORK_CHANGE_ERROR,
+                    attempt + 1,
+                    self.network_change_retries,
+                    url,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+        if last_error is not None:
+            raise last_error
+        raise TimeoutError("CDP navigation exhausted its time budget")
+
+    async def navigate(
+        self,
+        url: str,
+        session: Any,
+        guard: TrajectoryGuard,
+        *,
+        timeout_s: float | None = None,
+    ) -> str:
         """Navigate the browser directly to a URL."""
         blocked = guard.before_tool("navigate", url)
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
+        navigation_timeout_s = timeout_s if timeout_s is not None else guard.per_tool_timeout_s
+        if navigation_timeout_s <= 0:
+            raise ValueError("navigation timeout must be positive")
         started_at = time.monotonic()
         try:
             if isinstance(session, LexmountCDPSession):
-                await asyncio.wait_for(
-                    asyncio.to_thread(session.navigate, url), timeout=guard.per_tool_timeout_s
+                network_change_retries = await self._navigate_cdp_with_network_change_recovery(
+                    session, url, timeout_s=navigation_timeout_s
                 )
-                # CDP ``Page.navigate`` acknowledges before the target page
-                # is readable.  Do not hand the policy an empty interstitial
-                # and let it hallucinate a final answer: wait for rendered DOM
-                # evidence within this tool's bounded budget.
-                await asyncio.wait_for(
-                    asyncio.to_thread(
-                        session.wait_for_usable_document,
-                        max(0.1, guard.per_tool_timeout_s - 0.5),
-                    ),
-                    timeout=guard.per_tool_timeout_s,
-                )
+                if network_change_retries:
+                    guard.timings["browser_network_change_retries"] = (
+                        guard.timings.get("browser_network_change_retries", 0.0)
+                        + float(network_change_retries)
+                    )
                 return f"Navigated to {url}"
             await asyncio.wait_for(
                 session.navigate(
@@ -1092,11 +1528,11 @@ class LexmountDOMMode:
                     # navigation into an unbounded network-idle wait.
                     options={
                         "wait_until": "domcontentloaded",
-                        "timeout": int(guard.per_tool_timeout_s * 1000),
+                        "timeout": int(navigation_timeout_s * 1000),
                     },
-                    timeout=guard.per_tool_timeout_s + 5.0,
+                    timeout=navigation_timeout_s + 5.0,
                 ),
-                timeout=guard.per_tool_timeout_s + 5.0,
+                timeout=navigation_timeout_s + 5.0,
             )
             return f"Navigated to {url}"
         except asyncio.TimeoutError:
@@ -1285,20 +1721,13 @@ class LexBrowserEnv(vf.StatefulToolEnv):
                     navigation_started_at = time.monotonic()
                     try:
                         session = state["browser_session"]
-                        attempt_deadline = time.monotonic() + self._mode_impl.setup_navigation_timeout_s
                         if isinstance(session, LexmountCDPSession):
-                            await asyncio.wait_for(
-                                asyncio.to_thread(session.navigate, start_url),
-                                timeout=self._mode_impl.setup_navigation_timeout_s,
+                            network_change_retries = await self._mode_impl._navigate_cdp_with_network_change_recovery(
+                                session,
+                                start_url,
+                                timeout_s=self._mode_impl.setup_navigation_timeout_s,
                             )
-                            remaining = max(0.1, attempt_deadline - time.monotonic())
-                            await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    session.wait_for_usable_document,
-                                    remaining,
-                                ),
-                                timeout=remaining + 1.0,
-                            )
+                            state["setup_navigation_network_change_retries"] = network_change_retries
                         else:
                             await asyncio.wait_for(
                                 session.navigate(
@@ -1420,6 +1849,7 @@ def _external_proxy_from_env() -> dict[str, str] | None:
 
 def load_environment(
     mode: str = "dom",
+    browser_backend: str = "lexmount",
     dom_backend: str = "stagehand",
     max_turns: int = 30,
     judge_model: str = "gpt-5.5",
@@ -1430,6 +1860,11 @@ def load_environment(
     proxy_model_to_stagehand: bool = True,
     browser_mode: str = "normal",
     official_proxy: bool = False,
+    local_chrome_executable_path: str | None = None,
+    local_chrome_headless: bool = True,
+    local_proxy_server: str | None = None,
+    local_proxy_bypass: str | None = None,
+    network_change_retries: int = 1,
     max_concurrent_sessions: int = 20,
     session_create_timeout_s: float = 60.0,
     stagehand_ready_timeout_s: float = 60.0,
@@ -1441,6 +1876,10 @@ def load_environment(
 ) -> vf.Environment:
     if mode != "dom":
         raise ValueError("lexbrowser/webvoyager-no-anti-bot currently supports mode='dom' only")
+    if browser_backend not in {"lexmount", "local"}:
+        raise ValueError(f"Unsupported browser_backend={browser_backend!r}")
+    if browser_backend == "local" and dom_backend != "cdp":
+        raise ValueError("Local Chrome supports only the deterministic dom_backend='cdp'")
 
     if configured_model := os.environ.get("OPENAI_MODEL"):
         judge_model = configured_model.removeprefix("openai/")
@@ -1466,16 +1905,35 @@ def load_environment(
     )
     rubric.add_reward_func(judge_task_completion, weight=1.0)
 
+    if browser_backend == "local":
+        local_chrome_executable_path = (
+            local_chrome_executable_path
+            or os.environ.get("LOCAL_CHROME_EXECUTABLE_PATH", "").strip()
+            or None
+        )
+        local_proxy_server = (
+            local_proxy_server or os.environ.get("LOCAL_CHROME_PROXY_SERVER", "").strip() or None
+        )
+        local_proxy_bypass = (
+            local_proxy_bypass or os.environ.get("LOCAL_CHROME_PROXY_BYPASS", "").strip() or None
+        )
+
     mode_impl = LexmountDOMMode(
-        api_key=_required_env("LEXMOUNT_API_KEY"),
-        project_id=_required_env("LEXMOUNT_PROJECT_ID"),
+        api_key=_required_env("LEXMOUNT_API_KEY") if browser_backend == "lexmount" else None,
+        project_id=_required_env("LEXMOUNT_PROJECT_ID") if browser_backend == "lexmount" else None,
+        browser_backend=browser_backend,
         dom_backend=dom_backend,
         stagehand_model=stagehand_model,
         policy_model=policy_model,
         proxy_model_to_stagehand=proxy_model_to_stagehand,
         browser_mode=browser_mode,
         official_proxy=official_proxy,
-        external_proxy=_external_proxy_from_env(),
+        external_proxy=_external_proxy_from_env() if browser_backend == "lexmount" else None,
+        local_chrome_executable_path=local_chrome_executable_path,
+        local_chrome_headless=local_chrome_headless,
+        local_proxy_server=local_proxy_server,
+        local_proxy_bypass=local_proxy_bypass,
+        network_change_retries=network_change_retries,
         max_concurrent_sessions=max_concurrent_sessions,
         session_create_timeout_s=session_create_timeout_s,
         stagehand_ready_timeout_s=stagehand_ready_timeout_s,

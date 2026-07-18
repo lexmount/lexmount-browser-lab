@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -12,10 +13,11 @@ import subprocess
 import time
 import urllib.request
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 GIB = 1024**3
+UTC = timezone.utc  # noqa: UP017 - Python 3.10 is used on the evaluation host.
 CHROME_MARKERS = ("chrome", "chromium", "headless_shell")
 
 
@@ -111,28 +113,86 @@ def _process_memory(cgroup: Path) -> tuple[int, int, int]:
     return total_pss, chrome_pss, sampled
 
 
-def _gpu_sample() -> tuple[float | None, float | None, float | None]:
+def _child_pids(pid: int) -> set[int]:
+    try:
+        values = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return set()
+    return {int(value) for value in values if value.isdigit()}
+
+
+def _process_tree_pids(root_pids: list[int]) -> set[int]:
+    pending = list(root_pids)
+    discovered: set[int] = set()
+    while pending:
+        pid = pending.pop()
+        if pid in discovered:
+            continue
+        discovered.add(pid)
+        pending.extend(_child_pids(pid) - discovered)
+    return discovered
+
+
+def _process_cpu_seconds(pid: int) -> float | None:
+    try:
+        tail = Path(f"/proc/{pid}/stat").read_text().rsplit(")", maxsplit=1)[1].split()
+        ticks = int(tail[11]) + int(tail[12])
+        return ticks / os.sysconf("SC_CLK_TCK")
+    except (
+        FileNotFoundError,
+        IndexError,
+        ProcessLookupError,
+        PermissionError,
+        ValueError,
+        OSError,
+    ):
+        return None
+
+
+def _external_process_sample(root_pids: list[int]) -> tuple[int, float, int]:
+    total_pss = 0
+    total_cpu_seconds = 0.0
+    sampled = 0
+    for pid in _process_tree_pids(root_pids):
+        pss = _process_pss_bytes(pid)
+        cpu_seconds = _process_cpu_seconds(pid)
+        if pss is None and cpu_seconds is None:
+            continue
+        sampled += 1
+        total_pss += pss or 0
+        total_cpu_seconds += cpu_seconds or 0.0
+    return total_pss, total_cpu_seconds, sampled
+
+
+def _gpu_sample(gpu_index: int | None = None) -> tuple[float | None, float | None, float | None]:
     if shutil.which("nvidia-smi") is None:
         return None, None, None
     command = [
         "nvidia-smi",
-        "--query-gpu=utilization.gpu,memory.used,power.draw",
+        "--query-gpu=index,utilization.gpu,memory.used,power.draw",
         "--format=csv,noheader,nounits",
     ]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return None, None, None
-    rows: list[tuple[float, float, float]] = []
+    rows: list[tuple[int, float, float, float]] = []
     for line in result.stdout.splitlines():
         try:
-            utilization, memory_mib, power_w = [float(value.strip()) for value in line.split(",")]
+            index_text, utilization, memory_mib, power_w = [
+                value.strip() for value in line.split(",")
+            ]
+            index = int(index_text)
+            utilization = float(utilization)
+            memory_mib = float(memory_mib)
+            power_w = float(power_w)
         except (ValueError, TypeError):
             continue
-        rows.append((utilization, memory_mib, power_w))
+        if gpu_index is None or index == gpu_index:
+            rows.append((index, utilization, memory_mib, power_w))
     if not rows:
         return None, None, None
-    return tuple(statistics.fmean(row[index] for row in rows) for index in range(3))
+    return tuple(statistics.fmean(row[column] for row in rows) for column in range(1, 4))
 
 
 _VLLM_METRIC = re.compile(
@@ -179,6 +239,24 @@ def _kill_unit(unit: str, sig: str) -> None:
     )
 
 
+def _ensure_user_bus_environment() -> None:
+    """Recover the user systemd bus when this profiler is launched from tmux/SSH.
+
+    A non-login tmux server may not inherit ``XDG_RUNTIME_DIR`` or
+    ``DBUS_SESSION_BUS_ADDRESS`` even though the user's systemd instance is
+    running.  Linux exposes the conventional per-user bus under
+    ``/run/user/<uid>/bus``; use it only when the caller did not provide an
+    explicit bus configuration.
+    """
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    candidate = Path(runtime_dir) if runtime_dir else Path("/run/user") / str(os.getuid())
+    bus = candidate / "bus"
+    if not runtime_dir and candidate.is_dir():
+        os.environ["XDG_RUNTIME_DIR"] = str(candidate)
+    if not os.environ.get("DBUS_SESSION_BUS_ADDRESS") and bus.is_socket():
+        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+
+
 def _round(value: float | None, digits: int = 4) -> float | None:
     return round(value, digits) if value is not None else None
 
@@ -193,6 +271,18 @@ def main() -> int:
     parser.add_argument("--min-host-available-gib", type=float, default=32.0)
     parser.add_argument("--planned-tasks", type=int)
     parser.add_argument("--vllm-metrics-url")
+    parser.add_argument(
+        "--include-pid",
+        action="append",
+        type=int,
+        default=[],
+        help="Include this external process tree in separate CPU/PSS metrics.",
+    )
+    parser.add_argument(
+        "--gpu-index",
+        type=int,
+        help="Sample this GPU only instead of averaging every GPU visible to nvidia-smi.",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -204,6 +294,7 @@ def main() -> int:
     for executable in ("systemd-run", "systemctl"):
         if shutil.which(executable) is None:
             raise SystemExit(f"[FAILED] {executable} is required")
+    _ensure_user_bus_environment()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     samples_path = args.output_dir / "samples.csv"
@@ -254,10 +345,13 @@ def main() -> int:
                     if delta_seconds > 0:
                         cpu_cores = (cpu_usage - previous_cpu) / 1_000_000 / delta_seconds
                 total_pss, chrome_pss, process_count = _process_memory(cgroup)
+                external_pss, external_cpu_seconds, external_process_count = (
+                    _external_process_sample(args.include_pid)
+                )
                 memory_current = _read_int(cgroup / "memory.current")
                 memory_peak = _read_int(cgroup / "memory.peak")
                 host_available = _read_host_available_bytes()
-                gpu_util, gpu_memory_mib, gpu_power_w = _gpu_sample()
+                gpu_util, gpu_memory_mib, gpu_power_w = _gpu_sample(args.gpu_index)
                 vllm_running, vllm_waiting = _vllm_sample(args.vllm_metrics_url)
                 rows.append(
                     {
@@ -267,6 +361,10 @@ def main() -> int:
                         "process_count": process_count,
                         "pss_gib": total_pss / GIB,
                         "chrome_pss_gib": chrome_pss / GIB,
+                        "external_pss_gib": external_pss / GIB,
+                        "combined_pss_gib": (total_pss + external_pss) / GIB,
+                        "external_cpu_seconds": external_cpu_seconds,
+                        "external_process_count": external_process_count,
                         "memory_current_gib": memory_current / GIB
                         if memory_current is not None
                         else None,
@@ -329,6 +427,17 @@ def main() -> int:
             average_cpu_cores = (
                 (cpu_usage_values[-1] - cpu_usage_values[0]) / 1_000_000 / sampled_duration
             )
+    external_cpu_values = series("external_cpu_seconds")
+    external_cpu_cores = None
+    if len(external_cpu_values) >= 2 and len(cpu_elapsed_values) >= 2:
+        sampled_duration = cpu_elapsed_values[-1] - cpu_elapsed_values[0]
+        if sampled_duration > 0:
+            external_cpu_cores = (
+                external_cpu_values[-1] - external_cpu_values[0]
+            ) / sampled_duration
+    combined_cpu_cores = None
+    if average_cpu_cores is not None or external_cpu_cores is not None:
+        combined_cpu_cores = (average_cpu_cores or 0.0) + (external_cpu_cores or 0.0)
     gpu_utilization = series("gpu_utilization_percent")
     vllm_running = series("vllm_running")
     vllm_waiting = series("vllm_waiting")
@@ -352,14 +461,26 @@ def main() -> int:
         ),
         "memory_max": args.memory_max,
         "min_host_available_gib_guard": args.min_host_available_gib,
+        "gpu_index": args.gpu_index,
+        "included_pids": args.include_pid,
         "metrics": {
             "cpu_cores_mean": _round(average_cpu_cores),
+            "external_cpu_cores_mean": _round(external_cpu_cores),
+            "combined_cpu_cores_mean": _round(combined_cpu_cores),
             "pss_gib": {
                 key: _round(value) for key, value in summarize_series(series("pss_gib")).items()
             },
             "chrome_pss_gib": {
                 key: _round(value)
                 for key, value in summarize_series(series("chrome_pss_gib")).items()
+            },
+            "external_pss_gib": {
+                key: _round(value)
+                for key, value in summarize_series(series("external_pss_gib")).items()
+            },
+            "combined_pss_gib": {
+                key: _round(value)
+                for key, value in summarize_series(series("combined_pss_gib")).items()
             },
             "memory_current_gib": {
                 key: _round(value)
