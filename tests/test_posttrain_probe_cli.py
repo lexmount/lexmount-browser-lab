@@ -44,6 +44,131 @@ def test_probe_parser_accepts_explicit_concurrency() -> None:
     assert args.concurrency == 64
 
 
+def test_select_common_available_writes_source_ordered_manifest(tmp_path: Path) -> None:
+    module = load_script_module()
+    tasks_path = tmp_path / "tasks.jsonl"
+    task_rows = [
+        {
+            "task_id": "task-1",
+            "question": "one",
+            "start_url": "https://one.example.test",
+            "website": "example",
+        },
+        {
+            "task_id": "task-2",
+            "question": "two",
+            "start_url": "https://two.example.test",
+            "website": "example",
+        },
+        {
+            "task_id": "task-3",
+            "question": "three",
+            "start_url": "https://three.example.test",
+            "website": "example",
+        },
+    ]
+    tasks_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in task_rows), encoding="utf-8"
+    )
+
+    def write_probe(path: Path, statuses: dict[str, str]) -> None:
+        rows = [
+            {"task": task, "status": statuses[task["task_id"]]}
+            for task in reversed(task_rows)
+        ]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    lexmount_probe = tmp_path / "lexmount.jsonl"
+    local_probe = tmp_path / "local.jsonl"
+    write_probe(
+        lexmount_probe,
+        {"task-1": "available", "task-2": "degraded_document", "task-3": "available"},
+    )
+    write_probe(
+        local_probe,
+        {"task-1": "available", "task-2": "available", "task-3": "available"},
+    )
+    output = tmp_path / "common.jsonl"
+
+    result = module.select_common_available(
+        module.build_parser().parse_args(
+            [
+                "select-common-available",
+                "--tasks",
+                str(tasks_path),
+                "--lexmount-probe",
+                str(lexmount_probe),
+                "--local-probe",
+                str(local_probe),
+                "--output",
+                str(output),
+            ]
+        )
+    )
+
+    assert result == 0
+    assert [json.loads(line)["task_id"] for line in output.read_text().splitlines()] == [
+        "task-1",
+        "task-3",
+    ]
+    manifest = json.loads((tmp_path / "common.jsonl.selection.json").read_text())
+    assert manifest["counts"] == {
+        "source_tasks": 3,
+        "probed_tasks": 3,
+        "common_available": 2,
+        "selected_tasks": 2,
+    }
+    assert manifest["probe_statuses"]["paired"] == {
+        "available|available": 2,
+        "degraded_document|available": 1,
+    }
+
+
+def test_select_common_available_rejects_different_probe_coverage(tmp_path: Path) -> None:
+    module = load_script_module()
+    tasks_path = tmp_path / "tasks.jsonl"
+    first_task = {
+        "task_id": "task-1",
+        "question": "one",
+        "start_url": "https://one.example.test",
+        "website": "example",
+    }
+    second_task = {
+        "task_id": "task-2",
+        "question": "two",
+        "start_url": "https://two.example.test",
+        "website": "example",
+    }
+    tasks_path.write_text(
+        json.dumps(first_task) + "\n" + json.dumps(second_task) + "\n", encoding="utf-8"
+    )
+    lexmount_probe = tmp_path / "lexmount.jsonl"
+    local_probe = tmp_path / "local.jsonl"
+    lexmount_probe.write_text(
+        json.dumps({"task": first_task, "status": "available"}) + "\n", encoding="utf-8"
+    )
+    local_probe.write_text(
+        json.dumps({"task": second_task, "status": "available"}) + "\n", encoding="utf-8"
+    )
+
+    args = module.build_parser().parse_args(
+        [
+            "select-common-available",
+            "--tasks",
+            str(tasks_path),
+            "--lexmount-probe",
+            str(lexmount_probe),
+            "--local-probe",
+            str(local_probe),
+            "--output",
+            str(tmp_path / "common.jsonl"),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="probe task coverage differs"):
+        module.select_common_available(args)
+
+
 def test_probe_parser_accepts_network_change_retries() -> None:
     module = load_script_module()
 

@@ -366,6 +366,143 @@ def prepare_splits(args: argparse.Namespace) -> int:
     return 0
 
 
+def load_probe_index(path: Path) -> dict[str, dict[str, Any]]:
+    """Load one probe row per task and reject ambiguous coverage."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON at {path}:{line_number}") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"probe record at {path}:{line_number} must be an object")
+        task = row.get("task")
+        if not isinstance(task, dict):
+            raise ValueError(f"probe record at {path}:{line_number} is missing task metadata")
+        task_id = str(task.get("task_id") or task.get("id") or "").strip()
+        status = str(row.get("status") or "").strip()
+        if not task_id or not status:
+            raise ValueError(f"probe record at {path}:{line_number} is missing task_id or status")
+        if task_id in indexed:
+            raise ValueError(f"duplicate probe task id in {path}: {task_id}")
+        indexed[task_id] = row
+    if not indexed:
+        raise ValueError(f"probe result file is empty: {path}")
+    return indexed
+
+
+def probe_task_metadata_matches(task: Task, probe_record: Mapping[str, Any]) -> bool:
+    """Check that a probe result belongs to the supplied source task manifest."""
+    probe_task = probe_record.get("task")
+    if not isinstance(probe_task, Mapping):
+        return False
+    return all(
+        str(probe_task.get(field) or "").strip() == expected
+        for field, expected in (
+            ("task_id", task.task_id),
+            ("question", task.question),
+            ("start_url", task.start_url),
+        )
+    )
+
+
+def select_common_available(args: argparse.Namespace) -> int:
+    """Select source-manifest tasks usable by both browser availability probes."""
+    tasks_path = args.tasks.resolve()
+    lexmount_probe_path = args.lexmount_probe.resolve()
+    local_probe_path = args.local_probe.resolve()
+    output_path = args.output.resolve()
+    manifest_path = (
+        args.manifest.resolve()
+        if args.manifest
+        else output_path.with_suffix(output_path.suffix + ".selection.json")
+    )
+    source_tasks = load_jsonl_tasks(tasks_path)
+    source_by_id = {task.task_id: task for task in source_tasks}
+    lexmount_probe = load_probe_index(lexmount_probe_path)
+    local_probe = load_probe_index(local_probe_path)
+    lexmount_ids = set(lexmount_probe)
+    local_ids = set(local_probe)
+    if lexmount_ids != local_ids:
+        raise ValueError(
+            "probe task coverage differs: "
+            f"lexmount_only={sorted(lexmount_ids - local_ids)}; "
+            f"local_only={sorted(local_ids - lexmount_ids)}"
+        )
+    unknown_ids = lexmount_ids - set(source_by_id)
+    if unknown_ids:
+        raise ValueError(f"probe contains task ids missing from {tasks_path}: {sorted(unknown_ids)}")
+    for task_id in sorted(lexmount_ids):
+        source_task = source_by_id[task_id]
+        if not probe_task_metadata_matches(source_task, lexmount_probe[task_id]):
+            raise ValueError(f"Lexmount probe task metadata differs from source manifest: {task_id}")
+        if not probe_task_metadata_matches(source_task, local_probe[task_id]):
+            raise ValueError(f"local probe task metadata differs from source manifest: {task_id}")
+
+    selected = [
+        task
+        for task in source_tasks
+        if task.task_id in lexmount_ids
+        and lexmount_probe[task.task_id]["status"] == "available"
+        and local_probe[task.task_id]["status"] == "available"
+    ]
+    if args.limit is not None:
+        if args.limit < 1:
+            raise ValueError("--limit must be positive")
+        selected = selected[: args.limit]
+    if not selected:
+        raise RuntimeError("no common available tasks found in the supplied probe results")
+
+    write_task_jsonl(output_path, selected)
+    status_pairs = Counter(
+        f"{lexmount_probe[task_id]['status']}|{local_probe[task_id]['status']}"
+        for task_id in lexmount_ids
+    )
+    manifest = {
+        "schema_version": 1,
+        "protocol": "webvoyager-posttrain-v1",
+        "selection": "common_available_probe_intersection",
+        "created_at": utc_now(),
+        "availability_status_required": "available",
+        "inputs": {
+            "tasks": str(tasks_path),
+            "tasks_sha256": sha256_file(tasks_path),
+            "lexmount_probe": str(lexmount_probe_path),
+            "lexmount_probe_sha256": sha256_file(lexmount_probe_path),
+            "local_probe": str(local_probe_path),
+            "local_probe_sha256": sha256_file(local_probe_path),
+        },
+        "counts": {
+            "source_tasks": len(source_tasks),
+            "probed_tasks": len(lexmount_ids),
+            "common_available": len(
+                [
+                    task_id
+                    for task_id in lexmount_ids
+                    if lexmount_probe[task_id]["status"] == "available"
+                    and local_probe[task_id]["status"] == "available"
+                ]
+            ),
+            "selected_tasks": len(selected),
+        },
+        "probe_statuses": {
+            "lexmount": dict(sorted(Counter(row["status"] for row in lexmount_probe.values()).items())),
+            "local": dict(sorted(Counter(row["status"] for row in local_probe.values()).items())),
+            "paired": dict(sorted(status_pairs.items())),
+        },
+        "output": {
+            "tasks": str(output_path),
+            "tasks_sha256": sha256_file(output_path),
+            "task_ids": [task.task_id for task in selected],
+        },
+    }
+    atomic_json(manifest_path, manifest)
+    print(json.dumps(manifest["counts"], ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def _required_env(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -1391,6 +1528,17 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--train-count", type=int, default=100)
     prepare.add_argument("--selection-seed", type=int, default=20260717)
 
+    common_available = subparsers.add_parser(
+        "select-common-available",
+        help="write source-order tasks with usable DOM availability in both browser probes",
+    )
+    common_available.add_argument("--tasks", type=Path, required=True)
+    common_available.add_argument("--lexmount-probe", type=Path, required=True)
+    common_available.add_argument("--local-probe", type=Path, required=True)
+    common_available.add_argument("--output", type=Path, required=True)
+    common_available.add_argument("--manifest", type=Path)
+    common_available.add_argument("--limit", type=int)
+
     run = subparsers.add_parser("run", help="evaluate one checkpoint on one browser backend")
     run.add_argument("--tasks", type=Path, required=True)
     run.add_argument("--output-dir", type=Path, required=True)
@@ -1490,6 +1638,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "prepare-splits":
         return prepare_splits(args)
+    if args.command == "select-common-available":
+        return select_common_available(args)
     if args.command == "run":
         return asyncio.run(run_evaluation(args))
     if args.command == "probe":
