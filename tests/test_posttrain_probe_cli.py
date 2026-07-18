@@ -228,6 +228,28 @@ def test_parser_accepts_explicit_browser_context_overrides() -> None:
     assert args.local_disable_automation_controlled is True
 
 
+def test_run_parser_accepts_bounded_judge_timeout() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "run",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "local",
+            "--model",
+            "qwen3_8B",
+            "--judge-timeout",
+            "45",
+        ]
+    )
+
+    assert args.judge_timeout == 45.0
+
+
 def test_parser_accepts_explicit_lexmount_external_proxy() -> None:
     module = load_script_module()
 
@@ -380,6 +402,7 @@ def test_judge_omits_temperature_when_not_requested() -> None:
             client,
             model="gpt-5.5",
             temperature=None,
+            timeout_s=60.0,
             task=task,
             transcript="browser evidence",
             final_answer="answer",
