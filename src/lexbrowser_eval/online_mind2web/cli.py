@@ -993,6 +993,60 @@ def normalize_run(run_dir: pathlib.Path, tasks: list[dict[str, Any]]) -> dict[st
     }
 
 
+def archive_invalid_rollout_tasks(
+    run_dir: pathlib.Path,
+    campaign_dir: pathlib.Path,
+    backend: str,
+    attempt: int,
+    invalid: Mapping[str, str],
+) -> list[dict[str, str]]:
+    """Preserve invalid task attempts, then make them eligible for a fresh-session retry.
+
+    Bubench's ``--skip-completed`` considers any ``bubench_result.json`` a
+    completed task.  A task can still be invalid for this evaluator when its
+    browser transport died before the exact trajectory was recorded.  Archive
+    those artifacts outside the official run directory before the next pass so
+    Bubench reruns only the invalid tasks instead of silently skipping them.
+    """
+    if backend not in BACKENDS:
+        raise ValueError(f"unknown backend: {backend}")
+    if attempt < 1:
+        raise ValueError("attempt must be positive")
+
+    source_root = run_dir / "tasks"
+    archive_root = campaign_dir / backend / "rollout_attempts" / f"pass-{attempt:03d}"
+    archived: list[dict[str, str]] = []
+    for task_id, reason in sorted(invalid.items()):
+        source = source_root / task_id
+        if not source.exists():
+            continue
+        destination = archive_root / task_id
+        if destination.exists():
+            raise RuntimeError(f"retry archive already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+        archived.append(
+            {
+                "task_id": task_id,
+                "reason": reason,
+                "archived_path": str(destination),
+            }
+        )
+
+    if archived:
+        atomic_json(
+            archive_root / "retry_manifest.json",
+            {
+                "archived_at": utc_now(),
+                "backend": backend,
+                "attempt": attempt,
+                "source_run_dir": str(run_dir),
+                "tasks": archived,
+            },
+        )
+    return archived
+
+
 def judge_output_path(output_dir: pathlib.Path) -> pathlib.Path:
     return output_dir / (
         f"WebJudge_Online_Mind2Web_eval_{JUDGE_MODEL}_score_threshold_"
@@ -1560,7 +1614,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if rollout["complete"]:
                     break
                 log(f"{backend}: bubench exit={result.returncode}; resume remains incomplete")
-        atomic_json(campaign_dir / backend / "rollout_audit.json", rollout)
+                if attempt < args.max_rollout_passes:
+                    archived = archive_invalid_rollout_tasks(
+                        run_dir,
+                        campaign_dir,
+                        backend,
+                        attempt,
+                        rollout["invalid"],
+                    )
+                    if archived:
+                        log(
+                            f"{backend}: archived {len(archived)} invalid task attempts "
+                            "for fresh-session retry"
+                        )
+            atomic_json(campaign_dir / backend / "rollout_audit.json", rollout)
         if args.stage == "rollout":
             states[backend] = (run_dir, rollout, None)
             continue
