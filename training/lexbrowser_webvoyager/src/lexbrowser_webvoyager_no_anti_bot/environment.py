@@ -343,6 +343,7 @@ class LexmountCDPSession:
             http_proxy_port=None,
         )
         self._next_id = 0
+        self._navigation_network_errors: list[str] = []
         targets = self.call("Target.getTargets").get("targetInfos", [])
         page = next((item for item in targets if item.get("type") == "page"), None)
         if page is None:
@@ -356,7 +357,6 @@ class LexmountCDPSession:
         self.call("Runtime.enable", session_id=self._session_id)
         self._observed_controls: list[dict[str, str]] = []
         self._task_query = ""
-        self._navigation_network_errors: list[str] = []
 
     def set_task_query(self, query: str) -> None:
         """Expose the current user request only for an explicit policy placeholder.
