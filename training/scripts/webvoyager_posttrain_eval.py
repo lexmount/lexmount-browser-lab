@@ -216,7 +216,9 @@ def task_from_mapping(row: Mapping[str, Any], *, split: str = "unspecified") -> 
     raw_expected_answer = row.get("expected_answer")
     if raw_expected_answer is not None and not isinstance(raw_expected_answer, Mapping):
         raise ValueError("task expected_answer must be an object when provided")
-    expected_answer = dict(raw_expected_answer) if isinstance(raw_expected_answer, Mapping) else None
+    expected_answer = (
+        dict(raw_expected_answer) if isinstance(raw_expected_answer, Mapping) else None
+    )
     if not task_id or not question or not start_url:
         raise ValueError(f"task record is missing task_id/question/start_url: {dict(row)!r}")
     return Task(task_id, question, start_url, website, resolved_split, expected_answer)
@@ -242,7 +244,9 @@ def load_training_parquet(path: Path) -> list[Task]:
     try:
         import pyarrow.parquet as parquet
     except ImportError as exc:
-        raise RuntimeError("prepare-splits requires pyarrow in the active Python environment") from exc
+        raise RuntimeError(
+            "prepare-splits requires pyarrow in the active Python environment"
+        ) from exc
 
     rows = parquet.read_table(path).to_pylist()
     tasks: list[Task] = []
@@ -277,7 +281,9 @@ def write_task_jsonl(path: Path, tasks: Iterable[Task]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for task in tasks:
-            handle.write(json.dumps(task.as_dict(), ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.write(
+                json.dumps(task.as_dict(), ensure_ascii=False, separators=(",", ":")) + "\n"
+            )
 
 
 def diverse_sample(tasks: Sequence[Task], count: int, seed: int) -> list[Task]:
@@ -441,11 +447,15 @@ def select_common_available(args: argparse.Namespace) -> int:
         )
     unknown_ids = lexmount_ids - set(source_by_id)
     if unknown_ids:
-        raise ValueError(f"probe contains task ids missing from {tasks_path}: {sorted(unknown_ids)}")
+        raise ValueError(
+            f"probe contains task ids missing from {tasks_path}: {sorted(unknown_ids)}"
+        )
     for task_id in sorted(lexmount_ids):
         source_task = source_by_id[task_id]
         if not probe_task_metadata_matches(source_task, lexmount_probe[task_id]):
-            raise ValueError(f"Lexmount probe task metadata differs from source manifest: {task_id}")
+            raise ValueError(
+                f"Lexmount probe task metadata differs from source manifest: {task_id}"
+            )
         if not probe_task_metadata_matches(source_task, local_probe[task_id]):
             raise ValueError(f"local probe task metadata differs from source manifest: {task_id}")
 
@@ -496,7 +506,9 @@ def select_common_available(args: argparse.Namespace) -> int:
             "selected_tasks": len(selected),
         },
         "probe_statuses": {
-            "lexmount": dict(sorted(Counter(row["status"] for row in lexmount_probe.values()).items())),
+            "lexmount": dict(
+                sorted(Counter(row["status"] for row in lexmount_probe.values()).items())
+            ),
             "local": dict(sorted(Counter(row["status"] for row in local_probe.values()).items())),
             "paired": dict(sorted(status_pairs.items())),
         },
@@ -589,8 +601,7 @@ def lexmount_external_proxy_from_env(args: argparse.Namespace) -> dict[str, str]
         raise ValueError("--lexmount-external-proxy-from-env requires --backend lexmount")
     if args.lexmount_official_proxy:
         raise ValueError(
-            "--lexmount-external-proxy-from-env cannot be combined with "
-            "--lexmount-official-proxy"
+            "--lexmount-external-proxy-from-env cannot be combined with --lexmount-official-proxy"
         )
 
     names = {
@@ -601,9 +612,7 @@ def lexmount_external_proxy_from_env(args: argparse.Namespace) -> dict[str, str]
     values = {field: os.environ.get(name, "").strip() for field, name in names.items()}
     missing = [name for field, name in names.items() if not values[field]]
     if missing:
-        raise ValueError(
-            "--lexmount-external-proxy-from-env requires " + ", ".join(missing)
-        )
+        raise ValueError("--lexmount-external-proxy-from-env requires " + ", ".join(missing))
     return {"type": "external", **values}
 
 
@@ -783,8 +792,10 @@ def _exact_judge(
 
     rubric = task.expected_answer
     raw_terms = rubric.get("must_include") if isinstance(rubric, Mapping) else None
-    if not isinstance(raw_terms, list) or not raw_terms or not all(
-        isinstance(term, str) and term.strip() for term in raw_terms
+    if (
+        not isinstance(raw_terms, list)
+        or not raw_terms
+        or not all(isinstance(term, str) and term.strip() for term in raw_terms)
     ):
         return {
             "status": "error",
@@ -825,12 +836,16 @@ def _exact_judge(
         "status": "ok",
         "reward": 1.0 if verdict == "yes" else 0.0,
         "verdict": verdict,
-        "reason": "all required answer terms present" if not missing else f"missing required terms: {missing}",
+        "reason": "all required answer terms present"
+        if not missing
+        else f"missing required terms: {missing}",
         "latency_seconds": 0.0,
     }
 
 
-async def _open_browser_state(mode: Any, task: Task, args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+async def _open_browser_state(
+    mode: Any, task: Task, args: argparse.Namespace
+) -> tuple[dict[str, Any], int]:
     last_error: BaseException | None = None
     for attempt in range(1, args.setup_attempts + 1):
         state: dict[str, Any] = {"info": {"question": task.question, "start_url": task.start_url}}
@@ -935,11 +950,12 @@ async def evaluate_task(
                     raw_content or reasoning, generation_truncated
                 )
                 break
-            if len(calls) != 1:
+            if len(calls) != 1 and not args.serial_tool_calls:
                 final_answer_status = "policy_parallel_tool_calls"
                 result["policy_protocol_error"] = "expected exactly one browser tool call per turn"
                 break
-            call = calls[0]
+            if len(calls) > 1:
+                turn_record["multi_tool_call_handling"] = "serial_in_returned_order"
             assistant_message: dict[str, Any] = {
                 "role": "assistant",
                 "content": raw_content,
@@ -949,53 +965,71 @@ async def evaluate_task(
                         "type": "function",
                         "function": {"name": call["name"], "arguments": call["arguments"]},
                     }
+                    for call in calls
                 ],
             }
             if reasoning:
                 assistant_message["reasoning_content"] = reasoning
             messages.append(assistant_message)
-            if call["name"] != "browser":
-                tool_result = f"ERROR_POLICY_TOOL: unsupported tool {call['name']}"
-                parameters = {"operation": "", "instruction": ""}
-            else:
-                try:
-                    parameters = json.loads(call["arguments"])
-                except json.JSONDecodeError:
-                    parameters = {}
-                    tool_result = "ERROR_POLICY_TOOL: browser arguments are not valid JSON"
+            browser_seconds = 0.0
+            executed_tool_call_count = 0
+            tool_execution_stopped = False
+            for call in calls:
+                if call["name"] != "browser":
+                    tool_result = f"ERROR_POLICY_TOOL: unsupported tool {call['name']}"
+                    parameters = {"operation": "", "instruction": ""}
                 else:
-                    operation = str(parameters.get("operation") or "")
-                    instruction = str(parameters.get("instruction") or "")
-                    tool_started = time.monotonic()
-                    if operation == "observe":
-                        tool_result = await mode.observe(
-                            instruction, state["browser_session"], guard=guard
-                        )
-                    elif operation == "act":
-                        tool_result = await mode.act(
-                            instruction, state["browser_session"], guard=guard
-                        )
-                    elif operation == "navigate":
-                        tool_result = await mode.navigate(
-                            instruction, state["browser_session"], guard
-                        )
+                    try:
+                        parameters = json.loads(call["arguments"])
+                    except json.JSONDecodeError:
+                        parameters = {}
+                        tool_result = "ERROR_POLICY_TOOL: browser arguments are not valid JSON"
                     else:
-                        tool_result = "ERROR_POLICY_TOOL: operation must be observe, act, or navigate"
-                    turn_record["browser_seconds"] = round(time.monotonic() - tool_started, 4)
-            event = {
-                "parameters": {
-                    "operation": str(parameters.get("operation") or ""),
-                    "instruction": str(parameters.get("instruction") or ""),
-                },
-                "result": str(tool_result),
-            }
-            event.update(tool_error_metadata(str(tool_result)))
-            events.append(event)
-            messages.append(
-                {"role": "tool", "tool_call_id": call["id"], "content": str(tool_result)}
-            )
-            if _error_classification(str(tool_result)) or bool(getattr(guard, "terminated", False)):
-                final_answer_status = str(getattr(guard, "termination_reason", "")) or "tool_error"
+                        operation = str(parameters.get("operation") or "")
+                        instruction = str(parameters.get("instruction") or "")
+                        tool_started = time.monotonic()
+                        if operation == "observe":
+                            tool_result = await mode.observe(
+                                instruction, state["browser_session"], guard=guard
+                            )
+                        elif operation == "act":
+                            tool_result = await mode.act(
+                                instruction, state["browser_session"], guard=guard
+                            )
+                        elif operation == "navigate":
+                            tool_result = await mode.navigate(
+                                instruction, state["browser_session"], guard
+                            )
+                        else:
+                            tool_result = (
+                                "ERROR_POLICY_TOOL: operation must be observe, act, or navigate"
+                            )
+                        browser_seconds += time.monotonic() - tool_started
+                event = {
+                    "parameters": {
+                        "operation": str(parameters.get("operation") or ""),
+                        "instruction": str(parameters.get("instruction") or ""),
+                    },
+                    "result": str(tool_result),
+                }
+                event.update(tool_error_metadata(str(tool_result)))
+                events.append(event)
+                executed_tool_call_count += 1
+                messages.append(
+                    {"role": "tool", "tool_call_id": call["id"], "content": str(tool_result)}
+                )
+                if _error_classification(str(tool_result)) or bool(
+                    getattr(guard, "terminated", False)
+                ):
+                    final_answer_status = (
+                        str(getattr(guard, "termination_reason", "")) or "tool_error"
+                    )
+                    tool_execution_stopped = True
+                    break
+            if browser_seconds:
+                turn_record["browser_seconds"] = round(browser_seconds, 4)
+            turn_record["executed_tool_call_count"] = executed_tool_call_count
+            if tool_execution_stopped:
                 break
         else:
             final_answer_status = "max_assistant_turns"
@@ -1102,9 +1136,7 @@ async def evaluate_task(
     return result
 
 
-async def probe_task(
-    *, task: Task, mode: Any, args: argparse.Namespace
-) -> dict[str, Any]:
+async def probe_task(*, task: Task, mode: Any, args: argparse.Namespace) -> dict[str, Any]:
     """Measure one browser's usable-DOM availability without invoking a policy."""
     started = time.monotonic()
     state: dict[str, Any] | None = None
@@ -1199,9 +1231,7 @@ def summarize_probe_results(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]
         >= MIN_USABLE_ACTIONABLE_ELEMENTS
     ]
     attempts = [
-        int((row.get("setup") or {}).get("attempts") or 0)
-        for row in rows
-        if row.get("setup")
+        int((row.get("setup") or {}).get("attempts") or 0) for row in rows if row.get("setup")
     ]
     wall = [float(row["wall_seconds"]) for row in rows if row.get("wall_seconds") is not None]
     return {
@@ -1336,8 +1366,12 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         judge_api_key = args.judge_api_key or _first_env("JUDGE_API_KEY", "OPENAI_API_KEY")
         judge_base_url = args.judge_base_url or _first_env("JUDGE_BASE_URL", "OPENAI_BASE_URL")
         if not judge_api_key or not judge_base_url:
-            raise RuntimeError("training judge requires JUDGE_API_KEY/JUDGE_BASE_URL or OPENAI equivalents")
-        args.judge_model = args.judge_model or _first_env("JUDGE_MODEL", "OPENAI_MODEL") or "glm-5.2"
+            raise RuntimeError(
+                "training judge requires JUDGE_API_KEY/JUDGE_BASE_URL or OPENAI equivalents"
+            )
+        args.judge_model = (
+            args.judge_model or _first_env("JUDGE_MODEL", "OPENAI_MODEL") or "glm-5.2"
+        )
         judge_client = AsyncOpenAI(api_key=judge_api_key, base_url=openai_base_url(judge_base_url))
 
     if args.backend == "lexmount":
@@ -1403,6 +1437,9 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "protocol": "browser(operation, instruction)",
             "dom_backend": "cdp",
             "max_assistant_turns": args.max_assistant_turns,
+            "multi_tool_call_handling": (
+                "serial_in_returned_order" if args.serial_tool_calls else "reject"
+            ),
             "setup_attempts": args.setup_attempts,
             "session_create_timeout_seconds": args.session_create_timeout,
             "setup_navigation_timeout_seconds": args.setup_navigation_timeout,
@@ -1485,9 +1522,7 @@ async def run_probe(args: argparse.Namespace) -> int:
     # silently turns a requested 64-session probe into a 32-session queue.
     # This command is invoked through asyncio.run, so its event loop owns and
     # shuts down this executor after all late session cleanup has completed.
-    blocking_thread_workers = max(
-        args.concurrency, min(32, (os.cpu_count() or 1) + 4)
-    )
+    blocking_thread_workers = max(args.concurrency, min(32, (os.cpu_count() or 1) + 4))
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(
             max_workers=blocking_thread_workers,
@@ -1577,6 +1612,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
+
     async def run_probe_when_scheduled(task: Task, scheduler: asyncio.Semaphore) -> dict[str, Any]:
         # Do not create a TrajectoryGuard until a probe worker is actually free.
         # Otherwise queued tasks can spend their entire episode timeout waiting
@@ -1616,7 +1652,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    prepare = subparsers.add_parser("prepare-splits", help="create deterministic paired task manifests")
+    prepare = subparsers.add_parser(
+        "prepare-splits", help="create deterministic paired task manifests"
+    )
     prepare.add_argument("--training-parquet", type=Path, required=True)
     prepare.add_argument("--benchmark-jsonl", type=Path, required=True)
     prepare.add_argument("--output-dir", type=Path, required=True)
@@ -1664,6 +1702,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--top-p", type=float, default=1.0)
     run.add_argument("--max-tokens", type=int, default=1024)
     run.add_argument("--max-assistant-turns", type=int, default=6)
+    run.add_argument(
+        "--serial-tool-calls",
+        action="store_true",
+        help="execute multiple browser calls from one assistant response in returned order",
+    )
     run.add_argument("--seed", type=int, default=20260717)
     run.add_argument("--task-id", action="append", default=[])
     run.add_argument("--limit", type=int)

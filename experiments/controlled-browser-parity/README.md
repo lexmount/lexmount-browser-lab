@@ -19,6 +19,9 @@ Run `training/scripts/webvoyager_posttrain_eval.py run` with `--judge exact`.
 The task's `expected_answer.must_include` list is scored locally; no external
 judge is used. Run the availability probe first, then compare only the shared
 available tasks and preserve the normal run manifests and raw trajectories.
+When the policy returns multiple browser calls in one response, pass
+`--serial-tool-calls` to execute them in returned order for both arms; the
+chosen behavior is recorded in each run manifest.
 
 The suite supports a conclusion about this browser/tool contract only. It must
 not be presented as a WebVoyager, LexBench, or general browser-agent quality

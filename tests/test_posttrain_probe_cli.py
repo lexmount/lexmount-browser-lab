@@ -67,15 +67,10 @@ def test_select_common_available_writes_source_ordered_manifest(tmp_path: Path) 
             "website": "example",
         },
     ]
-    tasks_path.write_text(
-        "".join(json.dumps(row) + "\n" for row in task_rows), encoding="utf-8"
-    )
+    tasks_path.write_text("".join(json.dumps(row) + "\n" for row in task_rows), encoding="utf-8")
 
     def write_probe(path: Path, statuses: dict[str, str]) -> None:
-        rows = [
-            {"task": task, "status": statuses[task["task_id"]]}
-            for task in reversed(task_rows)
-        ]
+        rows = [{"task": task, "status": statuses[task["task_id"]]} for task in reversed(task_rows)]
         path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
     lexmount_probe = tmp_path / "lexmount.jsonl"
@@ -270,6 +265,27 @@ def test_run_parser_accepts_exact_judge() -> None:
     )
 
     assert args.judge == "exact"
+
+
+def test_run_parser_accepts_serial_tool_calls() -> None:
+    module = load_script_module()
+
+    args = module.build_parser().parse_args(
+        [
+            "run",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "local",
+            "--model",
+            "qwen3_8B",
+            "--serial-tool-calls",
+        ]
+    )
+
+    assert args.serial_tool_calls is True
 
 
 def test_exact_judge_requires_all_task_terms() -> None:
