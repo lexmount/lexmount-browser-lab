@@ -207,6 +207,13 @@ def test_parser_accepts_explicit_browser_context_overrides() -> None:
             "America/New_York",
             "--context-geolocation",
             "40.7128,-74.0060,50",
+            "--context-user-agent",
+            "Mozilla/5.0 test browser",
+            "--context-viewport",
+            "780x493",
+            "--context-screen",
+            "2560x1440",
+            "--local-disable-automation-controlled",
         ]
     )
 
@@ -214,7 +221,11 @@ def test_parser_accepts_explicit_browser_context_overrides() -> None:
         "locale": "en-US",
         "timezone_id": "America/New_York",
         "geolocation": {"latitude": 40.7128, "longitude": -74.006, "accuracy": 50.0},
+        "user_agent": "Mozilla/5.0 test browser",
+        "viewport": {"width": 780, "height": 493},
+        "screen": {"width": 2560, "height": 1440},
     }
+    assert args.local_disable_automation_controlled is True
 
 
 def test_parser_accepts_explicit_lexmount_external_proxy() -> None:

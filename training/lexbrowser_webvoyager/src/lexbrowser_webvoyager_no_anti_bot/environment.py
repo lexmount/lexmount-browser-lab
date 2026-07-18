@@ -374,28 +374,41 @@ class LexmountCDPSession:
         locale: str | None = None,
         timezone_id: str | None = None,
         geolocation: dict[str, float] | None = None,
+        user_agent: str | None = None,
+        viewport: dict[str, int] | None = None,
+        screen: dict[str, int] | None = None,
     ) -> dict[str, Any]:
-        """Apply explicit CDP context controls and record non-sensitive state.
+        """Apply explicit CDP context controls and record browser fingerprints.
 
-        Real sites can vary by browser locale, timezone, and geolocation. The
-        controls are opt-in so training-compatible runs preserve their original
-        context, while diagnostic runs can make these variables explicit.
+        Real sites can vary by browser locale, timezone, geolocation, user
+        agent, viewport, and screen dimensions. The controls are opt-in so
+        training-compatible runs preserve their original context, while
+        diagnostic runs can make these variables explicit.
         """
 
         requested = {
             "locale": locale,
             "timezone_id": timezone_id,
             "geolocation": dict(geolocation) if geolocation else None,
+            "user_agent": user_agent,
+            "viewport": dict(viewport) if viewport else None,
+            "screen": dict(screen) if screen else None,
         }
         applied: dict[str, Any] = {}
-        if locale:
+        if locale or user_agent:
             self.call("Network.enable", session_id=self._session_id)
-            user_agent = str(self.evaluate("navigator.userAgent") or "")
+            effective_user_agent = user_agent or str(self.evaluate("navigator.userAgent") or "")
+            user_agent_override: dict[str, str] = {"userAgent": effective_user_agent}
+            if locale:
+                user_agent_override["acceptLanguage"] = locale
             self.call(
                 "Network.setUserAgentOverride",
-                {"userAgent": user_agent, "acceptLanguage": locale},
+                user_agent_override,
                 session_id=self._session_id,
             )
+            if user_agent:
+                applied["user_agent"] = user_agent
+        if locale:
             self.call(
                 "Emulation.setLocaleOverride",
                 {"locale": locale},
@@ -416,12 +429,49 @@ class LexmountCDPSession:
                 session_id=self._session_id,
             )
             applied["geolocation"] = dict(geolocation)
+        if viewport or screen:
+            raw_metrics = self.evaluate(
+                """(() => JSON.stringify({
+                  inner_width: innerWidth,
+                  inner_height: innerHeight,
+                  screen_width: screen.width,
+                  screen_height: screen.height,
+                  device_scale_factor: devicePixelRatio
+                }))()"""
+            )
+            current_metrics = json.loads(str(raw_metrics or "{}"))
+            viewport = dict(viewport or {})
+            screen = dict(screen or {})
+            device_metrics = {
+                "width": int(viewport.get("width", current_metrics.get("inner_width", 0))),
+                "height": int(viewport.get("height", current_metrics.get("inner_height", 0))),
+                "deviceScaleFactor": float(current_metrics.get("device_scale_factor", 1)),
+                "mobile": False,
+                "screenWidth": int(screen.get("width", current_metrics.get("screen_width", 0))),
+                "screenHeight": int(screen.get("height", current_metrics.get("screen_height", 0))),
+            }
+            self.call(
+                "Emulation.setDeviceMetricsOverride",
+                device_metrics,
+                session_id=self._session_id,
+            )
+            if requested["viewport"]:
+                applied["viewport"] = requested["viewport"]
+            if requested["screen"]:
+                applied["screen"] = requested["screen"]
         raw = self.evaluate(
             """(() => JSON.stringify({
               language: navigator.language,
               languages: Array.from(navigator.languages || []),
               locale: Intl.DateTimeFormat().resolvedOptions().locale,
-              timezone_id: Intl.DateTimeFormat().resolvedOptions().timeZone
+              timezone_id: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              user_agent: navigator.userAgent,
+              platform: navigator.platform,
+              webdriver: navigator.webdriver,
+              viewport: {width: innerWidth, height: innerHeight},
+              screen: {width: screen.width, height: screen.height},
+              device_scale_factor: devicePixelRatio,
+              color_depth: screen.colorDepth
             }))()"""
         )
         observed = json.loads(str(raw or "{}"))
@@ -820,6 +870,7 @@ class LocalChromeSession(LexmountCDPSession):
         proxy_server: str | None,
         proxy_bypass: str | None,
         timeout_s: float,
+        disable_automation_controlled: bool = False,
     ) -> None:
         self._profile_dir = Path(tempfile.mkdtemp(prefix="lexbrowser-webvoyager-"))
         self._process: subprocess.Popen[bytes] | None = None
@@ -840,6 +891,8 @@ class LocalChromeSession(LexmountCDPSession):
             "--disable-component-update",
             "--disable-sync",
         ]
+        if disable_automation_controlled:
+            command.append("--disable-blink-features=AutomationControlled")
         if headless:
             command.append("--headless=new")
         if os.geteuid() == 0:
@@ -986,6 +1039,7 @@ class LexmountDOMMode:
         episode_timeout_s: float,
         max_repeated_tool_calls: int,
         context_overrides: dict[str, Any] | None = None,
+        local_disable_automation_controlled: bool = False,
     ) -> None:
         if dom_backend not in {"stagehand", "cdp"}:
             raise ValueError(f"Unsupported dom_backend={dom_backend!r}")
@@ -1022,6 +1076,7 @@ class LexmountDOMMode:
         self.local_chrome_headless = local_chrome_headless
         self.local_proxy_server = local_proxy_server
         self.local_proxy_bypass = local_proxy_bypass
+        self.local_disable_automation_controlled = local_disable_automation_controlled
         self.network_change_retries = network_change_retries
         self.context_overrides = dict(context_overrides or {})
         if self.context_overrides and dom_backend != "cdp":
@@ -1100,6 +1155,7 @@ class LexmountDOMMode:
                     proxy_server=self.local_proxy_server,
                     proxy_bypass=self.local_proxy_bypass,
                     timeout_s=self.setup_navigation_timeout_s,
+                    disable_automation_controlled=self.local_disable_automation_controlled,
                 )
                 context_started_at = time.monotonic()
                 state["browser_context"] = await asyncio.to_thread(

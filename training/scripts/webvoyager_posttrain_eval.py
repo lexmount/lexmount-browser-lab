@@ -545,11 +545,29 @@ def parse_context_geolocation(value: str) -> dict[str, float]:
     return {"latitude": latitude, "longitude": longitude, "accuracy": accuracy}
 
 
+def parse_context_dimensions(value: str) -> dict[str, int]:
+    """Parse ``widthxheight`` for an opt-in browser fingerprint override."""
+
+    parts = value.lower().split("x")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("context dimensions must be widthxheight")
+    try:
+        width, height = (int(part.strip()) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("context dimensions must be widthxheight") from exc
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("context dimensions must be positive")
+    return {"width": width, "height": height}
+
+
 def browser_context_overrides(args: argparse.Namespace) -> dict[str, Any]:
     values = {
         "locale": args.context_locale,
         "timezone_id": args.context_timezone_id,
         "geolocation": args.context_geolocation,
+        "user_agent": args.context_user_agent,
+        "viewport": args.context_viewport,
+        "screen": args.context_screen,
     }
     return {key: value for key, value in values.items() if value is not None}
 
@@ -1280,6 +1298,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         episode_timeout_s=args.episode_timeout,
         max_repeated_tool_calls=3,
         context_overrides=browser_context_overrides(args),
+        local_disable_automation_controlled=args.local_disable_automation_controlled,
     )
     manifest = {
         "schema_version": 1,
@@ -1317,6 +1336,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "per_tool_timeout_seconds": args.per_tool_timeout,
             "episode_timeout_seconds": args.episode_timeout,
             "local_chrome_headless": not args.local_chrome_headed,
+            "local_disable_automation_controlled": args.local_disable_automation_controlled,
             "local_proxy_configured": bool(args.local_proxy_server),
             "network_change_retries": args.network_change_retries,
             "lexmount_official_proxy": args.lexmount_official_proxy,
@@ -1449,6 +1469,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         episode_timeout_s=args.episode_timeout,
         max_repeated_tool_calls=3,
         context_overrides=browser_context_overrides(args),
+        local_disable_automation_controlled=args.local_disable_automation_controlled,
     )
     manifest = {
         "schema_version": 1,
@@ -1473,6 +1494,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "setup_navigation_timeout_seconds": args.setup_navigation_timeout,
             "per_tool_timeout_seconds": args.per_tool_timeout,
             "local_chrome_headless": not args.local_chrome_headed,
+            "local_disable_automation_controlled": args.local_disable_automation_controlled,
             "local_proxy_configured": bool(args.local_proxy_server),
             "network_change_retries": args.network_change_retries,
             "lexmount_official_proxy": args.lexmount_official_proxy,
@@ -1573,6 +1595,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--episode-timeout", type=float, default=180.0)
     run.add_argument("--local-chrome-executable")
     run.add_argument("--local-chrome-headed", action="store_true")
+    run.add_argument("--local-disable-automation-controlled", action="store_true")
     run.add_argument("--local-proxy-server")
     run.add_argument("--local-proxy-bypass")
     run.add_argument(
@@ -1590,6 +1613,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--context-locale")
     run.add_argument("--context-timezone-id")
     run.add_argument("--context-geolocation", type=parse_context_geolocation)
+    run.add_argument("--context-user-agent")
+    run.add_argument("--context-viewport", type=parse_context_dimensions)
+    run.add_argument("--context-screen", type=parse_context_dimensions)
 
     probe = subparsers.add_parser(
         "probe", help="measure browser usable-DOM availability without a policy"
@@ -1614,6 +1640,7 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--episode-timeout", type=float, default=180.0)
     probe.add_argument("--local-chrome-executable")
     probe.add_argument("--local-chrome-headed", action="store_true")
+    probe.add_argument("--local-disable-automation-controlled", action="store_true")
     probe.add_argument("--local-proxy-server")
     probe.add_argument("--local-proxy-bypass")
     probe.add_argument(
@@ -1631,6 +1658,9 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--context-locale")
     probe.add_argument("--context-timezone-id")
     probe.add_argument("--context-geolocation", type=parse_context_geolocation)
+    probe.add_argument("--context-user-agent")
+    probe.add_argument("--context-viewport", type=parse_context_dimensions)
+    probe.add_argument("--context-screen", type=parse_context_dimensions)
     return parser
 
 
