@@ -11,6 +11,8 @@ ARTIFACT_ROOT="$ROOT_DIR/artifacts/qwen3-8b-lexbench/controlled-pairs"
 CONCURRENCY=1
 ORDER="local-first"
 LABEL="controlled-parity"
+MODEL_NAME="qwen3-8B"
+EXPECTED_MODEL_ID="qwen3_8B"
 
 usage() {
   printf '%s\n' \
@@ -18,6 +20,7 @@ usage() {
     "          [--base-env-file PATH]" \
     "          [--config PATH] [--artifact-root PATH] [--concurrency N]" \
     "          [--order local-first|lexmount-first] [--label NAME]" \
+    "          [--model-name NAME] [--expected-model-id ID]" \
     "" \
     "Set LEXBENCH_QWEN_BASE_URL and LEXBENCH_QWEN_API_KEY to override stale" \
     "model endpoint values in --env-file for this process only."
@@ -34,6 +37,8 @@ while (($#)); do
     --concurrency) CONCURRENCY=$2; shift 2 ;;
     --order) ORDER=$2; shift 2 ;;
     --label) LABEL=$2; shift 2 ;;
+    --model-name) MODEL_NAME=$2; shift 2 ;;
+    --expected-model-id) EXPECTED_MODEL_ID=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -55,6 +60,11 @@ fi
   exit 2
 }
 [[ "$LABEL" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid --label" >&2; exit 2; }
+[[ "$MODEL_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid --model-name" >&2; exit 2; }
+[[ "$EXPECTED_MODEL_ID" =~ ^[A-Za-z0-9._-]+$ ]] || {
+  echo "invalid --expected-model-id" >&2
+  exit 2
+}
 
 set -a
 if [[ -n "$BASE_ENV_FILE" ]]; then
@@ -82,8 +92,8 @@ for name in \
   LEXBENCH_LEXMOUNT_PROXY_USERNAME LEXBENCH_LEXMOUNT_PROXY_PASSWORD; do
   [[ -n ${!name:-} ]] || { echo "missing required environment value: $name" >&2; exit 2; }
 done
-[[ "$QWEN_MODEL_ID" == "qwen3_8B" ]] || {
-  echo "controlled protocol requires QWEN_MODEL_ID=qwen3_8B" >&2
+[[ "$QWEN_MODEL_ID" == "$EXPECTED_MODEL_ID" ]] || {
+  echo "controlled protocol requires QWEN_MODEL_ID=$EXPECTED_MODEL_ID" >&2
   exit 2
 }
 [[ "$LEXBENCH_JUDGE_MODEL" == "gpt-5.4" ]] || {
@@ -168,7 +178,7 @@ run_arm() {
     --agent-config "$CONFIG"
     --data LexBench-Browser
     --split All
-    --model qwen3-8B
+    --model "$MODEL_NAME"
     --browser-id "$backend"
     --timestamp "$timestamp"
     --mode specific
