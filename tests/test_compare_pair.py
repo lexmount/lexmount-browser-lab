@@ -29,3 +29,30 @@ def test_compare_pair_builds_paired_table() -> None:
         "both_failed": 0,
     }
     assert result["success_rate_difference"]["lexmount_minus_local"] == 0.0
+
+
+def test_noninferiority_does_not_treat_two_shared_failures_as_sufficient_evidence() -> None:
+    summaries = {"per_task": {"1": {"success": False}, "2": {"success": False}}}
+
+    result = compare_pair(summaries, summaries, bootstrap_samples=100, seed=1)
+
+    assert result["positive_outcome_coverage"] == {
+        "both_success": 0,
+        "at_least_one_success": 0,
+        "both_failed": 2,
+    }
+    assert result["noninferiority"]["local_only_count"] == 0
+    assert result["noninferiority"]["local_only_one_sided_95_upper_bound"] > 0.05
+    assert result["noninferiority"]["passed"] is False
+
+
+def test_noninferiority_passes_after_sixty_non_local_only_pairs() -> None:
+    summaries = {
+        "per_task": {str(index): {"success": True} for index in range(1, 61)}
+    }
+
+    result = compare_pair(summaries, summaries, bootstrap_samples=100, seed=1)
+
+    assert result["noninferiority"]["local_only_count"] == 0
+    assert result["noninferiority"]["local_only_one_sided_95_upper_bound"] < 0.05
+    assert result["noninferiority"]["passed"] is True

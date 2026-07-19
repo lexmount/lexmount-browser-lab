@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import random
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,35 @@ from typing import Any
 def _quantile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]
+
+
+def _binomial_cdf(successes: int, trials: int, probability: float) -> float:
+    return sum(
+        math.comb(trials, observed)
+        * probability**observed
+        * (1 - probability) ** (trials - observed)
+        for observed in range(successes + 1)
+    )
+
+
+def _one_sided_clopper_pearson_upper(successes: int, trials: int, alpha: float = 0.05) -> float:
+    """Return the exact one-sided upper confidence bound for a binomial rate."""
+    if trials < 1 or not 0 <= successes <= trials:
+        raise ValueError("invalid binomial count")
+    if successes == trials:
+        return 1.0
+    if successes == 0:
+        return 1 - alpha ** (1 / trials)
+
+    lower = successes / trials
+    upper = 1.0
+    for _ in range(80):
+        midpoint = (lower + upper) / 2
+        if _binomial_cdf(successes, trials, midpoint) > alpha:
+            lower = midpoint
+        else:
+            upper = midpoint
+    return upper
 
 
 def compare_pair(
@@ -36,7 +66,9 @@ def compare_pair(
     both_success = sum(pair == (1, 1) for pair in pairs)
     lex_only = sum(pair == (1, 0) for pair in pairs)
     local_only = sum(pair == (0, 1) for pair in pairs)
+    both_failed = len(pairs) - both_success - lex_only - local_only
     difference = (lex_success - local_success) / len(pairs)
+    local_only_upper = _one_sided_clopper_pearson_upper(local_only, len(pairs))
 
     rng = random.Random(seed)
     bootstrap: list[float] = []
@@ -46,24 +78,37 @@ def compare_pair(
     lower = _quantile(bootstrap, 0.025)
     upper = _quantile(bootstrap, 0.975)
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "paired_tasks": len(pairs),
         "success": {"lexmount": lex_success, "local": local_success},
         "paired_table": {
             "both_success": both_success,
             "lexmount_only": lex_only,
             "local_only": local_only,
-            "both_failed": len(pairs) - both_success - lex_only - local_only,
+            "both_failed": both_failed,
+        },
+        "positive_outcome_coverage": {
+            "both_success": both_success,
+            "at_least_one_success": both_success + lex_only + local_only,
+            "both_failed": both_failed,
         },
         "success_rate_difference": {
             "lexmount_minus_local": round(difference, 6),
             "bootstrap_95_ci": [round(lower, 6), round(upper, 6)],
             "bootstrap_samples": bootstrap_samples,
+            "bootstrap_note": "descriptive resampling interval; not used for noninferiority",
         },
         "noninferiority": {
             "margin": margin,
-            "passed": lower >= -margin,
-            "rule": "lower bootstrap CI >= -margin",
+            "local_only_count": local_only,
+            "local_only_rate": round(local_only / len(pairs), 6),
+            "local_only_one_sided_95_upper_bound": round(local_only_upper, 6),
+            "passed": local_only_upper <= margin,
+            "rule": "exact one-sided Clopper-Pearson upper bound for local-only outcomes <= margin",
+            "scope_note": (
+                "A pass bounds the rate of observed Local-only successes; "
+                "positive shared-success coverage is reported separately."
+            ),
         },
     }
 
