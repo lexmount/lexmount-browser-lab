@@ -6,6 +6,10 @@ destinations, and can require HTTP proxy Basic authentication.  The intended
 use is two listeners on the same evaluator host: a loopback-only listener for
 local Chrome and an authenticated listener behind a short-lived TCP tunnel for
 Lexmount.  Both browser arms then share the evaluator host's public egress.
+
+The loopback listener can also chain to an authenticated public upstream proxy.
+That lets local Chrome use a credential-free ``--proxy-server`` while a remote
+browser and local Chrome exit through one explicit shared proxy.
 """
 
 from __future__ import annotations
@@ -33,6 +37,15 @@ class ProxyConfig:
     username: str | None
     password: str | None
     max_connections: int
+    upstream_proxy: UpstreamProxyConfig | None
+
+
+@dataclass(frozen=True)
+class UpstreamProxyConfig:
+    host: str
+    port: int
+    username: str
+    password: str
 
 
 def parse_listen(value: str) -> tuple[str, int]:
@@ -64,6 +77,27 @@ def parse_authority(value: str, *, default_port: int | None = None) -> tuple[str
     if port not in ALLOWED_PORTS:
         raise ValueError(f"target port {port} is not allowed")
     return host, port
+
+
+def parse_upstream_proxy_server(value: str) -> tuple[str, int]:
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() != "http" or not parsed.hostname:
+        raise argparse.ArgumentTypeError(
+            "--upstream-proxy-server must be an absolute http://HOST:PORT URL"
+        )
+    if parsed.username is not None or parsed.password is not None:
+        raise argparse.ArgumentTypeError("--upstream-proxy-server must not embed credentials")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise argparse.ArgumentTypeError(
+            "--upstream-proxy-server must not include a path, query, or fragment"
+        )
+    try:
+        port = parsed.port or 80
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--upstream-proxy-server has an invalid port") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("--upstream-proxy-server port must be between 1 and 65535")
+    return parsed.hostname, port
 
 
 def is_public_address(value: str) -> bool:
@@ -154,9 +188,7 @@ async def write_response(writer: asyncio.StreamWriter, status: str, body: str = 
     payload = body.encode("utf-8")
     writer.write(
         (
-            f"HTTP/1.1 {status}\r\n"
-            f"Content-Length: {len(payload)}\r\n"
-            "Connection: close\r\n\r\n"
+            f"HTTP/1.1 {status}\r\nContent-Length: {len(payload)}\r\nConnection: close\r\n\r\n"
         ).encode("ascii")
         + payload
     )
@@ -218,6 +250,81 @@ def upstream_request(
     return host, port, ("\r\n".join(forwarded) + "\r\n\r\n").encode("iso-8859-1")
 
 
+def basic_proxy_authorization(username: str, password: str) -> str:
+    token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+    return f"Basic {token}"
+
+
+def upstream_proxy_connect_request(
+    host: str,
+    port: int,
+    upstream: UpstreamProxyConfig,
+) -> bytes:
+    authority = f"{host}:{port}"
+    authorization = basic_proxy_authorization(upstream.username, upstream.password)
+    return (
+        f"CONNECT {authority} HTTP/1.1\r\n"
+        f"Host: {authority}\r\n"
+        f"Proxy-Authorization: {authorization}\r\n"
+        "Connection: keep-alive\r\n\r\n"
+    ).encode("iso-8859-1")
+
+
+def upstream_proxy_request(
+    method: str,
+    target: str,
+    version: str,
+    headers: dict[str, str],
+    upstream: UpstreamProxyConfig,
+) -> tuple[str, int, bytes]:
+    parsed = urlsplit(target)
+    if parsed.scheme.lower() != "http" or not parsed.hostname:
+        raise ValueError("only absolute http URLs are supported outside CONNECT")
+    host, port = parse_authority(parsed.netloc, default_port=80)
+    forwarded = [f"{method} {target} {version}"]
+    seen_host = False
+    for name, value in headers.items():
+        if name in {"proxy-authorization", "proxy-connection", "connection"}:
+            continue
+        if name == "host":
+            seen_host = True
+        forwarded.append(f"{name.title()}: {value}")
+    if not seen_host:
+        forwarded.append(f"Host: {parsed.netloc}")
+    forwarded.append(
+        f"Proxy-Authorization: {basic_proxy_authorization(upstream.username, upstream.password)}"
+    )
+    forwarded.append("Connection: close")
+    return host, port, ("\r\n".join(forwarded) + "\r\n\r\n").encode("iso-8859-1")
+
+
+async def upstream_proxy_connect(
+    upstream: UpstreamProxyConfig,
+    host: str,
+    port: int,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
+    reader, writer = await open_public_connection(upstream.host, upstream.port)
+    try:
+        writer.write(upstream_proxy_connect_request(host, port, upstream))
+        await writer.drain()
+        response = await asyncio.wait_for(
+            reader.readuntil(b"\r\n\r\n"), timeout=CONNECT_TIMEOUT_SECONDS
+        )
+        if len(response) > MAX_HEADER_BYTES:
+            raise ValueError("upstream proxy response headers exceed limit")
+        status = response.decode("iso-8859-1").split("\r\n", 1)[0]
+        if not status.startswith("HTTP/"):
+            raise ConnectionError("upstream proxy returned a malformed response")
+        if not status.split(" ", 2)[1:2] == ["200"]:
+            raise ConnectionError(f"upstream proxy rejected CONNECT: {status}")
+        return reader, writer, response
+    except BaseException:
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        raise
+
+
 async def handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -243,15 +350,31 @@ async def handle_client(
                 return
             if method == "CONNECT":
                 host, port = parse_authority(target)
-                upstream_reader, upstream_writer = await open_public_connection(host, port)
+                if config.upstream_proxy is None:
+                    upstream_reader, upstream_writer = await open_public_connection(host, port)
+                    response = b"HTTP/1.1 200 Connection Established\r\n\r\n"
+                else:
+                    await resolve_public_addresses(host, port)
+                    upstream_reader, upstream_writer, response = await upstream_proxy_connect(
+                        config.upstream_proxy, host, port
+                    )
                 logging.info("CONNECT accepted peer=%s host=%s port=%s", peer, host, port)
-                writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                writer.write(response)
                 await writer.drain()
                 await bridge(reader, writer, upstream_reader, upstream_writer)
                 return
 
-            host, port, request = upstream_request(method, target, version, headers)
-            upstream_reader, upstream_writer = await open_public_connection(host, port)
+            if config.upstream_proxy is None:
+                host, port, request = upstream_request(method, target, version, headers)
+                upstream_reader, upstream_writer = await open_public_connection(host, port)
+            else:
+                host, port, request = upstream_proxy_request(
+                    method, target, version, headers, config.upstream_proxy
+                )
+                await resolve_public_addresses(host, port)
+                upstream_reader, upstream_writer = await open_public_connection(
+                    config.upstream_proxy.host, config.upstream_proxy.port
+                )
             logging.info("HTTP accepted peer=%s host=%s port=%s", peer, host, port)
             upstream_writer.write(request)
             await upstream_writer.drain()
@@ -285,11 +408,31 @@ async def serve(args: argparse.Namespace) -> None:
     password = args.password or None
     if bool(username) != bool(password):
         raise ValueError("--username and --password must be provided together")
+    upstream_values = (
+        args.upstream_proxy_server,
+        args.upstream_proxy_username,
+        args.upstream_proxy_password,
+    )
+    if any(upstream_values) and not all(upstream_values):
+        raise ValueError(
+            "--upstream-proxy-server, --upstream-proxy-username, and "
+            "--upstream-proxy-password-file must be provided together"
+        )
+    upstream_proxy = None
+    if args.upstream_proxy_server:
+        host, port = parse_upstream_proxy_server(args.upstream_proxy_server)
+        upstream_proxy = UpstreamProxyConfig(
+            host=host,
+            port=port,
+            username=args.upstream_proxy_username,
+            password=args.upstream_proxy_password,
+        )
     host, port = args.listen
     config = ProxyConfig(
         username=username,
         password=password,
         max_connections=args.max_connections,
+        upstream_proxy=upstream_proxy,
     )
     slots = asyncio.Semaphore(config.max_connections)
     server = await asyncio.start_server(
@@ -299,7 +442,10 @@ async def serve(args: argparse.Namespace) -> None:
         limit=MAX_HEADER_BYTES,
     )
     auth_mode = "basic-auth" if username else "loopback-no-auth"
-    logging.info("paired-egress proxy listening on %s:%s (%s)", host, port, auth_mode)
+    route_mode = "via-upstream" if upstream_proxy else "direct-egress"
+    logging.info(
+        "paired-egress proxy listening on %s:%s (%s, %s)", host, port, auth_mode, route_mode
+    )
     async with server:
         await server.serve_forever()
 
@@ -311,6 +457,11 @@ def build_parser() -> argparse.ArgumentParser:
     password_group = parser.add_mutually_exclusive_group()
     password_group.add_argument("--password")
     password_group.add_argument("--password-file", type=Path)
+    parser.add_argument("--upstream-proxy-server")
+    parser.add_argument("--upstream-proxy-username")
+    upstream_password_group = parser.add_mutually_exclusive_group()
+    upstream_password_group.add_argument("--upstream-proxy-password")
+    upstream_password_group.add_argument("--upstream-proxy-password-file", type=Path)
     parser.add_argument("--max-connections", type=int, default=MAX_CONNECTIONS)
     return parser
 
@@ -324,6 +475,13 @@ def main() -> int:
             args.password = args.password_file.read_text(encoding="utf-8").strip()
         except OSError as exc:
             raise SystemExit(f"could not read --password-file: {exc}") from exc
+    if args.upstream_proxy_password_file is not None:
+        try:
+            args.upstream_proxy_password = args.upstream_proxy_password_file.read_text(
+                encoding="utf-8"
+            ).strip()
+        except OSError as exc:
+            raise SystemExit(f"could not read --upstream-proxy-password-file: {exc}") from exc
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(serve(args))
     return 0
