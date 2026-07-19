@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import contextlib
 import ipaddress
+import logging
 
 
 def parse_endpoint(value: str, *, loopback_only: bool = False) -> tuple[str, int]:
@@ -53,11 +54,14 @@ async def relay(
     slots: asyncio.Semaphore,
 ) -> None:
     upstream_writer: asyncio.StreamWriter | None = None
+    peer = writer.get_extra_info("peername")
     try:
         async with slots:
+            logging.info("TCP relay accepted peer=%s", peer)
             upstream_reader, upstream_writer = await asyncio.wait_for(
                 asyncio.open_connection(*upstream), timeout=15.0
             )
+            logging.info("TCP relay connected peer=%s", peer)
             tasks = [
                 asyncio.create_task(copy(reader, upstream_writer)),
                 asyncio.create_task(copy(upstream_reader, writer)),
@@ -69,8 +73,9 @@ async def relay(
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-    except (OSError, TimeoutError):
-        pass
+            logging.info("TCP relay completed peer=%s", peer)
+    except (OSError, TimeoutError) as exc:
+        logging.info("TCP relay failed peer=%s error=%s", peer, type(exc).__name__)
     finally:
         if upstream_writer is not None:
             upstream_writer.close()
@@ -106,6 +111,7 @@ def main() -> int:
     args.upstream = parse_endpoint(args.upstream, loopback_only=True)
     if args.max_connections < 1:
         parser.error("--max-connections must be positive")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(serve(args))
     return 0
 
