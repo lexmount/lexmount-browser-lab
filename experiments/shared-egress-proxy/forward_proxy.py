@@ -217,12 +217,20 @@ async def write_response(writer: asyncio.StreamWriter, status: str, body: str = 
 async def relay(
     source: asyncio.StreamReader,
     destination: asyncio.StreamWriter,
+    *,
+    direction: str,
 ) -> None:
+    transferred = 0
     try:
         while block := await source.read(64 * 1024):
+            transferred += len(block)
             destination.write(block)
             await destination.drain()
+    except ConnectionResetError:
+        logging.info("Proxy bridge reset direction=%s bytes=%s", direction, transferred)
+        raise
     finally:
+        logging.info("Proxy bridge eof direction=%s bytes=%s", direction, transferred)
         # A CONNECT client can half-close after sending its request and still
         # need to receive the upstream response. Propagate that EOF instead of
         # treating it as a reason to tear down the opposite direction.
@@ -239,8 +247,12 @@ async def bridge(
     upstream_writer: asyncio.StreamWriter,
 ) -> None:
     tasks = [
-        asyncio.create_task(relay(client_reader, upstream_writer)),
-        asyncio.create_task(relay(upstream_reader, client_writer)),
+        asyncio.create_task(
+            relay(client_reader, upstream_writer, direction="client_to_upstream")
+        ),
+        asyncio.create_task(
+            relay(upstream_reader, client_writer, direction="upstream_to_client")
+        ),
     ]
     try:
         await asyncio.gather(*tasks)
