@@ -391,7 +391,8 @@ async def handle_client(
             upstream_writer.write(request)
             await upstream_writer.drain()
             await bridge(reader, writer, upstream_reader, upstream_writer)
-    except asyncio.IncompleteReadError:
+    except asyncio.IncompleteReadError as exc:
+        logging.info("Proxy request incomplete peer=%s bytes=%s", peer, len(exc.partial))
         return
     except Exception as exc:
         # Python 3.10 exposes asyncio.TimeoutError separately from the
