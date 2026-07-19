@@ -133,7 +133,7 @@ seed `20260719` 抽取的 64 条样本；`block-a` 与 `block-b` 是其不重叠
 LexBench 行为。它必须在产物中保留 `network-mode.txt`，不得作为同出口等价性或严格非劣性结论的依据。
 
 `runtime.from-openai.env` 不含密钥；将私有基础 `.env` 作为 `--base-env-file` 传入后，它会把
-`OPENAI_*` 映射为本 runner 所需的模型和 Judge 变量。
+`OPENAI_*` 映射为本 runner 所需的模型和 Judge 变量，并显式固定 `OPENAI_MODEL_ID=gpt-5.5`。
 
 ## Partial-arm handling
 
