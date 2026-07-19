@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BENCHMARK_REPO=""
 ENV_FILE=""
+BASE_ENV_FILE=""
 TASK_FILE=""
 CONFIG="$ROOT_DIR/experiments/qwen3-8b-lexbench/config.controlled-egress.yaml"
 ARTIFACT_ROOT="$ROOT_DIR/artifacts/qwen3-8b-lexbench/controlled-pairs"
@@ -14,6 +15,7 @@ LABEL="controlled-parity"
 usage() {
   printf '%s\n' \
     "usage: $0 --benchmark-repo PATH --env-file PATH --task-file PATH" \
+    "          [--base-env-file PATH]" \
     "          [--config PATH] [--artifact-root PATH] [--concurrency N]" \
     "          [--order local-first|lexmount-first] [--label NAME]" \
     "" \
@@ -25,6 +27,7 @@ while (($#)); do
   case "$1" in
     --benchmark-repo) BENCHMARK_REPO=$2; shift 2 ;;
     --env-file) ENV_FILE=$2; shift 2 ;;
+    --base-env-file) BASE_ENV_FILE=$2; shift 2 ;;
     --task-file) TASK_FILE=$2; shift 2 ;;
     --config) CONFIG=$2; shift 2 ;;
     --artifact-root) ARTIFACT_ROOT=$2; shift 2 ;;
@@ -40,6 +43,9 @@ done
   echo "invalid --benchmark-repo" >&2
   exit 2
 }
+if [[ -n "$BASE_ENV_FILE" ]]; then
+  [[ -f "$BASE_ENV_FILE" ]] || { echo "invalid --base-env-file" >&2; exit 2; }
+fi
 [[ -f "$ENV_FILE" ]] || { echo "invalid --env-file" >&2; exit 2; }
 [[ -f "$TASK_FILE" ]] || { echo "invalid --task-file" >&2; exit 2; }
 [[ -f "$CONFIG" ]] || { echo "invalid --config" >&2; exit 2; }
@@ -51,6 +57,10 @@ done
 [[ "$LABEL" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "invalid --label" >&2; exit 2; }
 
 set -a
+if [[ -n "$BASE_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$BASE_ENV_FILE"
+fi
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
