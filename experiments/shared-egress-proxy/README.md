@@ -12,3 +12,8 @@ paired run.
 
 Pass the external listener credential with `--password-file` (a `0600` file),
 not `--password`, so it is not visible through the process list.
+
+If cpolar emits its endpoint inside an escaped JSON log line, extract it with
+`extract_cpolar_tcp_endpoint.py` rather than a broad shell regex. The helper
+validates `host:port` and removes the JSON escape suffix before the value is
+used for a Lexmount external proxy.
