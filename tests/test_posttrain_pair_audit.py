@@ -154,6 +154,27 @@ def test_audit_rejects_incomplete_task_coverage(tmp_path: Path) -> None:
         module.audit_pair(lexmount_dir, local_dir)
 
 
+def test_audit_excludes_rendered_rate_limit_pages_from_quality(tmp_path: Path) -> None:
+    module = load_script_module()
+    lexmount_dir = tmp_path / "lexmount"
+    local_dir = tmp_path / "local"
+    rate_limited = record("task-1", verdict="no")
+    rate_limited["events"] = [
+        {"result": "Too many requests. You have exceeded a secondary rate limit."}
+    ]
+    write_run(lexmount_dir, backend="lexmount", rows=[rate_limited])
+    write_run(local_dir, backend="local", rows=[record("task-1", verdict="no")])
+
+    audit = module.audit_pair(lexmount_dir, local_dir)
+
+    assert audit["arms"]["lexmount"]["infrastructure_failures"] == 1
+    assert audit["arms"]["lexmount"]["quality_eligible"] == 0
+    assert audit["paired_quality"]["eligible_tasks"] == 0
+    assert audit["pairs"][0]["lexmount"]["event_error_codes"] == [
+        "ERROR_INFRASTRUCTURE_RATE_LIMIT_PAGE"
+    ]
+
+
 def test_audit_marks_manifest_control_differences(tmp_path: Path) -> None:
     module = load_script_module()
     lexmount_dir = tmp_path / "lexmount"

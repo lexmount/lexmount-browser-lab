@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 ERROR_CODE_PATTERN = re.compile(r"\b(ERROR_[A-Z_]+)\b")
+RATE_LIMIT_PAGE_PATTERN = re.compile(
+    r"\b(?:secondary rate limit|too many requests)\b", re.IGNORECASE
+)
 CONTRACT_KEYS = (
     "protocol",
     "schema_version",
@@ -106,6 +109,22 @@ def event_error_codes(record: Mapping[str, Any]) -> list[str]:
     return sorted(codes)
 
 
+def semantic_infrastructure_error_codes(record: Mapping[str, Any]) -> list[str]:
+    """Detect known target-side block pages in legacy trajectory records.
+
+    Older runs did not classify GitHub's rendered secondary-rate-limit page as
+    an infrastructure error.  The page makes the task unavailable even though
+    navigation itself completed, so it must not enter the quality denominator.
+    """
+
+    for event in record.get("events") or []:
+        if not isinstance(event, Mapping):
+            continue
+        if RATE_LIMIT_PAGE_PATTERN.search(str(event.get("result") or "")):
+            return ["ERROR_INFRASTRUCTURE_RATE_LIMIT_PAGE"]
+    return []
+
+
 def normalize_arm(record: Mapping[str, Any]) -> dict[str, Any]:
     task = record.get("task") if isinstance(record.get("task"), Mapping) else {}
     guard = record.get("guard") if isinstance(record.get("guard"), Mapping) else {}
@@ -115,7 +134,13 @@ def normalize_arm(record: Mapping[str, Any]) -> dict[str, Any]:
     policy_failures = int(guard.get("policy_failures") or 0)
     timeouts = int(guard.get("timeouts") or 0)
     setup_or_runner_error = status != "completed"
-    infrastructure = setup_or_runner_error or infrastructure_failures > 0 or timeouts > 0
+    semantic_infrastructure_codes = semantic_infrastructure_error_codes(record)
+    infrastructure = (
+        setup_or_runner_error
+        or infrastructure_failures > 0
+        or timeouts > 0
+        or bool(semantic_infrastructure_codes)
+    )
     judge_status = str(judge.get("status") or "missing")
     verdict = judge.get("verdict") if judge.get("verdict") in {"yes", "no"} else None
     quality_eligible = status == "completed" and not infrastructure and judge_status == "ok"
@@ -140,7 +165,9 @@ def normalize_arm(record: Mapping[str, Any]) -> dict[str, Any]:
             "timeouts": timeouts,
             "termination_reason": str(guard.get("termination_reason") or ""),
         },
-        "event_error_codes": event_error_codes(record),
+        "event_error_codes": sorted(
+            set(event_error_codes(record)) | set(semantic_infrastructure_codes)
+        ),
         "wall_seconds": record.get("wall_seconds"),
     }
 

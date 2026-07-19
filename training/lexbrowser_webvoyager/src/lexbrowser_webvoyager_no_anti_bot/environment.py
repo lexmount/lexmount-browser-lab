@@ -44,6 +44,8 @@ def _is_anti_bot_challenge(url: str, visible_text: str) -> bool:
         or "checking your browser" in normalized_text
         or "just a moment" in normalized_text
         or "captcha" in normalized_text
+        or "secondary rate limit" in normalized_text
+        or "too many requests" in normalized_text
     )
 
 EXPECTED_DATASET_ROWS = 600
