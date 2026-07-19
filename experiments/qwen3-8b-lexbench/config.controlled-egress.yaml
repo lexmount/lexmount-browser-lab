@@ -10,6 +10,7 @@ models:
     model_id: $QWEN_MODEL_ID
     api_key: $QWEN_API_KEY
     base_url: $QWEN_BASE_URL
+    temperature: 0.0
     frequency_penalty: null
     dont_force_structured_output: false
     add_schema_to_system_prompt: true
