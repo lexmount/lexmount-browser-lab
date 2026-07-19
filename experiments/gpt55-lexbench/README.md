@@ -132,6 +132,9 @@ seed `20260719` 抽取的 64 条样本；`block-a` 与 `block-b` 是其不重叠
 `config.direct.yaml` 与 `--network-mode direct` 只用于在无法建立可靠共享出口时补充观察两端的
 LexBench 行为。它必须在产物中保留 `network-mode.txt`，不得作为同出口等价性或严格非劣性结论的依据。
 
+`runtime.from-openai.env` 不含密钥；将私有基础 `.env` 作为 `--base-env-file` 传入后，它会把
+`OPENAI_*` 映射为本 runner 所需的模型和 Judge 变量。
+
 ## Partial-arm handling
 
 单题的非零 rollout exit 不会再丢弃该 arm 已经完成的轨迹：驱动会继续执行官方 Judge、summary 和另一端。
