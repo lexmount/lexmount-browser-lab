@@ -44,6 +44,86 @@ def test_probe_parser_accepts_explicit_concurrency() -> None:
     assert args.concurrency == 64
 
 
+def test_probe_uses_safe_high_concurrency_setup_defaults() -> None:
+    module = load_script_module()
+    args = module.build_parser().parse_args(
+        [
+            "probe",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "lexmount",
+            "--concurrency",
+            "64",
+        ]
+    )
+
+    budget = module.resolve_probe_setup_budget(args)
+
+    assert budget == {
+        "profile": "high_concurrency",
+        "high_concurrency_threshold": 32,
+        "values": {
+            "setup_attempts": 1,
+            "session_create_timeout": 180.0,
+            "setup_navigation_timeout": 60.0,
+            "episode_timeout": 300.0,
+        },
+        "sources": {
+            "setup_attempts": "adaptive_high_concurrency",
+            "session_create_timeout": "adaptive_high_concurrency",
+            "setup_navigation_timeout": "adaptive_high_concurrency",
+            "episode_timeout": "adaptive_high_concurrency",
+        },
+    }
+    assert args.setup_attempts == 1
+    assert args.session_create_timeout == 180.0
+    assert args.setup_navigation_timeout == 60.0
+    assert args.episode_timeout == 300.0
+
+
+def test_probe_explicit_setup_budget_overrides_high_concurrency_defaults() -> None:
+    module = load_script_module()
+    args = module.build_parser().parse_args(
+        [
+            "probe",
+            "--tasks",
+            "tasks.jsonl",
+            "--output-dir",
+            "out",
+            "--backend",
+            "lexmount",
+            "--concurrency",
+            "64",
+            "--setup-attempts",
+            "2",
+            "--session-create-timeout",
+            "90",
+            "--setup-navigation-timeout",
+            "45",
+            "--episode-timeout",
+            "240",
+        ]
+    )
+
+    budget = module.resolve_probe_setup_budget(args)
+
+    assert budget["sources"] == {
+        "setup_attempts": "explicit",
+        "session_create_timeout": "explicit",
+        "setup_navigation_timeout": "explicit",
+        "episode_timeout": "explicit",
+    }
+    assert budget["values"] == {
+        "setup_attempts": 2,
+        "session_create_timeout": 90.0,
+        "setup_navigation_timeout": 45.0,
+        "episode_timeout": 240.0,
+    }
+
+
 def test_select_common_available_writes_source_ordered_manifest(tmp_path: Path) -> None:
     module = load_script_module()
     tasks_path = tmp_path / "tasks.jsonl"

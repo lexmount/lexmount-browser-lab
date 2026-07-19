@@ -122,6 +122,23 @@ THINK_PATTERN = re.compile(r"<think\b[^>]*>.*?</think\s*>", re.IGNORECASE | re.D
 GIB = 1024**3
 MIN_USABLE_VISIBLE_TEXT_CHARS = 160
 MIN_USABLE_ACTIONABLE_ELEMENTS = 2
+HIGH_CONCURRENCY_PROBE_THRESHOLD = 32
+
+_STANDARD_PROBE_SETUP_DEFAULTS = {
+    "setup_attempts": 4,
+    "session_create_timeout": 60.0,
+    "setup_navigation_timeout": 30.0,
+    "episode_timeout": 180.0,
+}
+
+_HIGH_CONCURRENCY_PROBE_SETUP_DEFAULTS = {
+    # A retry storm at high fan-out can leave late SDK session-create calls in
+    # flight after the outer timeout. Prefer one long, observable attempt.
+    "setup_attempts": 1,
+    "session_create_timeout": 180.0,
+    "setup_navigation_timeout": 60.0,
+    "episode_timeout": 300.0,
+}
 
 
 @dataclass(frozen=True)
@@ -590,6 +607,34 @@ def browser_context_overrides(args: argparse.Namespace) -> dict[str, Any]:
         "screen": args.context_screen,
     }
     return {key: value for key, value in values.items() if value is not None}
+
+
+def resolve_probe_setup_budget(args: argparse.Namespace) -> dict[str, Any]:
+    """Resolve probe-only setup defaults and persist their provenance."""
+
+    high_concurrency = args.concurrency >= HIGH_CONCURRENCY_PROBE_THRESHOLD
+    defaults = (
+        _HIGH_CONCURRENCY_PROBE_SETUP_DEFAULTS
+        if high_concurrency
+        else _STANDARD_PROBE_SETUP_DEFAULTS
+    )
+    values: dict[str, int | float] = {}
+    sources: dict[str, str] = {}
+    for name, default in defaults.items():
+        explicit_value = getattr(args, name)
+        if explicit_value is None:
+            values[name] = default
+            sources[name] = "adaptive_high_concurrency" if high_concurrency else "standard_default"
+        else:
+            values[name] = explicit_value
+            sources[name] = "explicit"
+        setattr(args, name, values[name])
+    return {
+        "profile": "high_concurrency" if high_concurrency else "standard",
+        "high_concurrency_threshold": HIGH_CONCURRENCY_PROBE_THRESHOLD,
+        "values": values,
+        "sources": sources,
+    }
 
 
 def lexmount_external_proxy_from_env(args: argparse.Namespace) -> dict[str, str] | None:
@@ -1516,6 +1561,7 @@ async def run_probe(args: argparse.Namespace) -> int:
         raise RuntimeError("selected task manifest is empty")
     if args.concurrency < 1:
         raise ValueError("--concurrency must be at least 1")
+    probe_setup_budget = resolve_probe_setup_budget(args)
 
     # The CDP adapter and the Lexmount SDK are synchronous. asyncio.to_thread
     # otherwise uses Python's default executor (at most 32 workers), which
@@ -1599,6 +1645,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "setup_attempts": args.setup_attempts,
             "concurrency": args.concurrency,
             "blocking_thread_workers": blocking_thread_workers,
+            "probe_setup_budget": probe_setup_budget,
             "session_create_timeout_seconds": args.session_create_timeout,
             "setup_navigation_timeout_seconds": args.setup_navigation_timeout,
             "per_tool_timeout_seconds": args.per_tool_timeout,
@@ -1756,11 +1803,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="maximum simultaneous browser sessions (default: 1)",
     )
-    probe.add_argument("--setup-attempts", type=int, default=4)
-    probe.add_argument("--session-create-timeout", type=float, default=60.0)
-    probe.add_argument("--setup-navigation-timeout", type=float, default=30.0)
+    probe.add_argument(
+        "--setup-attempts",
+        type=int,
+        help="browser setup retries; default adapts to high-concurrency probes",
+    )
+    probe.add_argument(
+        "--session-create-timeout",
+        type=float,
+        help="seconds for one session creation; default adapts to high-concurrency probes",
+    )
+    probe.add_argument(
+        "--setup-navigation-timeout",
+        type=float,
+        help="seconds for start_url navigation; default adapts to high-concurrency probes",
+    )
     probe.add_argument("--per-tool-timeout", type=float, default=25.0)
-    probe.add_argument("--episode-timeout", type=float, default=180.0)
+    probe.add_argument(
+        "--episode-timeout",
+        type=float,
+        help="seconds for one probe episode; default adapts to high-concurrency probes",
+    )
     probe.add_argument("--local-chrome-executable")
     probe.add_argument("--local-chrome-headed", action="store_true")
     probe.add_argument("--local-disable-automation-controlled", action="store_true")

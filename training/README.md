@@ -136,6 +136,9 @@ PYTHONPATH=training/lexbrowser_webvoyager/src "$EVAL_PY" \
 `probe` 支持 `--concurrency N`，并将该值写入 `run_manifest.json`。先以 `N=1` 固定同一
 任务清单、超时和代理模式完成基线，再以 `N=64` 重跑同一清单测会话容量；不要把该并发值直接
 套到带 policy 的质量评测，否则模型服务排队会与浏览器会话容量混在一起。
+当 `N >= 32` 且未显式传入 setup 参数时，probe 会采用单次建会、180 秒建会、60 秒首跳和
+300 秒 episode 的高并发预算，避免短超时配合重试放大为建会风暴；实际取值及其来源会写入
+`run_manifest.json` 的 `browser.probe_setup_budget`。显式传入任一参数会覆盖对应默认值。
 为避免 Python 默认 32 线程池把大于 32 的会话请求悄悄排队，probe 会同步记录实际使用的
 `blocking_thread_workers`。任务也会在实际进入并发 worker 后才创建 episode deadline，因此
 低于任务总数的并发不会把排队时间误算为浏览器 episode 超时。
