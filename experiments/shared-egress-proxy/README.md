@@ -9,3 +9,6 @@ for Lexmount. The proxy denies private-network targets and permits only ports
 It is not a general-purpose proxy service. Keep the external listener
 authenticated, use an ephemeral credential, and terminate the tunnel after the
 paired run.
+
+Pass the external listener credential with `--password-file` (a `0600` file),
+not `--password`, so it is not visible through the process list.

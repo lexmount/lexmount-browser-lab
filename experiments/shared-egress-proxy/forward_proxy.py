@@ -19,6 +19,7 @@ import logging
 import socket
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_HEADER_BYTES = 64 * 1024
@@ -299,7 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--listen", type=parse_listen, required=True)
     parser.add_argument("--username")
-    parser.add_argument("--password")
+    password_group = parser.add_mutually_exclusive_group()
+    password_group.add_argument("--password")
+    password_group.add_argument("--password-file", type=Path)
     parser.add_argument("--max-connections", type=int, default=MAX_CONNECTIONS)
     return parser
 
@@ -308,6 +311,11 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.max_connections < 1:
         raise SystemExit("--max-connections must be positive")
+    if args.password_file is not None:
+        try:
+            args.password = args.password_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise SystemExit(f"could not read --password-file: {exc}") from exc
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     asyncio.run(serve(args))
     return 0
