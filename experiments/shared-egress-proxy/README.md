@@ -11,6 +11,12 @@ It is not a general-purpose proxy service. Keep the external listener
 authenticated, use an ephemeral credential, and terminate the tunnel after the
 paired run.
 
+When the evaluator is reachable only on a private network, run
+[`tcp_relay.py`](tcp_relay.py) on a short-lived public host with an SSH reverse
+tunnel that binds its upstream to `127.0.0.1`. The relay refuses non-loopback
+upstreams; the authenticated forward proxy remains the only service exposed to
+the remote browser.
+
 Pass the external listener credential with `--password-file` (a `0600` file),
 not `--password`, so it is not visible through the process list.
 
