@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -101,3 +104,54 @@ def test_cdp_navigation_reuses_session_after_network_change(monkeypatch: pytest.
 
     assert retries == 1
     assert session.navigation_calls == 2
+
+
+def test_lexmount_cleanup_caps_high_concurrency_fanout() -> None:
+    mode = environment.LexmountDOMMode(
+        api_key=None,
+        project_id=None,
+        browser_backend="local",
+        dom_backend="cdp",
+        stagehand_model="",
+        policy_model="",
+        proxy_model_to_stagehand=False,
+        browser_mode="normal",
+        official_proxy=False,
+        external_proxy=None,
+        local_chrome_executable_path=None,
+        local_chrome_headless=True,
+        local_proxy_server=None,
+        local_proxy_bypass=None,
+        network_change_retries=1,
+        max_concurrent_sessions=64,
+        session_create_timeout_s=1.0,
+        stagehand_ready_timeout_s=1.0,
+        setup_navigation_timeout_s=1.0,
+        per_tool_timeout_s=1.0,
+        episode_timeout_s=1.0,
+        max_repeated_tool_calls=3,
+    )
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    class SlowCloseSession:
+        def close(self) -> None:
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.01)
+            with lock:
+                active -= 1
+
+    async def close_all() -> None:
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=64))
+        await asyncio.gather(
+            *(mode._close_lexmount_session(SlowCloseSession(), reason="test") for _ in range(64))
+        )
+
+    asyncio.run(close_all())
+
+    assert active == 0
+    assert peak == 32

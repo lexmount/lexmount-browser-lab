@@ -1092,6 +1092,9 @@ class LexmountDOMMode:
         self.stagehand_client: AsyncStagehand | None = None
         self._client_lock = asyncio.Lock()
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
+        # Keep cleanup below the verified API fan-out while retaining enough
+        # parallelism for a high-concurrency probe to drain promptly.
+        self._lexmount_cleanup_slots = asyncio.Semaphore(min(32, max_concurrent_sessions))
         self.session_create_timeout_s = session_create_timeout_s
         self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
         self.logger = LOGGER
@@ -1312,50 +1315,57 @@ class LexmountDOMMode:
         )
 
     async def _close_lexmount_session(self, lexmount_session: Any, *, reason: str) -> None:
-        session_id = str(
-            getattr(lexmount_session, "id", None)
-            or getattr(lexmount_session, "session_id", None)
-            or ""
-        )
+        acquired_cleanup_slot = False
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(lexmount_session.close),
-                timeout=30.0,
+            await self._lexmount_cleanup_slots.acquire()
+            acquired_cleanup_slot = True
+            session_id = str(
+                getattr(lexmount_session, "id", None)
+                or getattr(lexmount_session, "session_id", None)
+                or ""
             )
-            self.logger.info(
-                "Closed Lexmount session%s (%s)",
-                f" {session_id}" if session_id else "",
-                reason,
-            )
-            return
-        except Exception as exc:
-            self.logger.warning(
-                "Failed to close Lexmount session%s (%s): %r",
-                f" {session_id}" if session_id else "",
-                reason,
-                exc,
-            )
-        if session_id and self.lexmount is not None:
             try:
                 await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.lexmount.sessions.delete,
-                        session_id=session_id,
-                    ),
+                    asyncio.to_thread(lexmount_session.close),
                     timeout=30.0,
                 )
                 self.logger.info(
-                    "Deleted Lexmount session %s after close failure (%s)",
-                    session_id,
+                    "Closed Lexmount session%s (%s)",
+                    f" {session_id}" if session_id else "",
                     reason,
                 )
+                return
             except Exception as exc:
                 self.logger.warning(
-                    "Failed to delete Lexmount session %s after close failure (%s): %r",
-                    session_id,
+                    "Failed to close Lexmount session%s (%s): %r",
+                    f" {session_id}" if session_id else "",
                     reason,
                     exc,
                 )
+            if session_id and self.lexmount is not None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.lexmount.sessions.delete,
+                            session_id=session_id,
+                        ),
+                        timeout=30.0,
+                    )
+                    self.logger.info(
+                        "Deleted Lexmount session %s after close failure (%s)",
+                        session_id,
+                        reason,
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to delete Lexmount session %s after close failure (%s): %r",
+                        session_id,
+                        reason,
+                        exc,
+                    )
+        finally:
+            if acquired_cleanup_slot:
+                self._lexmount_cleanup_slots.release()
 
     def _llm_config(self, state: vf.State) -> dict[str, str] | None:
         if not self.proxy_model_to_stagehand:
