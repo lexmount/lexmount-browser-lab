@@ -102,3 +102,10 @@ def test_forward_proxy_bridge_preserves_half_close() -> None:
 
 def test_tcp_relay_preserves_half_close() -> None:
     asyncio.run(assert_tcp_relay_preserves_half_close())
+
+
+def test_loopback_is_the_only_private_upstream_exception() -> None:
+    assert forward_proxy.is_loopback_literal("127.0.0.1")
+    assert forward_proxy.is_loopback_literal("::1")
+    assert not forward_proxy.is_loopback_literal("10.0.0.1")
+    assert not forward_proxy.is_loopback_literal("relay.example")

@@ -112,6 +112,13 @@ def is_public_address(value: str) -> bool:
     )
 
 
+def is_loopback_literal(value: str) -> bool:
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
 async def resolve_public_addresses(host: str, port: int) -> Iterable[tuple[str, int]]:
     lowered = host.rstrip(".").lower()
     if lowered in {"localhost", "localhost.localdomain"} or lowered.endswith(".local"):
@@ -154,6 +161,18 @@ async def open_public_connection(
         except (OSError, TimeoutError) as exc:
             last_error = exc
     raise ConnectionError(f"could not reach public target: {last_error}")
+
+
+async def open_upstream_proxy_connection(
+    upstream: UpstreamProxyConfig,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    """Connect to a public upstream proxy or an explicit local relay endpoint."""
+
+    if is_loopback_literal(upstream.host):
+        return await asyncio.wait_for(
+            asyncio.open_connection(upstream.host, upstream.port), timeout=CONNECT_TIMEOUT_SECONDS
+        )
+    return await open_public_connection(upstream.host, upstream.port)
 
 
 def request_headers(raw: bytes) -> tuple[str, str, str, dict[str, str]]:
@@ -315,7 +334,7 @@ async def upstream_proxy_connect(
     host: str,
     port: int,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
-    reader, writer = await open_public_connection(upstream.host, upstream.port)
+    reader, writer = await open_upstream_proxy_connection(upstream)
     try:
         writer.write(upstream_proxy_connect_request(host, port, upstream))
         await writer.drain()
@@ -384,8 +403,8 @@ async def handle_client(
                     method, target, version, headers, config.upstream_proxy
                 )
                 await resolve_public_addresses(host, port)
-                upstream_reader, upstream_writer = await open_public_connection(
-                    config.upstream_proxy.host, config.upstream_proxy.port
+                upstream_reader, upstream_writer = await open_upstream_proxy_connection(
+                    config.upstream_proxy
                 )
             logging.info("HTTP accepted peer=%s host=%s port=%s", peer, host, port)
             upstream_writer.write(request)
