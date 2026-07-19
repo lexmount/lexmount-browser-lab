@@ -258,8 +258,16 @@ async def handle_client(
             await bridge(reader, writer, upstream_reader, upstream_writer)
     except asyncio.IncompleteReadError:
         return
-    except (ConnectionError, OSError, ValueError, TimeoutError) as exc:
-        logging.info("Proxy request rejected peer=%s reason=%s", peer, exc)
+    except Exception as exc:
+        # Python 3.10 exposes asyncio.TimeoutError separately from the
+        # builtin TimeoutError. Keep request failures observable on both
+        # evaluator runtimes without swallowing asyncio cancellation.
+        logging.info(
+            "Proxy request rejected peer=%s error=%s reason=%s",
+            peer,
+            type(exc).__name__,
+            exc,
+        )
         with contextlib.suppress(ConnectionError):
             await write_response(writer, "502 Bad Gateway", "proxy target unavailable\n")
     finally:
