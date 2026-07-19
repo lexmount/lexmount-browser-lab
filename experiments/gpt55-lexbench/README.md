@@ -127,6 +127,11 @@ seed `20260719` 抽取的 64 条样本；`block-a` 与 `block-b` 是其不重叠
 `scripts/generate_stratified_lexbench_taskset.py`，运行时应把生成的 manifest 与原始任务集一起归档。
 该 API 的 GPT-5.5 端点拒绝 `temperature=0`，因此模型配置保持端点支持的 `1.0`；任务块交换执行顺序，避免把时间顺序误判为浏览器差异。
 
+## Direct-Egress Diagnostic
+
+`config.direct.yaml` 与 `--network-mode direct` 只用于在无法建立可靠共享出口时补充观察两端的
+LexBench 行为。它必须在产物中保留 `network-mode.txt`，不得作为同出口等价性或严格非劣性结论的依据。
+
 ## 结果目录
 
 ```text

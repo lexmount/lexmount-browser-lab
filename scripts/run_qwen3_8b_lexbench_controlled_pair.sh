@@ -13,6 +13,7 @@ ORDER="local-first"
 LABEL="controlled-parity"
 MODEL_NAME="qwen3-8B"
 EXPECTED_MODEL_ID="qwen3_8B"
+NETWORK_MODE="shared-proxy"
 
 usage() {
   printf '%s\n' \
@@ -21,6 +22,7 @@ usage() {
     "          [--config PATH] [--artifact-root PATH] [--concurrency N]" \
     "          [--order local-first|lexmount-first] [--label NAME]" \
     "          [--model-name NAME] [--expected-model-id ID]" \
+    "          [--network-mode shared-proxy|direct]" \
     "" \
     "Set LEXBENCH_QWEN_BASE_URL and LEXBENCH_QWEN_API_KEY to override stale" \
     "model endpoint values in --env-file for this process only."
@@ -39,6 +41,7 @@ while (($#)); do
     --label) LABEL=$2; shift 2 ;;
     --model-name) MODEL_NAME=$2; shift 2 ;;
     --expected-model-id) EXPECTED_MODEL_ID=$2; shift 2 ;;
+    --network-mode) NETWORK_MODE=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -65,6 +68,10 @@ fi
   echo "invalid --expected-model-id" >&2
   exit 2
 }
+[[ "$NETWORK_MODE" == "shared-proxy" || "$NETWORK_MODE" == "direct" ]] || {
+  echo "invalid --network-mode" >&2
+  exit 2
+}
 
 set -a
 if [[ -n "$BASE_ENV_FILE" ]]; then
@@ -84,20 +91,26 @@ if [[ -n ${LEXBENCH_QWEN_MODEL_ID:-} ]]; then
   export QWEN_MODEL_ID=$LEXBENCH_QWEN_MODEL_ID
 fi
 
-for name in \
+REQUIRED_ENV=(
   QWEN_API_KEY QWEN_BASE_URL QWEN_MODEL_ID \
   LEXBENCH_JUDGE_API_KEY LEXBENCH_JUDGE_BASE_URL LEXBENCH_JUDGE_MODEL \
-  LEXMOUNT_API_KEY LEXMOUNT_PROJECT_ID \
-  LEXBENCH_LOCAL_PROXY_SERVER LEXBENCH_LEXMOUNT_PROXY_SERVER \
-  LEXBENCH_LEXMOUNT_PROXY_USERNAME LEXBENCH_LEXMOUNT_PROXY_PASSWORD; do
+  LEXMOUNT_API_KEY LEXMOUNT_PROJECT_ID
+)
+if [[ "$NETWORK_MODE" == "shared-proxy" ]]; then
+  REQUIRED_ENV+=(
+    LEXBENCH_LOCAL_PROXY_SERVER LEXBENCH_LEXMOUNT_PROXY_SERVER
+    LEXBENCH_LEXMOUNT_PROXY_USERNAME LEXBENCH_LEXMOUNT_PROXY_PASSWORD
+  )
+fi
+for name in "${REQUIRED_ENV[@]}"; do
   [[ -n ${!name:-} ]] || { echo "missing required environment value: $name" >&2; exit 2; }
 done
 [[ "$QWEN_MODEL_ID" == "$EXPECTED_MODEL_ID" ]] || {
-  echo "controlled protocol requires QWEN_MODEL_ID=$EXPECTED_MODEL_ID" >&2
+  echo "paired protocol requires QWEN_MODEL_ID=$EXPECTED_MODEL_ID" >&2
   exit 2
 }
 [[ "$LEXBENCH_JUDGE_MODEL" == "gpt-5.4" ]] || {
-  echo "controlled protocol requires LEXBENCH_JUDGE_MODEL=gpt-5.4" >&2
+  echo "paired protocol requires LEXBENCH_JUDGE_MODEL=gpt-5.4" >&2
   exit 2
 }
 
@@ -141,6 +154,7 @@ cp "$TASK_FILE" "$DRIVER_DIR/task-ids.txt"
 cp "$CONFIG" "$DRIVER_DIR/config.template.yaml"
 printf '%s\n' "$ORDER" > "$DRIVER_DIR/order.txt"
 printf '%s\n' "$CONCURRENCY" > "$DRIVER_DIR/concurrency.txt"
+printf '%s\n' "$NETWORK_MODE" > "$DRIVER_DIR/network-mode.txt"
 printf '%s\n' "${#TASK_IDS[@]}" > "$DRIVER_DIR/planned-task-count.txt"
 printf '%s\n' "$QWEN_MODEL_ID" > "$DRIVER_DIR/model-id.txt"
 printf '%s\n' "$QWEN_BASE_URL" > "$DRIVER_DIR/model-base-url.txt"
