@@ -5,6 +5,7 @@ import json
 import sys
 import threading
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -135,9 +136,10 @@ def test_lexmount_cleanup_caps_high_concurrency_fanout() -> None:
     active = 0
     peak = 0
 
-    class SlowCloseSession:
-        def close(self) -> None:
+    class SlowSessions:
+        def delete(self, *, session_id: str) -> None:
             nonlocal active, peak
+            assert session_id.startswith("session-")
             with lock:
                 active += 1
                 peak = max(peak, active)
@@ -145,13 +147,20 @@ def test_lexmount_cleanup_caps_high_concurrency_fanout() -> None:
             with lock:
                 active -= 1
 
+    mode.lexmount = types.SimpleNamespace(sessions=SlowSessions())
+
     async def close_all() -> None:
         asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=64))
         await asyncio.gather(
-            *(mode._close_lexmount_session(SlowCloseSession(), reason="test") for _ in range(64))
+            *(
+                mode._close_lexmount_session(
+                    types.SimpleNamespace(id=f"session-{index}"), reason="test"
+                )
+                for index in range(64)
+            )
         )
 
     asyncio.run(close_all())
 
     assert active == 0
-    assert peak == 32
+    assert peak == 8

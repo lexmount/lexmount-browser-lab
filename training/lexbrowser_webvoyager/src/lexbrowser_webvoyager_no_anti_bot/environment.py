@@ -26,6 +26,7 @@ import verifiers as vf
 import websocket
 from datasets import Dataset
 from lexmount import Lexmount
+from lexmount.exceptions import SessionNotFoundError
 from openai import AsyncOpenAI
 from stagehand import AsyncStagehand
 
@@ -57,6 +58,7 @@ TRANSCRIPT_CHAR_LIMIT = 12_000
 TRUNCATION_MARKER = "\n[...truncated...]\n"
 SETUP_NAVIGATION_MAX_ATTEMPTS = 3
 TRANSIENT_NETWORK_CHANGE_ERROR = "ERR_NETWORK_CHANGED"
+MAX_LEXMOUNT_CLEANUP_CONCURRENCY = 8
 
 TASK_JUDGE_PROMPT = """You are evaluating whether a browser automation agent successfully completed a web task.
 
@@ -1092,9 +1094,11 @@ class LexmountDOMMode:
         self.stagehand_client: AsyncStagehand | None = None
         self._client_lock = asyncio.Lock()
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
-        # Keep cleanup below the verified API fan-out while retaining enough
-        # parallelism for a high-concurrency probe to drain promptly.
-        self._lexmount_cleanup_slots = asyncio.Semaphore(min(32, max_concurrent_sessions))
+        # SessionInfo.close() wraps the same delete request but suppresses SDK
+        # errors. Use bounded direct deletes so a burst has observable results.
+        self._lexmount_cleanup_slots = asyncio.Semaphore(
+            min(MAX_LEXMOUNT_CLEANUP_CONCURRENCY, max_concurrent_sessions)
+        )
         self.session_create_timeout_s = session_create_timeout_s
         self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
         self.logger = LOGGER
@@ -1324,45 +1328,31 @@ class LexmountDOMMode:
                 or getattr(lexmount_session, "session_id", None)
                 or ""
             )
+            if not session_id or self.lexmount is None:
+                return
             try:
-                await asyncio.wait_for(
-                    asyncio.to_thread(lexmount_session.close),
-                    timeout=30.0,
+                await asyncio.to_thread(
+                    self.lexmount.sessions.delete,
+                    session_id=session_id,
                 )
                 self.logger.info(
-                    "Closed Lexmount session%s (%s)",
-                    f" {session_id}" if session_id else "",
+                    "Deleted Lexmount session %s (%s)",
+                    session_id,
                     reason,
                 )
-                return
+            except SessionNotFoundError:
+                self.logger.info(
+                    "Lexmount session %s was already deleted (%s)",
+                    session_id,
+                    reason,
+                )
             except Exception as exc:
                 self.logger.warning(
-                    "Failed to close Lexmount session%s (%s): %r",
-                    f" {session_id}" if session_id else "",
+                    "Failed to delete Lexmount session %s (%s): %r",
+                    session_id,
                     reason,
                     exc,
                 )
-            if session_id and self.lexmount is not None:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self.lexmount.sessions.delete,
-                            session_id=session_id,
-                        ),
-                        timeout=30.0,
-                    )
-                    self.logger.info(
-                        "Deleted Lexmount session %s after close failure (%s)",
-                        session_id,
-                        reason,
-                    )
-                except Exception as exc:
-                    self.logger.warning(
-                        "Failed to delete Lexmount session %s after close failure (%s): %r",
-                        session_id,
-                        reason,
-                        exc,
-                    )
         finally:
             if acquired_cleanup_slot:
                 self._lexmount_cleanup_slots.release()
