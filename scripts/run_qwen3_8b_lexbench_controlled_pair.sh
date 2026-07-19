@@ -145,6 +145,12 @@ run_arm() {
   local arm_dir="$DRIVER_DIR/arms/$backend"
   local run_dir="$RUN_ROOT/$timestamp"
   mkdir -p "$arm_dir"
+  mkdir -p "$RUN_ROOT"
+  [[ ! -e "$run_dir" ]] || {
+    echo "refusing to reuse existing official run directory: $run_dir" >&2
+    return 1
+  }
+  mkdir "$run_dir"
 
   local command=(
     uv run bubench run
