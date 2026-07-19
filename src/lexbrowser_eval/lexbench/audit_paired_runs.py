@@ -216,6 +216,8 @@ def paired_task_ids(
     local_evaluations: dict[str, dict[str, Any]],
     lexmount_results: dict[str, dict[str, Any]],
     local_results: dict[str, dict[str, Any]],
+    *,
+    allow_incomplete: bool = False,
 ) -> list[str]:
     lexmount_summary_ids = set(summary_task_records(lexmount_summary, "lexmount summary"))
     local_summary_ids = set(summary_task_records(local_summary, "local summary"))
@@ -241,9 +243,40 @@ def paired_task_ids(
         if summary_ids - set(records)
     }
     if missing:
-        detail = "; ".join(f"{name}: {','.join(ids)}" for name, ids in missing.items())
-        raise ValueError(f"paired task coverage is incomplete: {detail}")
+        if not allow_incomplete:
+            detail = "; ".join(f"{name}: {','.join(ids)}" for name, ids in missing.items())
+            raise ValueError(f"paired task coverage is incomplete: {detail}")
+        available = set(summary_ids)
+        for records in sources.values():
+            available &= set(records)
+        return sorted(available, key=int)
     return sorted(summary_ids, key=int)
+
+
+def incomplete_coverage(
+    dataset: dict[str, dict[str, Any]],
+    lexmount_summary: dict[str, Any],
+    local_summary: dict[str, Any],
+    lexmount_evaluations: dict[str, dict[str, Any]],
+    local_evaluations: dict[str, dict[str, Any]],
+    lexmount_results: dict[str, dict[str, Any]],
+    local_results: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    summary_ids = set(summary_task_records(lexmount_summary, "lexmount summary"))
+    if summary_ids != set(summary_task_records(local_summary, "local summary")):
+        return {"summary_mismatch": []}
+    sources = {
+        "dataset": dataset,
+        "lexmount_evaluations": lexmount_evaluations,
+        "local_evaluations": local_evaluations,
+        "lexmount_results": lexmount_results,
+        "local_results": local_results,
+    }
+    return {
+        name: sorted(summary_ids - set(records), key=int)
+        for name, records in sources.items()
+        if summary_ids - set(records)
+    }
 
 
 def audit_paired_runs(
@@ -254,10 +287,22 @@ def audit_paired_runs(
     local_evaluations: dict[str, dict[str, Any]],
     lexmount_results: dict[str, dict[str, Any]],
     local_results: dict[str, dict[str, Any]],
+    *,
+    allow_incomplete: bool = False,
 ) -> dict[str, Any]:
     lexmount_tasks = summary_task_records(lexmount_summary, "lexmount summary")
     local_tasks = summary_task_records(local_summary, "local summary")
     task_ids = paired_task_ids(
+        dataset,
+        lexmount_summary,
+        local_summary,
+        lexmount_evaluations,
+        local_evaluations,
+        lexmount_results,
+        local_results,
+        allow_incomplete=allow_incomplete,
+    )
+    missing_coverage = incomplete_coverage(
         dataset,
         lexmount_summary,
         local_summary,
@@ -353,6 +398,12 @@ def audit_paired_runs(
 
     return {
         "schema_version": 1,
+        "coverage": {
+            "summary_tasks": len(lexmount_tasks),
+            "complete_pairs": len(task_ids),
+            "allow_incomplete": allow_incomplete,
+            "missing_by_source": missing_coverage,
+        },
         "paired_tasks": len(task_ids),
         "outcomes": dict(outcome_counts),
         "discordant_tasks": len(discordant),
@@ -392,6 +443,7 @@ def main() -> int:
     parser.add_argument("--lexmount-eval", type=Path, required=True)
     parser.add_argument("--local-eval", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
 
     audit = audit_paired_runs(
@@ -402,6 +454,7 @@ def main() -> int:
         load_evaluations(args.local_eval),
         load_results(args.lexmount_run),
         load_results(args.local_run),
+        allow_incomplete=args.allow_incomplete,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

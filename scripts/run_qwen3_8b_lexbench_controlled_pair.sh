@@ -171,6 +171,7 @@ if [[ -n ${LEXBENCH_VLLM_PID:-} ]]; then
   }
   VLLM_INCLUDE_ARGS=(--include-pid "$LEXBENCH_VLLM_PID")
 fi
+ARM_WITH_ROLLOUT_FAILURE=()
 
 run_arm() {
   local backend=$1
@@ -219,14 +220,17 @@ run_arm() {
   printf '%s\n' "$rollout_status" > "$arm_dir/rollout-return-code.txt"
   [[ -d "$run_dir" ]] || {
     echo "official run directory is missing for $backend: $run_dir" >&2
-    return 1
+    printf '%s\n' "missing" > "$arm_dir/rollout-return-code.txt"
+    ARM_WITH_ROLLOUT_FAILURE+=("$backend")
+    return 0
   }
   printf '%s\n' "$run_dir" > "$arm_dir/run-dir.txt"
-  ((rollout_status == 0)) || {
+  if ((rollout_status != 0)); then
     echo "rollout failed for $backend with status $rollout_status" >&2
-    return "$rollout_status"
-  }
+    ARM_WITH_ROLLOUT_FAILURE+=("$backend")
+  fi
 
+  set +e
   (
     cd "$BENCHMARK_REPO"
     uv run bubench eval \
@@ -239,12 +243,25 @@ run_arm() {
       --num-worker 5 \
       --eval-strategy stepwise
   ) 2>&1 | tee "$arm_dir/eval.log"
+  local eval_status=${PIPESTATUS[0]}
+  set -e
+  printf '%s\n' "$eval_status" > "$arm_dir/eval-return-code.txt"
+  if ((eval_status != 0)); then
+    echo "evaluation failed for $backend with status $eval_status" >&2
+  fi
 
+  set +e
   uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.summarize \
     --run-dir "$run_dir" \
     --dataset "$DATASET" \
     --resource-summary "$arm_dir/resources/resource_summary.json" \
     --output "$arm_dir/benchmark_summary.json"
+  local summarize_status=$?
+  set -e
+  printf '%s\n' "$summarize_status" > "$arm_dir/summarize-return-code.txt"
+  if ((summarize_status != 0)); then
+    echo "summary failed for $backend with status $summarize_status" >&2
+  fi
   printf '%s\t%s\n' "$backend" "$run_dir" >> "$DRIVER_DIR/runs.tsv"
 }
 
@@ -276,6 +293,11 @@ uv run --project "$ROOT_DIR" python -m lexbrowser_eval.lexbench.audit_paired_run
   --local-run "$LOCAL_RUN" \
   --lexmount-eval "$LEXMOUNT_EVAL" \
   --local-eval "$LOCAL_EVAL" \
+  --allow-incomplete \
   --output "$DRIVER_DIR/pair_audit.json"
+
+if ((${#ARM_WITH_ROLLOUT_FAILURE[@]})); then
+  printf '%s\n' "${ARM_WITH_ROLLOUT_FAILURE[@]}" > "$DRIVER_DIR/arms-with-rollout-failure.txt"
+fi
 
 printf '%s\n' "$DRIVER_DIR"

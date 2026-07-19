@@ -56,3 +56,39 @@ def test_noninferiority_passes_after_sixty_non_local_only_pairs() -> None:
     assert result["noninferiority"]["local_only_count"] == 0
     assert result["noninferiority"]["local_only_one_sided_95_upper_bound"] < 0.05
     assert result["noninferiority"]["passed"] is True
+
+
+def test_compare_pair_excludes_tasks_missing_a_judgement() -> None:
+    lexmount = {
+        "per_task": {
+            "1": {"success": True, "judged": True},
+            "2": {"success": False, "judged": False},
+            "3": {"success": False, "judged": False},
+        }
+    }
+    local = {
+        "per_task": {
+            "1": {"success": True, "judged": True},
+            "2": {"success": True, "judged": True},
+            "3": {"success": False, "judged": False},
+        }
+    }
+
+    result = compare_pair(lexmount, local, bootstrap_samples=100, seed=1)
+
+    assert result["paired_tasks"] == 1
+    assert result["paired_table"] == {
+        "both_success": 1,
+        "lexmount_only": 0,
+        "local_only": 0,
+        "both_failed": 0,
+    }
+    assert result["coverage"] == {
+        "shared_planned_tasks": 3,
+        "mutually_judged_tasks": 1,
+        "excluded_task_ids": {
+            "lexmount_unjudged": ["2"],
+            "local_unjudged": [],
+            "both_unjudged": ["3"],
+        },
+    }

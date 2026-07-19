@@ -132,6 +132,16 @@ seed `20260719` 抽取的 64 条样本；`block-a` 与 `block-b` 是其不重叠
 `config.direct.yaml` 与 `--network-mode direct` 只用于在无法建立可靠共享出口时补充观察两端的
 LexBench 行为。它必须在产物中保留 `network-mode.txt`，不得作为同出口等价性或严格非劣性结论的依据。
 
+## Partial-arm handling
+
+单题的非零 rollout exit 不会再丢弃该 arm 已经完成的轨迹：驱动会继续执行官方 Judge、summary 和另一端。
+`rollout-return-code.txt`、`eval-return-code.txt` 和 `summarize-return-code.txt` 保留原始状态。
+
+- `pair_comparison.json` 仅使用双方均已 Judge 的任务；未判题任务按 backend 单列在 `coverage`，不计为
+  成功或失败。
+- `pair_audit.json --allow-incomplete` 只审计完整配对，并列出缺失轨迹或 Judge 记录。
+- 部分 arm 只能用于诊断和失败归因，不能用于完整样本的成功率或非劣性结论。
+
 ## 结果目录
 
 ```text

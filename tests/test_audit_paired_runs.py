@@ -171,3 +171,19 @@ def test_paired_task_ids_reports_missing_dataset_row() -> None:
 
     with pytest.raises(ValueError, match="dataset: 1"):
         paired_task_ids({}, summary, summary, complete, complete, complete, complete)
+
+
+def test_paired_task_ids_can_return_complete_subset_when_requested() -> None:
+    summary = {"per_task": {"1": {"success": False}, "2": {"success": False}}}
+    complete = {"1": {}, "2": {}}
+
+    assert paired_task_ids(
+        complete,
+        summary,
+        summary,
+        {"1": {}},
+        complete,
+        complete,
+        complete,
+        allow_incomplete=True,
+    ) == ["1"]

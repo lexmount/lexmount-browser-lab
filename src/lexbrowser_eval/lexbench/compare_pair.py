@@ -43,6 +43,11 @@ def _one_sided_clopper_pearson_upper(successes: int, trials: int, alpha: float =
     return upper
 
 
+def _is_judged(task: dict[str, Any]) -> bool:
+    """Treat legacy summaries without a coverage field as fully judged."""
+    return bool(task.get("judged", True))
+
+
 def compare_pair(
     lexmount: dict[str, Any],
     local: dict[str, Any],
@@ -53,13 +58,30 @@ def compare_pair(
 ) -> dict[str, Any]:
     lex_tasks = lexmount["per_task"]
     local_tasks = local["per_task"]
-    task_ids = sorted(set(lex_tasks) & set(local_tasks))
+    shared_task_ids = sorted(set(lex_tasks) & set(local_tasks))
+    task_ids: list[str] = []
+    excluded_task_ids = {
+        "lexmount_unjudged": [],
+        "local_unjudged": [],
+        "both_unjudged": [],
+    }
+    for task_id in shared_task_ids:
+        lexmount_judged = _is_judged(lex_tasks[task_id])
+        local_judged = _is_judged(local_tasks[task_id])
+        if lexmount_judged and local_judged:
+            task_ids.append(task_id)
+        elif not lexmount_judged and not local_judged:
+            excluded_task_ids["both_unjudged"].append(task_id)
+        elif not lexmount_judged:
+            excluded_task_ids["lexmount_unjudged"].append(task_id)
+        else:
+            excluded_task_ids["local_unjudged"].append(task_id)
     pairs = [
         (int(bool(lex_tasks[task_id]["success"])), int(bool(local_tasks[task_id]["success"])))
         for task_id in task_ids
     ]
     if not pairs:
-        raise ValueError("summaries have no shared task ids")
+        raise ValueError("summaries have no mutually judged task ids")
 
     lex_success = sum(pair[0] for pair in pairs)
     local_success = sum(pair[1] for pair in pairs)
@@ -80,6 +102,11 @@ def compare_pair(
     return {
         "schema_version": 2,
         "paired_tasks": len(pairs),
+        "coverage": {
+            "shared_planned_tasks": len(shared_task_ids),
+            "mutually_judged_tasks": len(task_ids),
+            "excluded_task_ids": excluded_task_ids,
+        },
         "success": {"lexmount": lex_success, "local": local_success},
         "paired_table": {
             "both_success": both_success,
