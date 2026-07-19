@@ -199,9 +199,18 @@ async def relay(
     source: asyncio.StreamReader,
     destination: asyncio.StreamWriter,
 ) -> None:
-    while block := await source.read(64 * 1024):
-        destination.write(block)
-        await destination.drain()
+    try:
+        while block := await source.read(64 * 1024):
+            destination.write(block)
+            await destination.drain()
+    finally:
+        # A CONNECT client can half-close after sending its request and still
+        # need to receive the upstream response. Propagate that EOF instead of
+        # treating it as a reason to tear down the opposite direction.
+        if not destination.is_closing() and destination.can_write_eof():
+            with contextlib.suppress(ConnectionError, OSError, RuntimeError):
+                destination.write_eof()
+                await destination.drain()
 
 
 async def bridge(
@@ -214,10 +223,13 @@ async def bridge(
         asyncio.create_task(relay(client_reader, upstream_writer)),
         asyncio.create_task(relay(upstream_reader, client_writer)),
     ]
-    _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def upstream_request(

@@ -32,9 +32,17 @@ def parse_endpoint(value: str, *, loopback_only: bool = False) -> tuple[str, int
 
 
 async def copy(source: asyncio.StreamReader, destination: asyncio.StreamWriter) -> None:
-    while block := await source.read(64 * 1024):
-        destination.write(block)
-        await destination.drain()
+    try:
+        while block := await source.read(64 * 1024):
+            destination.write(block)
+            await destination.drain()
+    finally:
+        # Preserve TCP half-close semantics for CONNECT tunnels. Cancelling the
+        # reverse direction on first EOF can discard an upstream response.
+        if not destination.is_closing() and destination.can_write_eof():
+            with contextlib.suppress(ConnectionError, OSError, RuntimeError):
+                destination.write_eof()
+                await destination.drain()
 
 
 async def relay(
@@ -54,10 +62,13 @@ async def relay(
                 asyncio.create_task(copy(reader, upstream_writer)),
                 asyncio.create_task(copy(upstream_reader, writer)),
             ]
-            _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
     except (OSError, TimeoutError):
         pass
     finally:
