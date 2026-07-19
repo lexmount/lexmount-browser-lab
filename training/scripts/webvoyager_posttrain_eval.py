@@ -661,6 +661,13 @@ def lexmount_external_proxy_from_env(args: argparse.Namespace) -> dict[str, str]
     return {"type": "external", **values}
 
 
+def egress_equivalence_id(args: argparse.Namespace) -> str | None:
+    """Return a credential-free label for an intentionally shared egress path."""
+
+    value = str(getattr(args, "egress_equivalence_id", "") or "").strip()
+    return value or None
+
+
 def _tool_call_dicts(message: Any) -> list[dict[str, str]]:
     calls: list[dict[str, str]] = []
     for call in getattr(message, "tool_calls", None) or []:
@@ -1498,6 +1505,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
         },
+        "egress": {"equivalence_id": egress_equivalence_id(args)},
         "judge": {
             "mode": args.judge,
             "model": args.judge_model if judge_client else None,
@@ -1657,6 +1665,7 @@ async def run_probe(args: argparse.Namespace) -> int:
             "lexmount_external_proxy_configured": external_proxy is not None,
             "context_overrides": browser_context_overrides(args),
         },
+        "egress": {"equivalence_id": egress_equivalence_id(args)},
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
 
@@ -1780,6 +1789,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="use the authenticated Lexmount upstream proxy from environment variables",
     )
+    run.add_argument(
+        "--egress-equivalence-id",
+        default="",
+        help="credential-free label shared by paired runs that use the same egress",
+    )
     run.add_argument("--context-locale")
     run.add_argument("--context-timezone-id")
     run.add_argument("--context-geolocation", type=parse_context_geolocation)
@@ -1840,6 +1854,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--lexmount-external-proxy-from-env",
         action="store_true",
         help="use the authenticated Lexmount upstream proxy from environment variables",
+    )
+    probe.add_argument(
+        "--egress-equivalence-id",
+        default="",
+        help="credential-free label shared by paired runs that use the same egress",
     )
     probe.add_argument("--context-locale")
     probe.add_argument("--context-timezone-id")

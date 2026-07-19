@@ -30,6 +30,7 @@ CONTRACT_KEYS = (
     "judge",
     "model",
     "browser",
+    "egress",
 )
 RESOURCE_METRICS = (
     "cpu_cores_mean",
@@ -48,6 +49,10 @@ RESOURCE_METRICS = (
 )
 INTENTIONAL_BACKEND_BROWSER_DIFFERENCES = (
     "local_disable_automation_controlled",
+)
+SHARED_EGRESS_PROXY_BROWSER_DIFFERENCES = (
+    "local_proxy_configured",
+    "lexmount_external_proxy_configured",
 )
 
 
@@ -205,12 +210,33 @@ def comparison_contract(
     normalized_local = dict(local_manifest)
     lexmount_browser = dict(lexmount_manifest.get("browser") or {})
     local_browser = dict(local_manifest.get("browser") or {})
+    lexmount_egress = lexmount_manifest.get("egress")
+    local_egress = local_manifest.get("egress")
+    lexmount_egress_id = (
+        str(lexmount_egress.get("equivalence_id") or "").strip()
+        if isinstance(lexmount_egress, Mapping)
+        else ""
+    )
+    local_egress_id = (
+        str(local_egress.get("equivalence_id") or "").strip()
+        if isinstance(local_egress, Mapping)
+        else ""
+    )
+    shared_egress_proxy_wiring = (
+        bool(lexmount_egress_id)
+        and lexmount_egress_id == local_egress_id
+        and bool(local_browser.get("local_proxy_configured"))
+        and bool(lexmount_browser.get("lexmount_external_proxy_configured"))
+    )
+    intentional_browser_differences = list(INTENTIONAL_BACKEND_BROWSER_DIFFERENCES)
+    if shared_egress_proxy_wiring:
+        intentional_browser_differences.extend(SHARED_EGRESS_PROXY_BROWSER_DIFFERENCES)
     intentional_backend_differences = {
         f"browser.{key}": {"lexmount": lexmount_browser.get(key), "local": local_browser.get(key)}
-        for key in INTENTIONAL_BACKEND_BROWSER_DIFFERENCES
+        for key in intentional_browser_differences
         if lexmount_browser.get(key) != local_browser.get(key)
     }
-    for key in INTENTIONAL_BACKEND_BROWSER_DIFFERENCES:
+    for key in intentional_browser_differences:
         lexmount_browser.pop(key, None)
         local_browser.pop(key, None)
     normalized_lexmount["browser"] = lexmount_browser
@@ -221,6 +247,8 @@ def comparison_contract(
         if normalized_lexmount.get(key) != normalized_local.get(key)
     }
     result = {"matches": not differences, "differences": differences}
+    if shared_egress_proxy_wiring:
+        result["shared_egress_equivalence_id"] = lexmount_egress_id
     if intentional_backend_differences:
         result["intentional_backend_differences"] = intentional_backend_differences
     return result
