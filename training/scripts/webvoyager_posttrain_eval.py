@@ -781,6 +781,7 @@ async def _judge_task(
     model: str,
     temperature: float | None,
     timeout_s: float,
+    attempts: int = 1,
     task: Task,
     transcript: str,
     final_answer: str,
@@ -800,7 +801,9 @@ async def _judge_task(
         final_answer=final_answer,
     )
     started = time.monotonic()
-    try:
+    attempts = max(1, attempts)
+    errors: list[str] = []
+    for attempt in range(1, attempts + 1):
         request: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -808,29 +811,39 @@ async def _judge_task(
         }
         if temperature is not None:
             request["temperature"] = temperature
-        response = await asyncio.wait_for(
-            client.chat.completions.create(**request),
-            timeout=timeout_s,
-        )
-        raw = str(response.choices[0].message.content or "").strip()
-        payload = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE))
-        if not isinstance(payload, dict) or payload.get("verdict") not in {"yes", "no"}:
-            raise ValueError("judge response did not contain verdict=yes|no")
-        return {
-            "status": "ok",
-            "reward": 1.0 if payload["verdict"] == "yes" else 0.0,
-            "verdict": payload["verdict"],
-            "reason": str(payload.get("reason") or ""),
-            "latency_seconds": round(time.monotonic() - started, 4),
-        }
-    except Exception as exc:
-        return {
-            "status": "error",
-            "reward": None,
-            "verdict": None,
-            "reason": f"{type(exc).__name__}: {exc}",
-            "latency_seconds": round(time.monotonic() - started, 4),
-        }
+        try:
+            response = await asyncio.wait_for(
+                client.chat.completions.create(**request),
+                timeout=timeout_s,
+            )
+            raw = str(response.choices[0].message.content or "").strip()
+            payload = json.loads(
+                re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+            )
+            if not isinstance(payload, dict) or payload.get("verdict") not in {"yes", "no"}:
+                raise ValueError("judge response did not contain verdict=yes|no")
+            return {
+                "status": "ok",
+                "reward": 1.0 if payload["verdict"] == "yes" else 0.0,
+                "verdict": payload["verdict"],
+                "reason": str(payload.get("reason") or ""),
+                "attempts": attempt,
+                "latency_seconds": round(time.monotonic() - started, 4),
+            }
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            if attempt < attempts:
+                await asyncio.sleep(0.25 * attempt)
+
+    return {
+        "status": "error",
+        "reward": None,
+        "verdict": None,
+        "reason": errors[-1],
+        "attempts": attempts,
+        "attempt_errors": errors,
+        "latency_seconds": round(time.monotonic() - started, 4),
+    }
 
 
 def _normalize_exact_answer(value: str) -> str:
@@ -1133,6 +1146,7 @@ async def evaluate_task(
                 model=args.judge_model,
                 temperature=args.judge_temperature,
                 timeout_s=args.judge_timeout,
+                attempts=args.judge_attempts,
                 task=task,
                 transcript=transcript,
                 final_answer=final_answer,
@@ -1383,6 +1397,8 @@ async def run_evaluation(args: argparse.Namespace) -> int:
         raise RuntimeError("selected task manifest is empty")
     if args.judge_timeout <= 0:
         raise ValueError("--judge-timeout must be positive")
+    if args.judge_attempts < 1:
+        raise ValueError("--judge-attempts must be at least 1")
     if args.model_sha256 and not re.fullmatch(r"[0-9a-fA-F]{64}", args.model_sha256):
         raise ValueError("--model-sha256 must be a 64-character hexadecimal SHA-256")
     model_artifact = args.model_artifact.resolve() if args.model_artifact else None
@@ -1511,6 +1527,7 @@ async def run_evaluation(args: argparse.Namespace) -> int:
             "model": args.judge_model if judge_client else None,
             "temperature": args.judge_temperature if judge_client else None,
             "timeout_seconds": args.judge_timeout if judge_client else None,
+            "attempts": args.judge_attempts if judge_client else None,
         },
     }
     atomic_json(output_dir / "run_manifest.json", manifest)
@@ -1751,6 +1768,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=60.0,
         help="maximum seconds to wait for one external judge response",
+    )
+    run.add_argument(
+        "--judge-attempts",
+        type=int,
+        default=3,
+        help="maximum attempts for one judge decision after invalid or failed responses",
     )
     run.add_argument("--judge-base-url")
     run.add_argument("--judge-api-key")

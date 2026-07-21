@@ -581,6 +581,38 @@ def test_judge_omits_temperature_when_not_requested() -> None:
     assert "temperature" not in requests[0]
 
 
+def test_judge_retries_invalid_response_before_returning_verdict() -> None:
+    module = load_script_module()
+    responses = ["", '{"verdict":"no","reason":"missing evidence"}']
+
+    class Completions:
+        async def create(self, **kwargs):
+            message = types.SimpleNamespace(content=responses.pop(0))
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=Completions()))
+    task = module.Task("task", "question", "https://example.test", "example")
+
+    result = asyncio.run(
+        module._judge_task(
+            client,
+            model="gpt-5.5",
+            temperature=0,
+            timeout_s=60.0,
+            attempts=2,
+            task=task,
+            transcript="browser evidence",
+            final_answer="answer",
+            execution_status={},
+            final_url="https://example.test",
+            final_state="{}",
+        )
+    )
+
+    assert result["verdict"] == "no"
+    assert result["attempts"] == 2
+
+
 def test_probe_uses_requested_session_concurrency(tmp_path, monkeypatch) -> None:
     module = load_script_module()
     tasks_path = tmp_path / "tasks.jsonl"
