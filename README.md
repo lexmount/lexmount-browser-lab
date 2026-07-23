@@ -179,6 +179,15 @@ Local在本次46 GiB评测cgroup限制下最大可持续并发为60，c80被syst
 - [GPT-5.5 LexBench报告](results/gpt55-lexbench/20260713/report.md)
 - [GPT-5.5 LexBench整夜稳定性综合](results/gpt55-lexbench/overnight-20260713/stage4/report.html)
 
+## H100 GRPO training reproduction
+
+`training/h100/` is a self-contained H100/CUDA reproduction package for the
+validated Browser-RL recipe (Qwen3-8B + verl GRPO + NeMo-Gym browser sidecar +
+Lexmount browser + WebVoyager tasks, 60 steps). It vendors its own pinned
+runtime and task data and touches nothing else in this repository. Start at
+[training/h100/README.md](training/h100/README.md); porting provenance is in
+[training/h100/PORTING.md](training/h100/PORTING.md).
+
 ## 仓库结构
 
 | 路径 | 内容 |
@@ -188,6 +197,7 @@ Local在本次46 GiB评测cgroup限制下最大可持续并发为60，c80被syst
 | `experiments/` | 固定配置和任务集合 |
 | `docs/eval_reports/` | Qwen3-8B正式评估报告 |
 | `results/gpt55-lexbench/` | main已有GPT-5.5可审计结果 |
+| `training/h100/` | 自包含的H100/CUDA GRPO复现包（含vendored runtime与数据） |
 | `tests/` | 与src package对应的测试 |
 
 原始轨迹、截图和运行日志保留在运行机器，不提交Git。Linux资源报告使用cgroup
