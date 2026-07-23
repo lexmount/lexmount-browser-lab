@@ -1,1 +1,0 @@
-"""WebArena-Lite evaluation module."""
