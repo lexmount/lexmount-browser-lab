@@ -130,7 +130,9 @@ export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}
 export VERL_PROCESS_GROUP_TIMEOUT_SECONDS
 export PYTHONPATH="$ROOT/runtime:$ROOT/runtime/lexbrowser_webvoyager/src:${PYTHONPATH:-}"
 # Keep TensorBoard event files on the mounted run directory rather than the
-# container's relative working directory.
+# container's relative working directory. NOTE: Ray actors inherit the ray-node
+# container env (set in start_ray_node_h100.sh via launch_h100.sh), not these
+# driver-process exports; these remain as defaults for direct/driver use only.
 export TENSORBOARD_DIR=${TENSORBOARD_DIR:-$RUN_DIR/tensorboard}
 export LEXBROWSER_METRICS_DIR=${LEXBROWSER_METRICS_DIR:-$RUN_DIR/observability/raw}
 export VERL_FILE_LOGGER_ROOT=${VERL_FILE_LOGGER_ROOT:-$RUN_DIR/metrics}

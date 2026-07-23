@@ -34,6 +34,7 @@ check_node() {
   read -r -d '' script <<'NODE_SCRIPT' || true
 set -Eeuo pipefail
 test -d "$ROOT"
+mkdir -p "$RUNS_ROOT" "$CHECKPOINT_ROOT"
 test -d "$RUNS_ROOT"
 test -d "$CHECKPOINT_ROOT"
 test -f "$ROOT/secrets.env"

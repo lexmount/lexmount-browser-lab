@@ -90,5 +90,7 @@ docker run -d --name "$NAME" --network host --ipc host --shm-size "$SHM_SIZE" \
   -e NCCL_SOCKET_IFNAME="$NCCL_SOCKET_IFNAME" \
   -e LEXBROWSER_ACTION_MAX_TOKENS="$LEXBROWSER_ACTION_MAX_TOKENS" \
   -e VERL_PROCESS_GROUP_TIMEOUT_SECONDS="$VERL_PROCESS_GROUP_TIMEOUT_SECONDS" \
+  -e TENSORBOARD_DIR="${TENSORBOARD_DIR:-}" \
+  -e VERL_FILE_LOGGER_ROOT="${VERL_FILE_LOGGER_ROOT:-}" \
   "${extra_env[@]}" \
   "$IMAGE" bash -lc "$ray_cmd"

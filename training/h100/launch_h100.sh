@@ -77,8 +77,15 @@ DATA=${DATA:-/workspace/lexbrowser-h100/data/webvoyager-clean/train.lexbrowser.p
 HOST_DATA=${HOST_DATA:-$ROOT/data/webvoyager-clean/train.lexbrowser.parquet}
 AUDIT_DIR=${AUDIT_DIR:-$RUN_DIR/audit}
 LEXBROWSER_METRICS_DIR=/workspace/runs/$STAMP/observability/raw
+# Container paths for the Ray-node env: Ray actors inherit the ray-node
+# container's environment, not the trainer driver's exports, so these must be
+# injected at `docker run` time or TensorBoard/metrics land on an unmounted
+# relative path inside the container.
+TENSORBOARD_DIR=/workspace/runs/$STAMP/tensorboard
+VERL_FILE_LOGGER_ROOT=/workspace/runs/$STAMP/metrics
 
 export ROOT RUNS_ROOT CHECKPOINT_ROOT NODES_CSV HEAD_IP STAMP IMAGE
+export TENSORBOARD_DIR VERL_FILE_LOGGER_ROOT
 export WORK_ROOT MODEL_PATH GPUS_PER_NODE
 export BROWSER_BACKEND LOCAL_CDP_HTTP_URL
 
@@ -94,7 +101,7 @@ fi
 # Build the 168-task parquet on first use (deterministic; see MANIFEST.json).
 if [[ ! -s "$HOST_DATA" ]]; then
   echo "Building webvoyager-clean training parquet..."
-  docker run --rm \
+  docker run --rm --network none \
     -v "$ROOT:/workspace/lexbrowser-h100" \
     -w /workspace/lexbrowser-h100 --entrypoint python3 "$IMAGE" \
     build_webvoyager_clean_data.py
@@ -138,7 +145,7 @@ fi
 
 for node in "${NODES[@]}"; do
   [[ "$node" == "$HEAD_IP" ]] && continue
-  "${SSH[@]}" "$SSH_USER@$node" "ROLE=worker NODE_IP=$node HEAD_IP=$HEAD_IP ROOT=$ROOT RUNS_ROOT=$RUNS_ROOT CHECKPOINT_ROOT=$CHECKPOINT_ROOT MODEL_PATH=$MODEL_PATH IMAGE=$IMAGE NAME=$RAY_CONTAINER NEMO_GYM_BROWSER_URL=$NEMO_GYM_BROWSER_URL LEXBROWSER_ACTION_MAX_TOKENS=$ACTION_MAX_TOKENS LEXBROWSER_METRICS_DIR=$LEXBROWSER_METRICS_DIR VERL_PROCESS_GROUP_TIMEOUT_SECONDS=$VERL_PROCESS_GROUP_TIMEOUT_SECONDS bash $ROOT/start_ray_node_h100.sh"
+  "${SSH[@]}" "$SSH_USER@$node" "ROLE=worker NODE_IP=$node HEAD_IP=$HEAD_IP ROOT=$ROOT RUNS_ROOT=$RUNS_ROOT CHECKPOINT_ROOT=$CHECKPOINT_ROOT MODEL_PATH=$MODEL_PATH IMAGE=$IMAGE NAME=$RAY_CONTAINER NEMO_GYM_BROWSER_URL=$NEMO_GYM_BROWSER_URL LEXBROWSER_ACTION_MAX_TOKENS=$ACTION_MAX_TOKENS LEXBROWSER_METRICS_DIR=$LEXBROWSER_METRICS_DIR TENSORBOARD_DIR=$TENSORBOARD_DIR VERL_FILE_LOGGER_ROOT=$VERL_FILE_LOGGER_ROOT VERL_PROCESS_GROUP_TIMEOUT_SECONDS=$VERL_PROCESS_GROUP_TIMEOUT_SECONDS bash $ROOT/start_ray_node_h100.sh"
 done
 
 expected_gpus=$((NNODES * GPUS_PER_NODE))

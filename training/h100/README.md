@@ -12,6 +12,13 @@ total). Every hyperparameter is kept identical; only the hardware/backend
 layer changes (HCCL->NCCL, vllm-ascend->CUDA vLLM). See
 [PORTING.md](PORTING.md) for the complete difference list.
 
+
+### Reading the outputs
+
+- Per-step rollout dumps land in `<run-dir>/rollouts/`; the reward field in those JSONL rows is named `score`. Judge inputs/outputs are audited in `<run-dir>/audit/judge_io.jsonl`.
+- If every rollout in a step scores identically (all 0 or all 1), GRPO's group-relative advantage is zero and `grad_norm=0` for that step — this is expected zero-variance behavior, not a failure. The base model commonly produces such steps early on.
+- Disk: each checkpoint is ~92 GB at world size 8 (`SAVE_FREQ=20` → 3 checkpoints over 60 steps); budget accordingly.
+
 ## Provenance
 
 | Item | Value |
