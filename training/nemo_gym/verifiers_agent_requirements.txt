@@ -1,7 +1,0 @@
--e nemo-gym[dev] @ ../../
-verifiers==0.1.9.post3
-stagehand==3.21.0
-lexmount==0.5.12
-websocket-client>=1.8
--e /workspace/LexBrowserEnv/training/lexbrowser_webvoyager
---extra-index-url https://hub.primeintellect.ai/primeintellect/simple/
