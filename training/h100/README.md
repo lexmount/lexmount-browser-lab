@@ -1,231 +1,174 @@
-# LexBrowser WebVoyager GRPO on H100 - from zero to the reward curve
+# H100 GRPO 训练复现指南
 
-This directory is a self-contained H100/CUDA port of the **validated**
-Browser-RL training recipe: Qwen3-8B + verl GRPO + NeMo-Gym browser
-environment sidecar + Lexmount cloud browser + WebVoyager tasks +
-LLM-judge binary reward.
+本目录是一套**自包含**的训练复现包:在 H100 上复现我们已验证的 Browser-RL 训练配方,得到同样形状的 reward 增长曲线。
 
-The recipe reproduced here is the exact configuration that produced the
-reward-growth curve on 2x8 Ascend 910B on 2026-07-21 (reward mean
-~0.105 over the first 10 steps -> ~0.289 over the last 10 steps, 60 steps
-total). Every hyperparameter is kept identical; only the hardware/backend
-layer changes (HCCL->NCCL, vllm-ascend->CUDA vLLM). See
-[PORTING.md](PORTING.md) for the complete difference list.
+一句话说明这套配方是什么:**Qwen3-8B 模型,用 verl GRPO 训练,浏览器环境是 Lexmount 云浏览器(经 NeMo-Gym 环境服务接入),任务是 WebVoyager 真实网站任务,奖励由 LLM 裁判(deepseek-v4-flash)二元判分。**每个训练步采样 8 个任务 × 每任务 8 条轨迹 = 64 条真实网页操作轨迹,判分后做一次 GRPO 更新,共 60 步。
 
+原始验证运行在 2×8 张 Ascend 910B 上完成(2026-07-21):reward 均值从前 10 步的 ~0.105 爬升到后 10 步的 ~0.289。**本目录所有超参数与验证运行完全一致**,只把硬件层从 Ascend 换成 CUDA(HCCL→NCCL、vllm-ascend→CUDA vLLM)。每一处差异及其影响见 [PORTING.md](PORTING.md)。
 
-### Reading the outputs
+---
 
-- Per-step rollout dumps land in `<run-dir>/rollouts/`; the reward field in those JSONL rows is named `score`. Judge inputs/outputs are audited in `<run-dir>/audit/judge_io.jsonl`.
-- If every rollout in a step scores identically (all 0 or all 1), GRPO's group-relative advantage is zero and `grad_norm=0` for that step — this is expected zero-variance behavior, not a failure. The base model commonly produces such steps early on.
-- Disk: each checkpoint is ~92 GB at world size 8 (`SAVE_FREQ=20` → 3 checkpoints over 60 steps); budget accordingly.
+## 开始之前:你需要准备什么
 
-## Provenance
-
-| Item | Value |
+| 项目 | 要求 |
 | --- | --- |
-| Validated commit | `3220bc5f6f319c7421fcd1e196eb6d59fa190e8b` (internal; every file under `runtime/` is a byte-identical copy from it) |
-| Validated runs | `20260721-120330-C-...-lexmount-deepseekv4-40k10t-60s-agentfix` (Lexmount backend) and `20260721-132000-D-...-local-deepseekv4-40k10t-60s` (local-Chromium control) |
-| verl | 0.9.0.dev0, git commit `30119a253087bff86c12d329d2d8dd43c589705f` |
-| vLLM | 0.18.0 (Ascend ran +vllm-ascend 0.18.1.dev41; CUDA-irrelevant) |
-| torch | 2.9.0 on Ascend; 2.10.0+cu on CUDA (pinned by vLLM 0.18.0 wheels) |
-| transformers | 5.3.0.dev0 on Ascend; 5.3.0 on CUDA |
-| NeMo-Gym | v0.2.1, commit `27e921137042dcdb8a39c7169128619b9108074b` |
-| Policy model | Qwen/Qwen3-8B (stock Hugging Face weights) |
-| Judge model | `deepseek-v4-flash` via any OpenAI-compatible endpoint |
-| Training data | 168-task `webvoyager-clean` set, `data/webvoyager-clean/MANIFEST.json` (in this subtree) |
+| 硬件 | 1 台 8×H100-80GB(默认);或 2 台同规格(head 到 worker 需免密 SSH)。每次训练预留 ~300 GB 磁盘(单个 checkpoint 约 92 GB,60 步存 3 个) |
+| 软件 | Docker + NVIDIA container toolkit;能访问 GitHub / PyPI / Docker Hub / Hugging Face / Lexmount API,以及任务集里的公开网站(arxiv.org、bbc.com、coursera.org、github.com) |
+| 凭证 | ① Lexmount API key + project ID(浏览器会话,需 64 并发配额);② 一个能调用 `deepseek-v4-flash` 的 OpenAI 兼容接口(裁判用,任何服务商或自部署均可)。逐项说明见 `secrets.env.example` |
+| 模型 | Hugging Face 上的官方 `Qwen/Qwen3-8B` 权重 |
 
-## Architecture
+---
 
-```text
-verl GRPO (8 or 16 H100)
-  -> verl async vLLM rollout (TP=4, hermes multi-turn tools)
-  -> lexbrowser_tool_agent agent loop (runtime/lexbrowser_verl_agent.py)
-  -> HTTP -> NeMo-Gym sidecar (CPU-only, runtime/nemo_gym_webvoyager_server.py)
-       -> WebVoyager environment (runtime/lexbrowser_webvoyager/)
-       -> Lexmount cloud browser (CDP)
-       -> OpenAI-compatible judge (deepseek-v4-flash)
-  -> binary reward -> GRPO advantage -> FSDP update
-```
+## 六步启动训练
 
-Each step samples 8 tasks x 8 rollouts = 64 trajectories against real
-websites, judges the final answers, and applies one GRPO update.
+所有命令都在 head 节点、仓库根目录下执行。
 
-## Prerequisites
-
-1. **Hardware**: one node with 8x H100-80GB (default), or two such nodes
-   with password-less SSH from the head to the worker (`SSH_USER`/`SSH_KEY`
-   overridable). ~200 GB free disk for checkpoints per run (a step-60 FSDP
-   checkpoint set is ~100 GB at world size 16).
-2. **Software**: Docker with the NVIDIA container toolkit; outbound
-   network access to GitHub, PyPI/Docker Hub, Hugging Face, the Lexmount
-   API and the public websites in the task set (arxiv.org, bbc.com,
-   coursera.org, github.com).
-3. **Credentials** (see `secrets.env.example` for details):
-   - Lexmount API key + project ID (browser sessions; 64-session quota).
-   - An OpenAI-compatible endpoint serving `deepseek-v4-flash` for the
-     judge. Any provider or self-hosted deployment works; the endpoint we
-     used internally is not reachable externally.
-4. **Model**: stock Qwen3-8B weights from Hugging Face.
-
-## Step-by-step
-
-All commands run on the head node from the repository root.
-
-### 1. Get the code and data
+### 第 1 步:克隆代码
 
 ```bash
 git clone https://github.com/lexmount/lexmount-browser-lab.git && cd lexmount-browser-lab
 ```
 
-Everything this recipe needs is contained in the `training/h100/` subtree
-(launch scripts, the vendored verl runtime under `training/h100/runtime/`,
-and the task data under `training/h100/data/`).
+复现所需的一切都在 `training/h100/` 子树里:启动脚本、训练运行时(`runtime/`)、任务数据(`data/`)。168 题任务清单已随仓库提供,训练用的 parquet 会在首次启动时自动生成(每一步数据推导都有 SHA256 校验,见 `data/webvoyager-clean/MANIFEST.json`)。
 
-The 168-task manifest `training/h100/data/webvoyager-clean/tasks.jsonl` is
-tracked; the
-training parquet is built automatically at first launch (or manually:
-`python3 training/h100/build_webvoyager_clean_data.py`). Hashes for every
-step of the data derivation are in
-`training/h100/data/webvoyager-clean/MANIFEST.json`.
-
-### 2. Build the training image
+### 第 2 步:构建训练镜像
 
 ```bash
 docker build -f training/h100/Dockerfile -t lexbrowser-verl-h100:local training/h100
 ```
 
-This layers verl (pinned commit), transformers 5.3.0 and the environment
-package on top of `vllm/vllm-openai:v0.18.0`. On a two-node setup, build
-(or `docker save`/`load`) the same image on both nodes.
+镜像在 `vllm/vllm-openai:v0.18.0` 之上叠加钉死版本的 verl 和环境包。双节点时两台机器都要有这个镜像(可 `docker save`/`docker load` 分发)。
 
-### 3. Download the policy model
+### 第 3 步:下载策略模型
 
 ```bash
 huggingface-cli download Qwen/Qwen3-8B --local-dir /models/Qwen3-8B
 ```
 
-Any path works; pass it as `MODEL_PATH`. Two-node setups need the model at
-the same path on both nodes.
+放哪都行,启动时用 `MODEL_PATH` 传入;双节点需两台机器同路径。
 
-### 4. Install the NeMo-Gym sidecar runtime (once per head node)
+### 第 4 步:安装浏览器环境服务(每台 head 一次)
 
 ```bash
 bash training/h100/install_nemo_gym_runtime_h100.sh
 ```
 
-Clones NVIDIA-NeMo/Gym v0.2.1 (commit-verified) and installs its few extra
-CPU dependencies into `WORK_ROOT` (default `/data/lexbrowser-rl`).
+自动克隆 NVIDIA NeMo-Gym v0.2.1(带 commit 校验)并安装它的几个 CPU 依赖,默认装到 `/data/lexbrowser-rl`。
 
-### 5. Configure secrets
+### 第 5 步:填写凭证
 
 ```bash
 cp training/h100/secrets.env.example training/h100/secrets.env
 chmod 600 training/h100/secrets.env
-$EDITOR training/h100/secrets.env   # Lexmount + judge credentials
+$EDITOR training/h100/secrets.env    # 填 Lexmount 和裁判接口的 key,每个变量文件里有注释
 ```
 
-### 6. Launch
+### 第 6 步:启动
 
-Single node, 8x H100:
+单节点(8×H100):
 
 ```bash
-NODES_CSV=<this-host-ip> MODEL_PATH=/models/Qwen3-8B \
-  bash training/h100/launch_h100.sh
+NODES_CSV=<本机IP> MODEL_PATH=/models/Qwen3-8B bash training/h100/launch_h100.sh
 ```
 
-Two nodes, 16x H100 (same world size as the validated 910B run):
+双节点(16×H100,与验证运行同等规模):
 
 ```bash
-NODES_CSV=<head-ip>,<worker-ip> MODEL_PATH=/models/Qwen3-8B \
-  bash training/h100/launch_h100.sh
+NODES_CSV=<head-IP>,<worker-IP> MODEL_PATH=/models/Qwen3-8B bash training/h100/launch_h100.sh
 ```
 
-The launcher builds the parquet if missing, runs a per-node preflight
-(GPUs, disk, image, CUDA, NeMo-Gym import, and a **real** Lexmount
-session/CDP/DOM probe), starts the browser sidecar and Ray, waits for all
-GPUs to register, and submits the 60-step run. Every hyperparameter above
-can be overridden by env var, but the defaults are the validated
-configuration - override nothing when the goal is curve reproduction.
+启动器会依次:生成数据 parquet → 逐节点预检(GPU、磁盘、镜像、CUDA,外加一次**真实的** Lexmount 会话+CDP+网页抓取探测,凭证有问题在这一步就会报出来)→ 启动浏览器环境服务和 Ray → 等所有卡注册 → 提交 60 步训练。看到 `LAUNCH_OK` 即启动成功。
 
-Useful toggles: `SKIP_PREFLIGHT=1`, `STAMP=<run-id>`,
-`RESUME_FROM_PATH=/workspace/checkpoints/<run-id>/global_step_<N>`,
-`PPO_MAX_TOKEN_LEN_PER_GPU=12288` (exact validated packing; default 15360
-is the 80 GB-scaled value, see PORTING.md).
+**默认值就是验证配置,以复现曲线为目标时什么都不要改。**可选开关:`SKIP_PREFLIGHT=1` 跳过预检;`STAMP=<run-id>` 指定运行名;`RESUME_FROM_PATH=...` 断点续跑;`PPO_MAX_TOKEN_LEN_PER_GPU=12288` 回到与 910B 逐位一致的打包预算(默认 15360 是按 80GB 显存等比放大的值,只影响吞吐不影响训练语义)。
 
-### 7. Monitor
+---
+
+## 怎么看结果
 
 ```bash
-tail -f  <RUNS_ROOT>/<run-id>/logs/train.log
-tensorboard --logdir <RUNS_ROOT>/<run-id>/tensorboard
-docker logs -f lexbrowser-nemo-gym-webvoyager       # browser sidecar
+tail -f  <RUNS_ROOT>/<run-id>/logs/train.log                # 训练日志
+tensorboard --logdir <RUNS_ROOT>/<run-id>/tensorboard       # 曲线
+docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服务
 ```
 
-The reward scalar is `critic/rewards/mean` (with per-step rollout JSONL
-under `<run-dir>/rollouts/` and judge audit records under the sidecar
-audit dir). After the run, `training/h100/runtime/verify_rollout_groups.py`
-is invoked automatically to assert the 8x8 grouping was maintained.
+- 曲线看 TensorBoard 里的 **`critic/rewards/mean`**。
+- 每步的轨迹明细在 `<run-dir>/rollouts/`(JSONL,分数字段名为 `score`);裁判的输入输出审计在 `<run-dir>/audit/judge_io.jsonl`。
+- 训练结束会自动运行 `verify_rollout_groups.py`,校验 8×8 分组全程无破损。
 
-## What the curve should look like
+**参考曲线**(验证运行,Lexmount 后端,60 步 3840 条轨迹):
 
-Reference numbers from the validated Lexmount-backend run (60 steps,
-3840 rollouts):
-
-| Metric | Value |
+| 指标 | 数值 |
 | --- | --- |
-| Reward mean, steps 1-10 | 0.105 |
-| Reward mean, steps 11-50 | 0.280 |
-| Reward mean, steps 51-60 | 0.289 |
-| Reward mean, all 60 steps | 0.252 |
-| Positive-reward trajectories | 969 / 3840 |
-| Zero-reward steps | 0 / 60 |
+| reward 均值,第 1–10 步 | 0.105 |
+| reward 均值,第 11–50 步 | 0.280 |
+| reward 均值,第 51–60 步 | 0.289 |
+| 全程均值 | 0.252 |
+| 正奖励轨迹 | 969 / 3840 |
+| 全零奖励步 | 0 / 60 |
 
-Expect the same shape: rewards near ~0.1 for the first handful of steps,
-climbing to a ~0.25-0.30 plateau by roughly step 15-20, with high per-step
-variance (single steps ranged from 1 to 40 positives out of 64). The
-local-Chromium control run showed the same behavior (0.145 -> 0.272),
-so the growth is a property of the recipe, not of one backend. The
-original TensorBoard event archives for both validated runs (SHA256
-`534390fc...` cloud, `8882e27a...` local) are archived with the 2026-07-21
-experiment report and are available on request for side-by-side comparison.
+预期形状:前几步在 ~0.1 附近,约 15–20 步后爬到 ~0.25–0.30 平台,单步波动大(64 条里正例 1~40 条都出现过)——**看趋势,不看单点**。本地 Chromium 对照组呈相同形态(0.145→0.272),说明增长来自配方而非某个后端。两次验证运行的原始 TensorBoard 归档可提供比对。
 
-**Wall-clock**: the validated run took ~4 h for 60 steps on 16x 910B
-(238 s/step, of which ~87% was rollout/browser time, not GPU math). On
-16x H100 expect the same order or faster (rollout time is dominated by
-browser and judge latency, which do not change; generation and update
-phases should be faster). On a single 8x H100 node, per-step rollout
-throughput halves (32 concurrent trajectories per wave instead of 64),
-so plan for roughly 6-8 h. The reward curve is step-indexed, so
-single-node runs reproduce the same curve, just more slowly.
+**耗时预期**:验证运行 16 卡约 4 小时(238 秒/步,其中 ~87% 是浏览器/裁判等待而非 GPU 计算)。16×H100 应同级或更快;单节点 8 卡时每波并发轨迹减半,预计 6–8 小时——曲线按步数索引,单节点复现同样的曲线,只是慢一些。
 
-## Known differences vs. the 910B run (and why they don't matter)
+**两个不要慌的现象**:
+- 某一步 64 条轨迹全 0 分(或全 1 分)时,GRPO 组内优势为零,该步 `grad_norm=0`——这是零方差步的正常行为,不是故障;基座模型在最初几步常见。
+- rollout 结束阶段偶发个别 Lexmount 会话清理超时告警,不影响轨迹与判分。
 
-- **HCCL -> NCCL, torch_npu -> CUDA torch**: collective transport and
-  device runtime only; the verl patches are device-gated and identical.
-- **vllm-ascend dropped**: it is an acceleration plugin for the same vLLM
-  0.18 line; the CUDA build is the reference implementation.
-- **torch 2.9.0 -> 2.10.0+cu**: forced by CUDA vLLM 0.18.0 wheels; no
-  training-code dependency on 2.9-specific behavior.
-- **Per-GPU token budget 12288 -> 15360 (default)**: dynamic-batching
-  packing knob scaled for 80 GB; loss normalization makes it
-  semantics-preserving, and `12288` remains available for exact parity.
-- **1 node option**: identical per-step math at half the rollout
-  concurrency.
+---
 
-Full details and the verification status of each claim: [PORTING.md](PORTING.md).
+## 附录
 
-## File map
+### 版本与出处(Provenance)
 
-| File | Role |
+| 项目 | 值 |
 | --- | --- |
-| `launch_h100.sh` | one-command orchestrator (preflight -> sidecar -> Ray -> training) |
-| `run_lexbrowser_grpo_h100.sh` | the verl trainer invocation (validated hyperparams as defaults) |
-| `start_ray_node_h100.sh` | per-node Ray container (head/worker) |
-| `start_nemo_gym_webvoyager_server_h100.sh` | CPU browser-environment sidecar |
-| `install_nemo_gym_runtime_h100.sh` | one-time NeMo-Gym v0.2.1 runtime install |
-| `preflight_h100.sh` | per-node checks incl. real Lexmount browser probe |
-| `build_webvoyager_clean_data.py` | rebuilds the 168-task training set (hash-verified) |
-| `Dockerfile` / `requirements-cuda.txt` | pinned CUDA software stack |
-| `secrets.env.example` | every required credential, with sources |
-| `PORTING.md` | Ascend->CUDA differences, verification status |
-| `data/webvoyager-clean/` | 168-task manifest + hash chain (`MANIFEST.json`) |
-| `runtime/` | vendored hardware-neutral verl runtime (agent loop, sidecar, patches, converters) from the validated internal commit |
+| 验证代码 commit | `3220bc5f6f319c7421fcd1e196eb6d59fa190e8b`(`runtime/` 下所有文件为其逐字节副本) |
+| 验证运行 | `20260721-120330-C-…-lexmount…`(Lexmount 后端)与 `20260721-132000-D-…-local…`(本地 Chromium 对照) |
+| verl | 0.9.0.dev0,git commit `30119a253087bff86c12d329d2d8dd43c589705f` |
+| vLLM | 0.18.0(Ascend 侧另有 vllm-ascend 0.18.1.dev41,CUDA 无关) |
+| torch | Ascend 2.9.0;CUDA 2.10.0+cu(由 vLLM 0.18.0 wheel 钉定) |
+| transformers | 5.3.0 |
+| NeMo-Gym | v0.2.1,commit `27e921137042dcdb8a39c7169128619b9108074b` |
+| 策略模型 | Qwen/Qwen3-8B(HF 官方权重) |
+| 裁判模型 | `deepseek-v4-flash`(任意 OpenAI 兼容接口) |
+| 训练数据 | webvoyager-clean 168 题,哈希链见 `data/webvoyager-clean/MANIFEST.json` |
+
+### 架构
+
+```text
+verl GRPO(8 或 16 张 H100)
+  -> verl 异步 vLLM rollout(TP=4,hermes 多轮工具调用)
+  -> agent loop(runtime/lexbrowser_verl_agent.py)
+  -> HTTP -> NeMo-Gym 环境服务(纯 CPU,runtime/nemo_gym_webvoyager_server.py)
+       -> WebVoyager 环境(runtime/lexbrowser_webvoyager/)
+       -> Lexmount 云浏览器(CDP)
+       -> OpenAI 兼容裁判(deepseek-v4-flash)
+  -> 二元奖励 -> GRPO 优势 -> FSDP 更新
+```
+
+### 与 910B 验证运行的差异(以及为何不影响结果)
+
+- **HCCL→NCCL、torch_npu→CUDA torch**:只是集合通信与设备运行时;verl 补丁按设备分支,逻辑相同。
+- **去掉 vllm-ascend**:它是同一 vLLM 0.18 版本线的加速插件,CUDA 构建即参考实现。
+- **torch 2.9→2.10**:CUDA vLLM 0.18.0 wheel 强制;训练代码无 2.9 特有依赖。
+- **每卡 token 预算 12288→15360(默认)**:动态打包旋钮按 80GB 等比放大;loss 归一化保证语义不变,`12288` 可随时切回逐位一致。
+- **单节点选项**:每步数学完全一致,只是 rollout 并发减半。
+
+逐条验证状态见 [PORTING.md](PORTING.md)。
+
+### 文件一览
+
+| 文件 | 作用 |
+| --- | --- |
+| `launch_h100.sh` | 一条命令编排:预检 → 环境服务 → Ray → 训练 |
+| `run_lexbrowser_grpo_h100.sh` | verl 训练入口(验证超参即默认值) |
+| `start_ray_node_h100.sh` | 每节点 Ray 容器(head/worker) |
+| `start_nemo_gym_webvoyager_server_h100.sh` | CPU 浏览器环境服务 |
+| `install_nemo_gym_runtime_h100.sh` | NeMo-Gym v0.2.1 一次性安装 |
+| `preflight_h100.sh` | 逐节点预检(含真实 Lexmount 浏览器探测) |
+| `build_webvoyager_clean_data.py` | 重建 168 题训练集(哈希校验) |
+| `Dockerfile` / `requirements-cuda.txt` | 钉版本的 CUDA 软件栈 |
+| `secrets.env.example` | 全部所需凭证,逐项注释 |
+| `PORTING.md` | Ascend→CUDA 差异与验证状态 |
+| `data/webvoyager-clean/` | 168 题清单 + 哈希链 |
+| `runtime/` | 从验证 commit 逐字节 vendor 的训练运行时 |
