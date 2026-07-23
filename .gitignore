@@ -20,3 +20,6 @@ logs/lexbrowser-grpo/
 results/lexbrowser-grpo/
 results/**/raw/
 results/**/samples.csv
+
+# Generated H100 training parquet (rebuild with training/h100/build_webvoyager_clean_data.py).
+training/h100/data/webvoyager-clean/train.lexbrowser.parquet
