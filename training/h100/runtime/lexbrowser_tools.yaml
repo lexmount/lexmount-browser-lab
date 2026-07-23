@@ -1,0 +1,5 @@
+tools:
+  - class_name: lexbrowser_verl_agent.BrowserTool
+    config:
+      type: native
+      max_concurrent_sessions: 8

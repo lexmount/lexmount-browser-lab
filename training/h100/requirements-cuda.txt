@@ -1,0 +1,43 @@
+# CUDA dependency pins for the LexBrowser WebVoyager GRPO recipe (H100 port).
+#
+# The recommended install path is the Docker image (training/h100/Dockerfile),
+# which reproduces the validated layering exactly. This file documents the
+# same pins for a bare-metal / conda install.
+#
+# Validated software versions (from the actual 2026-07-21 training image on
+# validated versions and their CUDA equivalents:
+#
+#   component     validated                 CUDA port
+#   ------------  ------------------------  --------------------------------
+#   verl          0.9.0.dev0                same git commit (not on PyPI)
+#   vllm          0.18.0                    vllm==0.18.0 (CUDA wheels)
+#   torch         2.9.0                     2.10.0+cu (pinned by vllm 0.18.0
+#                                           CUDA wheels)
+#   transformers  5.3.0.dev0                transformers==5.3.0
+#
+# verl 0.9.0.dev0 is not published on PyPI; pin the exact git commit that the
+# validated image was built from:
+verl @ git+https://github.com/verl-project/verl.git@30119a253087bff86c12d329d2d8dd43c589705f
+
+# vLLM CUDA build matching the validated vLLM line. Pulls torch==2.10.0,
+# torchvision and torchaudio CUDA wheels as its own pins.
+vllm==0.18.0
+
+# Matches the validated image's transformers 5.3.0.dev0. NOTE: vllm 0.18.0
+# declares transformers<5, but the validated stack already ran transformers
+# 5.x on top of vllm 0.18; install this AFTER vllm and verify with the smoke
+# run (see training/h100/README.md, "What is verified vs. pending").
+transformers==5.3.0
+
+# Environment/agent package (browser env + judge + datasets). Installing it
+# pulls the exact pinned env-side stack: lexmount==0.5.12, stagehand==3.21.0,
+# verifiers==0.1.9.post3, datasets, openai.
+# From the repository root:
+#   pip install ./training/h100/runtime/lexbrowser_webvoyager
+#
+# Additional service-side dependencies (NeMo-Gym sidecar HTTP server); the
+# Docker image inherits these from the vllm base image and verl requirements.
+aiohttp
+fastapi
+uvicorn
+pyarrow

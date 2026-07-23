@@ -1,0 +1,31 @@
+{
+  "dataset_id": "webvoyager-clean",
+  "schema_version": 1,
+  "task_count": 168,
+  "allowed_web_names": [
+    "ArXiv",
+    "BBC News",
+    "Coursera",
+    "GitHub"
+  ],
+  "site_counts": {
+    "ArXiv": 43,
+    "BBC News": 42,
+    "Coursera": 42,
+    "GitHub": 41
+  },
+  "source_jsonl": "training/h100/runtime/lexbrowser_webvoyager/src/lexbrowser_webvoyager_no_anti_bot/datasets/WebVoyager_data_clean.jsonl",
+  "source_jsonl_sha256": "b901adc3f1fb93c069260e1940c59b214374f0ffe58ff7dcf5b1af831d3b1097",
+  "tasks_jsonl": "training/h100/data/webvoyager-clean/tasks.jsonl",
+  "tasks_jsonl_sha256": "db0dd8c1f7b2521152caa7dbf76b28dcffa4570655f600007d3f78bd0c8727a9",
+  "builder": "training/h100/build_webvoyager_clean_data.py",
+  "parquet_converter": "training/h100/runtime/prepare_webvoyager_verl_data.py",
+  "validated_run_parquet": "training/h100/data/webvoyager-clean/train.lexbrowser.parquet",
+  "validated_run_parquet_sha256": "cc5d673df3700c37eb8439dbe2a649e2309d9c26ccb2c6288507a81c3af24cbb",
+  "validated_runs": [
+    "internal-validated-run-2026-07-21",
+    "internal-validated-run-2026-07-21"
+  ],
+  "notes": "tasks.jsonl is byte-reproducible from the tracked 600-task source by keeping only the four allowed sites. Parquet bytes depend on the pyarrow version used at build time; the row content produced by the converter is deterministic. The validated_run_parquet_sha256 is the value recorded in the 2026-07-21 experiment delivery.",
+  "license": "WebVoyager task data, MIT (https://github.com/MinorJerry/WebVoyager)"
+}
