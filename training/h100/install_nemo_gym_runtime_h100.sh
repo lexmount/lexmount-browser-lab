@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the CPU-only NeMo-Gym service runtime on an H100 host.
 #
-# Port of the internal Ascend runtime-install script with the CUDA image and
+# Runtime-install script for the CUDA image and
 # neutral cache paths. NeMo-Gym is a CPU orchestration layer: it never touches
 # the GPUs, so the same training image can host it.
 set -Eeuo pipefail

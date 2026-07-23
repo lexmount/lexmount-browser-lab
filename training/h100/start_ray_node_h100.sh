@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Start the Ray head or a Ray worker container on one H100 host.
 #
-# CUDA port of the internal Ascend per-node script: NVIDIA GPUs replace the
-# /dev/davinci* Ascend devices, and NCCL_* replaces the HCCL_* transport
-# configuration. Everything else (mounts, verl patches, env plumbing) is
-# unchanged.
+# Per-node Ray container: NVIDIA GPUs as compute devices, NCCL_* as the
+# collective transport env. Mounts, verl patches and env plumbing follow the
+# validated recipe.
 set -Eeuo pipefail
 
 ROLE=${ROLE:?set ROLE=head or ROLE=worker}

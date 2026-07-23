@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Launch verl GRPO from the Ray head inside the CUDA training container.
 #
-# CUDA port of the internal Ascend trainer entry. The training
+# Trainer entry for the validated recipe on CUDA. The training
 # semantics (GRPO geometry, lengths, optimizer, multi-turn contract) are
-# identical to the validated 2026-07-21 Ascend run; only the collective
-# backend (HCCL -> NCCL) and per-GPU token budgets (64 GB NPU -> 80 GB H100)
-# differ. See training/h100/PORTING.md.
+# identical to the validated 2026-07-21 run; only the collective backend
+# and per-GPU token budgets (scaled for 80 GB H100) differ.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +34,7 @@ TEST_FREQ=${TEST_FREQ:--1}
 MAX_RESPONSE_LENGTH=${MAX_RESPONSE_LENGTH:-36864}
 MAX_MODEL_LENGTH=${MAX_MODEL_LENGTH:-40960}
 ULYSSES_SEQUENCE_PARALLEL_SIZE=${ULYSSES_SEQUENCE_PARALLEL_SIZE:-4}
-# Validated value was 12288 tokens per 64 GB Ascend 910B. H100-80GB has 1.25x
+# The validated run used 12288 tokens per 64 GB device. H100-80GB has 1.25x
 # the memory, so the default here is scaled to 15360 (= 12288 * 80/64). This
 # is a throughput/packing knob for dynamic batching only - verl normalizes
 # the loss across micro-batches, so it does not change training semantics.
@@ -121,8 +120,8 @@ else
   echo "TRAINING_FROM_SCRATCH"
 fi
 
-# NCCL replaces HCCL from the Ascend recipe. GLOO remains the CPU-side
-# coordination backend, exactly as on Ascend.
+# NCCL is the collective transport. GLOO remains the CPU-side
+# coordination backend, as in the validated recipe.
 export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-}
 export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-}
 [[ -z "$NCCL_SOCKET_IFNAME" ]] && unset NCCL_SOCKET_IFNAME

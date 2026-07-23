@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the CPU-only NeMo-Gym browser environment sidecar on the Ray head.
 #
-# Port of the internal Ascend sidecar script (CUDA image and neutral paths;
+# Browser-environment sidecar launcher (CUDA image and neutral paths;
 # the server itself, vendored at runtime/nemo_gym_webvoyager_server.py, is
 # hardware-neutral).
 set -Eeuo pipefail

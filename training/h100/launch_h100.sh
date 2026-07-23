@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # One-command launcher for the LexBrowser WebVoyager GRPO recipe on H100.
 #
-# Mirrors the internal Ascend launcher chain of the validated recipe with the
+# Launcher chain of the validated recipe with the
 # validated 2026-07-21 hyperparameters baked in as defaults. This subtree is
 # self-contained: every referenced script and runtime file lives under
 # training/h100/.
 #
 # Single node (8x H100):
 #   NODES_CSV=<this-host-ip> bash training/h100/launch_h100.sh
-# Two nodes (16x H100, same world size as the validated 2x8 910B run):
+# Two nodes (16x H100, same world size as the validated run):
 #   NODES_CSV=<head-ip>,<worker-ip> bash training/h100/launch_h100.sh
 #
 # Requirements before launching: see training/h100/README.md.
@@ -60,7 +60,7 @@ ACTION_MAX_TOKENS=${ACTION_MAX_TOKENS:-1024}
 MAX_TOOL_RESPONSE_LENGTH=${MAX_TOOL_RESPONSE_LENGTH:-16384}
 REASONING_PARSER=${REASONING_PARSER:-qwen3}
 ULYSSES_SEQUENCE_PARALLEL_SIZE=${ULYSSES_SEQUENCE_PARALLEL_SIZE:-4}
-# 12288/GPU was validated on 64 GB 910B; 15360 = 12288 * 80/64 for H100-80GB.
+# 12288/GPU was the validated packing budget on 64 GB devices; 15360 = 12288 * 80/64.
 # Packing-only knob; see training/h100/README.md before changing.
 PPO_MAX_TOKEN_LEN_PER_GPU=${PPO_MAX_TOKEN_LEN_PER_GPU:-15360}
 REF_LOG_PROB_MAX_TOKEN_LEN_PER_GPU=${REF_LOG_PROB_MAX_TOKEN_LEN_PER_GPU:-$PPO_MAX_TOKEN_LEN_PER_GPU}

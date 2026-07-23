@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Cluster preflight for the H100 recipe. Run from the Ray head.
 #
-# Port of the internal Ascend cluster preflight:
-# nvidia-smi replaces the /dev/davinci* NPU count and the CUDA image replaces
-# the Ascend image. The real-browser Lexmount smoke is unchanged.
+# Per-node checks: paths, secrets, model, image, disk, GPU count, CUDA probe,
+# NeMo-Gym import, and a real Lexmount browser session smoke.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

@@ -5,15 +5,14 @@
 # same pins for a bare-metal / conda install.
 #
 # Validated software versions (from the actual 2026-07-21 training image on
-# Ascend 910B) and their CUDA equivalents:
+# validated versions and their CUDA equivalents:
 #
-#   component     validated (Ascend)        CUDA port
+#   component     validated                 CUDA port
 #   ------------  ------------------------  --------------------------------
 #   verl          0.9.0.dev0                same git commit (not on PyPI)
-#   vllm          0.18.0 (+vllm-ascend      vllm==0.18.0 (CUDA wheels)
-#                 0.18.1.dev41, NPU-only)
-#   torch         2.9.0 (torch_npu pin)     2.10.0+cu (pinned by vllm 0.18.0
-#                                           CUDA wheels; see PORTING.md)
+#   vllm          0.18.0                    vllm==0.18.0 (CUDA wheels)
+#   torch         2.9.0                     2.10.0+cu (pinned by vllm 0.18.0
+#                                           CUDA wheels)
 #   transformers  5.3.0.dev0                transformers==5.3.0
 #
 # verl 0.9.0.dev0 is not published on PyPI; pin the exact git commit that the

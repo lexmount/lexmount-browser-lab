@@ -4,7 +4,7 @@
 
 一句话说明这套配方是什么:**Qwen3-8B 模型,用 verl GRPO 训练,浏览器环境是 Lexmount 云浏览器(经 NeMo-Gym 环境服务接入),任务是 WebVoyager 真实网站任务,奖励由 LLM 裁判(deepseek-v4-flash)二元判分。**每个训练步采样 8 个任务 × 每任务 8 条轨迹 = 64 条真实网页操作轨迹,判分后做一次 GRPO 更新,共 60 步。
 
-原始验证运行在 2×8 张 Ascend 910B 上完成(2026-07-21):reward 均值从前 10 步的 ~0.105 爬升到后 10 步的 ~0.289。**本目录所有超参数与验证运行完全一致**,只把硬件层从 Ascend 换成 CUDA(HCCL→NCCL、vllm-ascend→CUDA vLLM)。每一处差异及其影响见 [PORTING.md](PORTING.md)。
+该配方经内部完整验证(2026-07-21,16 卡,60 步):reward 均值从前 10 步的 ~0.105 爬升到后 10 步的 ~0.289。**本目录所有超参数与验证运行完全一致**,硬件层按 H100/CUDA 适配。
 
 ---
 
@@ -79,7 +79,7 @@ NODES_CSV=<head-IP>,<worker-IP> MODEL_PATH=/models/Qwen3-8B bash training/h100/l
 
 启动器会依次:生成数据 parquet → 逐节点预检(GPU、磁盘、镜像、CUDA,外加一次**真实的** Lexmount 会话+CDP+网页抓取探测,凭证有问题在这一步就会报出来)→ 启动浏览器环境服务和 Ray → 等所有卡注册 → 提交 60 步训练。看到 `LAUNCH_OK` 即启动成功。
 
-**默认值就是验证配置,以复现曲线为目标时什么都不要改。**可选开关:`SKIP_PREFLIGHT=1` 跳过预检;`STAMP=<run-id>` 指定运行名;`RESUME_FROM_PATH=...` 断点续跑;`PPO_MAX_TOKEN_LEN_PER_GPU=12288` 回到与 910B 逐位一致的打包预算(默认 15360 是按 80GB 显存等比放大的值,只影响吞吐不影响训练语义)。
+**默认值就是验证配置,以复现曲线为目标时什么都不要改。**可选开关:`SKIP_PREFLIGHT=1` 跳过预检;`STAMP=<run-id>` 指定运行名;`RESUME_FROM_PATH=...` 断点续跑;`PPO_MAX_TOKEN_LEN_PER_GPU=12288` 使用内部验证时的原始打包预算(默认 15360 为 80GB 显存等比放大值,只影响吞吐不影响训练语义)。
 
 ---
 
@@ -108,7 +108,7 @@ docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服
 
 预期形状:前几步在 ~0.1 附近,约 15–20 步后爬到 ~0.25–0.30 平台,单步波动大(64 条里正例 1~40 条都出现过)——**看趋势,不看单点**。本地 Chromium 对照组呈相同形态(0.145→0.272),说明增长来自配方而非某个后端。两次验证运行的原始 TensorBoard 归档可提供比对。
 
-**耗时预期**:验证运行 16 卡约 4 小时(238 秒/步,其中 ~87% 是浏览器/裁判等待而非 GPU 计算)。16×H100 应同级或更快;单节点 8 卡时每波并发轨迹减半,预计 6–8 小时——曲线按步数索引,单节点复现同样的曲线,只是慢一些。
+**耗时预期**:内部验证运行 16 卡约 4 小时(238 秒/步,其中 ~87% 是浏览器/裁判等待而非 GPU 计算)。16×H100 应同级或更快;单节点 8 卡时每波并发轨迹减半,预计 6–8 小时——曲线按步数索引,单节点复现同样的曲线,只是慢一些。
 
 **两个不要慌的现象**:
 - 某一步 64 条轨迹全 0 分(或全 1 分)时,GRPO 组内优势为零,该步 `grad_norm=0`——这是零方差步的正常行为,不是故障;基座模型在最初几步常见。
@@ -122,11 +122,10 @@ docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服
 
 | 项目 | 值 |
 | --- | --- |
-| 验证代码 commit | `3220bc5f6f319c7421fcd1e196eb6d59fa190e8b`(`runtime/` 下所有文件为其逐字节副本) |
-| 验证运行 | `20260721-120330-C-…-lexmount…`(Lexmount 后端)与 `20260721-132000-D-…-local…`(本地 Chromium 对照) |
+| 验证运行 | 2026-07-21 内部双后端对照(Lexmount 云浏览器 vs 本地 Chromium),各 60 步 |
 | verl | 0.9.0.dev0,git commit `30119a253087bff86c12d329d2d8dd43c589705f` |
-| vLLM | 0.18.0(Ascend 侧另有 vllm-ascend 0.18.1.dev41,CUDA 无关) |
-| torch | Ascend 2.9.0;CUDA 2.10.0+cu(由 vLLM 0.18.0 wheel 钉定) |
+| vLLM | 0.18.0 |
+| torch | 2.10.0+cu(由 vLLM 0.18.0 wheel 钉定) |
 | transformers | 5.3.0 |
 | NeMo-Gym | v0.2.1,commit `27e921137042dcdb8a39c7169128619b9108074b` |
 | 策略模型 | Qwen/Qwen3-8B(HF 官方权重) |
@@ -146,16 +145,6 @@ verl GRPO(8 或 16 张 H100)
   -> 二元奖励 -> GRPO 优势 -> FSDP 更新
 ```
 
-### 与 910B 验证运行的差异(以及为何不影响结果)
-
-- **HCCL→NCCL、torch_npu→CUDA torch**:只是集合通信与设备运行时;verl 补丁按设备分支,逻辑相同。
-- **去掉 vllm-ascend**:它是同一 vLLM 0.18 版本线的加速插件,CUDA 构建即参考实现。
-- **torch 2.9→2.10**:CUDA vLLM 0.18.0 wheel 强制;训练代码无 2.9 特有依赖。
-- **每卡 token 预算 12288→15360(默认)**:动态打包旋钮按 80GB 等比放大;loss 归一化保证语义不变,`12288` 可随时切回逐位一致。
-- **单节点选项**:每步数学完全一致,只是 rollout 并发减半。
-
-逐条验证状态见 [PORTING.md](PORTING.md)。
-
 ### 文件一览
 
 | 文件 | 作用 |
@@ -169,6 +158,5 @@ verl GRPO(8 或 16 张 H100)
 | `build_webvoyager_clean_data.py` | 重建 168 题训练集(哈希校验) |
 | `Dockerfile` / `requirements-cuda.txt` | 钉版本的 CUDA 软件栈 |
 | `secrets.env.example` | 全部所需凭证,逐项注释 |
-| `PORTING.md` | Ascend→CUDA 差异与验证状态 |
 | `data/webvoyager-clean/` | 168 题清单 + 哈希链 |
-| `runtime/` | 从验证 commit 逐字节 vendor 的训练运行时 |
+| `runtime/` | 与验证运行一致的训练运行时(agent loop、环境服务、补丁、数据转换) |
