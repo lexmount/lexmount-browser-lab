@@ -273,6 +273,7 @@ def compute_grpo_outcome_advantage(
     epsilon: float = 1e-6,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
+    env_invalid: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute advantage for GRPO, operating only on Outcome reward
@@ -304,20 +305,30 @@ def compute_grpo_outcome_advantage(
     """
     scores = token_level_rewards.sum(dim=-1)
 
-    # LexBrowser patch: a sample whose response_mask is entirely zero is
-    # invalid — either an environment failure (browser reset / close / judge
-    # transport) or an empty generation — and was fully loss-masked by the
-    # agent loop.  Such samples must not enter the group statistics: an
-    # environment outage would otherwise depress the group mean and inflate
-    # the surviving samples' advantages (reward=0 without a policy cause).
-    # Invalid samples get advantage 0; a whole group is dropped (all
-    # advantages 0) when its baseline is no longer meaningful, i.e. when
-    # EITHER fewer than LEXBROWSER_GRPO_MIN_VALID_PER_GROUP (default 2) valid
-    # samples remain OR the invalid fraction exceeds
+    # LexBrowser patch: environment-invalid samples (browser reset / close /
+    # judge transport failures, aborted generations) must not enter the group
+    # statistics: an environment outage would otherwise depress the group
+    # mean and inflate the surviving samples' advantages (reward=0 without a
+    # policy cause).  Invalid samples get advantage 0; a whole group is
+    # dropped (all advantages 0) when its baseline is no longer meaningful,
+    # i.e. when EITHER fewer than LEXBROWSER_GRPO_MIN_VALID_PER_GROUP
+    # (default 2) valid samples remain OR the invalid fraction exceeds
     # LEXBROWSER_INVALID_GROUP_MAX_FRACTION (default 0.25 — a baseline
     # computed while >1/4 of the group's rollouts hit infrastructure failures
     # reflects the outage, not the task difficulty).
-    sample_is_valid = response_mask.sum(dim=-1) > 0
+    #
+    # Validity comes from the explicit ``env_invalid`` flags (vendored
+    # ray_trainer forwards them from the agent loop).  An all-zero
+    # response_mask alone is NOT sufficient evidence of environment failure:
+    # a policy that immediately emits a stop token also produces a zero-token
+    # response, and that reward=0 is a legitimate policy outcome which must
+    # stay in the baseline (it still carries no gradient — the advantage is
+    # multiplied by the zero mask below).  The mask heuristic is kept only as
+    # a fallback for callers that cannot supply the flags.
+    if env_invalid is not None:
+        sample_is_valid = ~env_invalid.to(response_mask.device).bool()
+    else:
+        sample_is_valid = response_mask.sum(dim=-1) > 0
     min_valid_per_group = int(os.environ.get("LEXBROWSER_GRPO_MIN_VALID_PER_GROUP", "2"))
     max_invalid_fraction = float(
         os.environ.get("LEXBROWSER_INVALID_GROUP_MAX_FRACTION", "0.25")

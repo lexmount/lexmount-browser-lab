@@ -643,15 +643,37 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
             extra_fields["lexbrowser_empty_response"] = True
         invalid_sample = bool(info.get("lexbrowser_invalid_sample"))
         invalid_reason = str(info.get("lexbrowser_invalid_reason") or "")
+        if empty_response and not invalid_sample:
+            # A zero-token episode has two causally different sources and only
+            # one is an environment failure:
+            # (a) infrastructure — the episode deadline expired (or generation
+            #     was aborted) before the first generate() completed.  Exclude
+            #     from the group baseline like any environment failure.
+            # (b) policy — the model's first sampled token was a stop token
+            #     and the engine strips it from the output.  That is a real
+            #     policy outcome: reward=0 must participate in the baseline.
+            #     The response stays loss-masked (the placeholder token and
+            #     logprob are fabricated, so it must not carry a gradient).
+            # Non-timeout aborts (e.g. engine preemption) currently land in
+            # (b); verify the engine's stop-token behavior before tightening.
+            if timed_out:
+                invalid_sample = True
+                invalid_reason = "generation_aborted_timeout"
+            else:
+                extra_fields["lexbrowser_policy_empty"] = True
+        # Always materialize the flags on every sample: the batch collation
+        # only exposes a non-tensor key when at least one sample carries it,
+        # and the advantage patch must distinguish "no invalid samples"
+        # (all-False) from "flags unavailable" (fall back to mask inference).
+        extra_fields["lexbrowser_invalid_sample"] = invalid_sample
+        extra_fields["lexbrowser_invalid_reason"] = invalid_reason
         if invalid_sample:
-            # Environment failure (reset/close/judge infrastructure), not a
-            # policy failure.  Keep the trajectory in its GRPO group but excise
-            # its policy gradient by loss-masking every response token — the
-            # same mechanism as empty_response above.  A reward=0 caused by a
-            # broken environment must not teach the policy anything.
+            # Environment failure (reset/close/judge infrastructure or an
+            # aborted generation), not a policy failure.  Keep the trajectory
+            # in its GRPO group but excise its policy gradient by loss-masking
+            # every response token.  Group-statistics exclusion happens in the
+            # patched advantage estimator via the explicit flag above.
             response_mask = [0] * len(response_mask)
-            extra_fields["lexbrowser_invalid_sample"] = True
-            extra_fields["lexbrowser_invalid_reason"] = invalid_reason
         rollout_step = kwargs.get("global_steps", 0)
         if extra_fields.get("min_global_steps") is None:
             extra_fields["min_global_steps"] = int(rollout_step or 0)
