@@ -14,7 +14,7 @@
 | --- | --- |
 | 硬件 | 1 台 8×H100-80GB(默认);或 2 台同规格(head 到 worker 需免密 SSH)。每次训练预留 ~300 GB 磁盘(单个 checkpoint 约 92 GB,60 步存 3 个) |
 | 软件 | Docker + NVIDIA container toolkit;能访问 GitHub / PyPI / Docker Hub / Hugging Face / Lexmount API,以及任务集里的公开网站(arxiv.org、bbc.com、coursera.org、github.com) |
-| 凭证 | ① Lexmount API key + project ID(浏览器会话,需 64 并发配额);② 一个能调用 `deepseek-v4-flash` 的 OpenAI 兼容接口(裁判用,任何服务商或自部署均可)。逐项说明见 `secrets.env.example` |
+| 凭证 | ① Lexmount API key + project ID(浏览器会话;训练稳态用 64 并发,账号配额建议 ≥ 80 留出关闭确认/清理余量,见「会话生命周期与配额」);② 一个能调用 `deepseek-v4-flash` 的 OpenAI 兼容接口(裁判用,任何服务商或自部署均可)。逐项说明见 `secrets.env.example` |
 | 模型 | Hugging Face 上的官方 `Qwen/Qwen3-8B` 权重 |
 
 ---
@@ -115,6 +115,27 @@ docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服
 - rollout 结束阶段偶发个别 Lexmount 会话清理超时告警,不影响轨迹与判分。
 
 ---
+
+## 会话生命周期与配额(2026-07-27 加固)
+
+针对一次真实复现事故(step 61–80 大面积 `ERROR_ENVIRONMENT_BROWSER_RESET`,根因是环境服务在训练侧放弃后仍注册会话、以及超时重试放大了 provider 侧并发)的加固。默认值开箱即用,无需改动;这里说明背后的约束,便于调参时不破坏它们。
+
+**硬性不变量:provider 侧可见的会话数任意时刻 ≤ `LEXMOUNT_MAX_CONCURRENT_SESSIONS`(默认 64)。** 并发槽位跟随会话在 provider 侧的真实生命周期:create 请求发出即占位,超时被放弃的 create 仍占位直到迟到会话被关闭,close 未确认前不还位。账号配额应高于该值留出余量(建议配额 ≥ 会话数 + 16)。
+
+| 环境变量 | 默认 | 约束 |
+| --- | --- | --- |
+| `LEXMOUNT_MAX_CONCURRENT_SESSIONS` | 64 | = 每步轨迹数(8 任务 × 8 采样);须低于账号配额并留余量 |
+| `LEXMOUNT_SESSION_CREATE_ATTEMPTS` | 2 | 每次 /reset 内的 create 尝试数(带指数退避;配额类错误等更久) |
+| `LEXMOUNT_RESET_TOTAL_BUDGET_S` | 110 | 单次 /reset 的服务端总墙钟(含重试);**必须小于** 训练侧 `LEXMOUNT_RESET_REQUEST_TIMEOUT_S`(默认 120),否则训练侧放弃后服务端会注册无人认领的孤儿会话 |
+| `LEXMOUNT_RESET_CIRCUIT_COOLDOWN_S` | 60 | reset 成功率熔断(近 32 次 < 20% 即快速失败)的冷却时间 |
+| `LEXMOUNT_SWEEP_INTERVAL_S` | 60 | 孤儿会话对账周期:连续两轮出现在 provider 侧(`status="active"`)、但本服务不认识的会话会被删除。**要求账号专用于本次训练**;共享账号请设为 0 关闭 |
+| `LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S` | 45 | 裁判单次调用超时(裁判在会话释放之后运行,不占浏览器) |
+| `LEXBROWSER_ENV_FAILURE_RETRIES` | 1 | 环境失败 rollout 的整集重采样次数(新会话重跑该 episode) |
+| `LEXBROWSER_GRPO_MIN_VALID_PER_GROUP` | 2 | GRPO 组内有效样本低于此数时整组优势置 0(基线不再有意义) |
+| `LEXBROWSER_INVALID_GROUP_MAX_FRACTION` | 0.25 | GRPO 组内 invalid 占比超过此阈值时整组优势置 0(基线反映的是故障而非任务难度);与上一条任一命中即整组丢弃 |
+| `LEXBROWSER_EXECUTOR_WORKERS` | sessions+creates+16 | 环境服务默认线程池大小;默认池只有 `min(32, cpu+4)`,低于 64 会话并发,provider 变慢时会把 observe/act/close 全部排队拖超时 |
+
+**环境失败与策略失败的区分**(三层):① reset 失败、/close 传输失败、会话丢失、裁判不可用等基础设施故障,先按 `LEXBROWSER_ENV_FAILURE_RETRIES` 用新会话**重采样整条 episode**(失败路径有预算/熔断兜底,快速失败,重试代价低);② 重试后仍无效的样本标记 `lexbrowser_invalid_sample` 并全 response loss-mask;③ verl 补丁 `runtime/patches/ray_trainer.py` 把该**显式标记**作为 `env_invalid` 张量传给 `runtime/patches/core_algos.py` 的 GRPO 估计器——**组均值/方差只在有效样本上计算**,无效样本优势恒 0,组内有效不足/无效占比超阈值时整组优势置 0。判定信号是显式标记而非全零 response_mask:**策略首 token 即 stop 产生的零 token 轨迹是真实策略结果**,其 reward=0 参与基线(自身仍无梯度,占位 token 是伪造的),不计入熔断;仅 episode 超时且零生成的空轨迹按基础设施剔除。环境故障因此既不产生策略梯度,也不再压低组基线、放大幸存样本的优势。策略自身的错误(不合法动作、选择器失效、重复无进展、立即终止)不受影响,照常参与训练。估计器单元测试:`runtime/tests/test_core_algos_grpo.py`(8 例,免装 verl 直接跑)。`/close` 服务端幂等:已完成的结果缓存重放,**处理中的 close 被重试请求直接 join**(per-session future;客户端 90s 超时通常发生在裁判仍在运行时,只有缓存无法覆盖这个窗口),训练侧超时重试能取回真实判分。SDK create 轮询被限制在 create 预算内(不再吃 600s 默认值占死线程),create 异常中携带的 session id 会被提取并按 id 删除。`/health` 暴露 `live_sessions`、`unconfirmed_closes`、`leaked_sessions`、`sweeper_reclaimed`、`reset_circuit_open` 等仪表,复现时建议接入监控。
 
 ## 附录
 

@@ -19,11 +19,18 @@ NAME=${NAME:-lexbrowser-h100-ray}
 SHM_SIZE=${SHM_SIZE:-128g}
 VERL_AGENT_LOOP_PATCH=${VERL_AGENT_LOOP_PATCH:-$ROOT/runtime/patches/agent_loop.py}
 VERL_DISTRIBUTED_PATCH=${VERL_DISTRIBUTED_PATCH:-$ROOT/runtime/patches/distributed.py}
+VERL_CORE_ALGOS_PATCH=${VERL_CORE_ALGOS_PATCH:-$ROOT/runtime/patches/core_algos.py}
+VERL_RAY_TRAINER_PATCH=${VERL_RAY_TRAINER_PATCH:-$ROOT/runtime/patches/ray_trainer.py}
+# GRPO invalid-sample handling knobs; the trainer driver and the agent-loop
+# workers both live in this container, so plumb them through explicitly.
+LEXBROWSER_GRPO_MIN_VALID_PER_GROUP=${LEXBROWSER_GRPO_MIN_VALID_PER_GROUP:-2}
+LEXBROWSER_INVALID_GROUP_MAX_FRACTION=${LEXBROWSER_INVALID_GROUP_MAX_FRACTION:-0.25}
+LEXBROWSER_ENV_FAILURE_RETRIES=${LEXBROWSER_ENV_FAILURE_RETRIES:-1}
 LEXBROWSER_ACTION_MAX_TOKENS=${LEXBROWSER_ACTION_MAX_TOKENS:-1024}
 VERL_PROCESS_GROUP_TIMEOUT_SECONDS=${VERL_PROCESS_GROUP_TIMEOUT_SECONDS:-7200}
 SECRETS_FILE=${SECRETS_FILE:-$ROOT/secrets.env}
 
-for patch in "$VERL_AGENT_LOOP_PATCH" "$VERL_DISTRIBUTED_PATCH"; do
+for patch in "$VERL_AGENT_LOOP_PATCH" "$VERL_DISTRIBUTED_PATCH" "$VERL_CORE_ALGOS_PATCH" "$VERL_RAY_TRAINER_PATCH"; do
   if [[ ! -f "$patch" ]]; then
     echo "Missing persistent verl patch: $patch" >&2
     exit 1
@@ -82,12 +89,17 @@ docker run -d --name "$NAME" --network host --ipc host --shm-size "$SHM_SIZE" \
   -v "$CHECKPOINT_ROOT:/workspace/checkpoints" \
   -v "$VERL_AGENT_LOOP_PATCH:/verl/verl/experimental/agent_loop/agent_loop.py:ro" \
   -v "$VERL_DISTRIBUTED_PATCH:/verl/verl/utils/distributed.py:ro" \
+  -v "$VERL_CORE_ALGOS_PATCH:/verl/verl/trainer/ppo/core_algos.py:ro" \
+  -v "$VERL_RAY_TRAINER_PATCH:/verl/verl/trainer/ppo/ray_trainer.py:ro" \
   -v "$MODEL_PATH:$MODEL_PATH:ro" \
   --env-file "$SECRETS_FILE" \
   -e PYTHONPATH=/workspace/lexbrowser-h100/runtime:/workspace/lexbrowser-h100/runtime/lexbrowser_webvoyager/src \
   -e GLOO_SOCKET_IFNAME="$GLOO_SOCKET_IFNAME" \
   -e NCCL_SOCKET_IFNAME="$NCCL_SOCKET_IFNAME" \
   -e LEXBROWSER_ACTION_MAX_TOKENS="$LEXBROWSER_ACTION_MAX_TOKENS" \
+  -e LEXBROWSER_GRPO_MIN_VALID_PER_GROUP="$LEXBROWSER_GRPO_MIN_VALID_PER_GROUP" \
+  -e LEXBROWSER_INVALID_GROUP_MAX_FRACTION="$LEXBROWSER_INVALID_GROUP_MAX_FRACTION" \
+  -e LEXBROWSER_ENV_FAILURE_RETRIES="$LEXBROWSER_ENV_FAILURE_RETRIES" \
   -e VERL_PROCESS_GROUP_TIMEOUT_SECONDS="$VERL_PROCESS_GROUP_TIMEOUT_SECONDS" \
   -e TENSORBOARD_DIR="${TENSORBOARD_DIR:-}" \
   -e VERL_FILE_LOGGER_ROOT="${VERL_FILE_LOGGER_ROOT:-}" \

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import re
@@ -25,6 +26,7 @@ from lexbrowser_webvoyager_no_anti_bot.environment import (
     TrajectoryGuard,
 )
 
+LOGGER = logging.getLogger(__name__)
 
 _METRICS_QUEUE: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=4096)
 _METRICS_THREAD: threading.Thread | None = None
@@ -229,9 +231,13 @@ class BrowserTool(BaseTool):
                             "task_id": create.get("task_id", ""),
                             "rubric": create.get("rubric", ""),
                         },
-                        # Session creation itself remains bounded at 60 seconds in
-                        # the sidecar. The reset RPC also includes initial navigation
-                        # and one retry, so its deadline must cover the final outcome.
+                        # The sidecar bounds the whole reset — creates, retries
+                        # and initial navigation — by LEXMOUNT_RESET_TOTAL_BUDGET_S
+                        # (110s default). This client deadline must stay above
+                        # that budget so the server always finishes (or refuses)
+                        # before the client walks away; a client-side timeout
+                        # here would otherwise let the server register a session
+                        # that no caller will ever step or close.
                         timeout=float(os.environ.get("LEXMOUNT_RESET_REQUEST_TIMEOUT_S", "120")),
                     )
                 except Exception as exc:
@@ -243,12 +249,19 @@ class BrowserTool(BaseTool):
 
         assert self.mode is not None
         started = time.perf_counter()
+        state: dict[str, Any] = {"info": {"question": create["question"], "start_url": create["start_url"]}}
+        reset_error = ""
         try:
-            state: dict[str, Any] = {"info": {"question": create["question"], "start_url": create["start_url"]}}
-            state = await self.mode.setup_state(state)
-            session = state["browser_session"]
-            session.set_task_query(create["question"])
-            await self.mode.navigate(create["start_url"], session, state["trajectory_guard"])
+            try:
+                state = await self.mode.setup_state(state)
+                session = state["browser_session"]
+                session.set_task_query(create["question"])
+                await self.mode.navigate(create["start_url"], session, state["trajectory_guard"])
+            except Exception as exc:
+                # Mirror the service path: a failed environment reset is a
+                # classified rollout outcome, not a crashed agent loop.
+                reset_error = type(exc).__name__
+                await self.mode.cleanup_session(state)
         finally:
             _add_metric(agent_data, "browser_environment_init_s", time.perf_counter() - started)
         self._sessions[request_id] = {
@@ -260,6 +273,8 @@ class BrowserTool(BaseTool):
             "service": False,
             "tool": self,
         }
+        if reset_error:
+            self._sessions[request_id]["reset_error"] = reset_error
         return self._sessions[request_id]
 
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs: Any) -> tuple[ToolResponse, float, dict]:
@@ -350,37 +365,77 @@ class BrowserTool(BaseTool):
         }
         if record["service"]:
             tool = record["tool"]
-            try:
-                result = await tool._post(
-                    "/close",
-                    {
-                        "session_id": agent_data.request_id,
-                        "verify": True,
-                        "final_answer": final_answer,
-                        "final_answer_status": final_answer_status,
-                        "generation_truncated": generation_truncated,
-                        "episode_timed_out": episode_timed_out,
-                        "final_answer_present": bool(final_answer),
-                    },
-                    timeout=90.0,
-                )
-            except Exception as exc:
+            result: dict[str, Any] | None = None
+            close_error: Exception | None = None
+            # /close is idempotent server-side (finished results are cached and
+            # replayed), so a retry after a client timeout recovers the real
+            # verdict instead of losing it to reward=0.
+            for _ in range(2):
+                try:
+                    result = await tool._post(
+                        "/close",
+                        {
+                            "session_id": agent_data.request_id,
+                            "verify": True,
+                            "final_answer": final_answer,
+                            "final_answer_status": final_answer_status,
+                            "generation_truncated": generation_truncated,
+                            "episode_timed_out": episode_timed_out,
+                            "final_answer_present": bool(final_answer),
+                        },
+                        timeout=90.0,
+                    )
+                    break
+                except Exception as exc:
+                    close_error = exc
+            if result is None:
+                assert close_error is not None
                 return 0.0, {
-                    "lexbrowser_reason": f"service_close_error:{type(exc).__name__}",
+                    "lexbrowser_reason": f"service_close_error:{type(close_error).__name__}",
                     "lexbrowser_transcript": transcript,
                     "environment_service": "nemo-gym",
+                    "lexbrowser_invalid_sample": True,
+                    "lexbrowser_invalid_reason": "environment_close_rpc_failed",
                 }
             info = dict(result.get("info") or {})
-            if info.get("judge_status") == "error":
-                raise RuntimeError(
-                    f"judge_error_without_training_signal:{info.get('lexbrowser_reason', 'unknown')}"
-                )
+            # Environment-failure classification (requested by the training
+            # side): a rollout whose reward=0 comes from infrastructure — not
+            # from the policy — must be distinguishable so the recipe can
+            # excise it from the GRPO loss instead of learning from it.
+            if record.get("reset_error"):
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_reset_failed"
+            elif info.get("lexbrowser_reason") == "unknown_browser_session":
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_unknown_session"
+            elif info.get("judge_status") == "error":
+                # Previously raised judge_error_without_training_signal, which
+                # aborted the whole training step; an unusable judge verdict is
+                # an invalid sample, not a fatal condition.
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_judge_failed"
             return float(result["reward"]), info
 
         score, reason = 0.0, "no_tool_calls"
         session_cleanup_s = 0.0
+        if record.get("reset_error"):
+            mode = record["tool"].mode
+            assert mode is not None
+            await mode.cleanup_session(record.get("state") or {})
+            return 0.0, {
+                "lexbrowser_reason": "environment_reset_failed",
+                "lexbrowser_transcript": transcript,
+                "environment_service": "direct",
+                "lexbrowser_invalid_sample": True,
+                "lexbrowser_invalid_reason": "environment_reset_failed",
+                **execution_status,
+            }
         try:
-            client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=os.environ["OPENAI_BASE_URL"])
+            client = AsyncOpenAI(
+                api_key=os.environ["OPENAI_API_KEY"],
+                base_url=os.environ["OPENAI_BASE_URL"],
+                timeout=float(os.environ.get("LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S", "45")),
+            )
             prompt = TASK_EVIDENCE_FINAL_ANSWER_JUDGE_PROMPT.format(
                 question=record["question"],
                 response=transcript,
@@ -416,7 +471,7 @@ class BrowserTool(BaseTool):
                 await mode.cleanup_session(record["state"])
             finally:
                 session_cleanup_s = time.perf_counter() - cleanup_started
-        return score, {
+        info = {
             "lexbrowser_reason": reason,
             "lexbrowser_transcript": transcript,
             "environment_service": "direct",
@@ -425,6 +480,10 @@ class BrowserTool(BaseTool):
             "browser_session_cleanup_s": session_cleanup_s,
             **execution_status,
         }
+        if reason.startswith("judge_error"):
+            info["lexbrowser_invalid_sample"] = True
+            info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+        return score, info
 
 
 _BROWSER_TOOLS: list[BaseTool] = []
@@ -433,6 +492,32 @@ _BROWSER_TOOLS: list[BaseTool] = []
 @register("lexbrowser_tool_agent")
 class LexBrowserToolAgentLoop(ToolAgentLoop):
     async def run(self, sampling_params: dict[str, Any], **kwargs: Any) -> AgentLoopOutput:
+        # Environment failures are resampled before they ever reach the batch:
+        # a rollout invalidated by infrastructure (reset/close/judge transport)
+        # is retried as a fresh episode with a new session.  Failed resets are
+        # fast (bounded by the reset budget / circuit breaker), so a retry is
+        # cheap exactly when it is needed.  Only a rollout that stays invalid
+        # after the retries reaches the batch, loss-masked, where the patched
+        # GRPO estimator excludes it from group statistics.
+        max_attempts = 1 + max(0, int(os.environ.get("LEXBROWSER_ENV_FAILURE_RETRIES", "1")))
+        output: AgentLoopOutput | None = None
+        for attempt in range(1, max_attempts + 1):
+            output = await self._run_episode(sampling_params, **kwargs)
+            if attempt > 1:
+                output.extra_fields["lexbrowser_env_retry_attempts"] = attempt
+            if not output.extra_fields.get("lexbrowser_invalid_sample"):
+                return output
+            if attempt < max_attempts:
+                LOGGER.warning(
+                    "Environment-invalid rollout (%s); resampling episode (attempt %d/%d)",
+                    output.extra_fields.get("lexbrowser_invalid_reason", "unknown"),
+                    attempt + 1,
+                    max_attempts,
+                )
+        assert output is not None
+        return output
+
+    async def _run_episode(self, sampling_params: dict[str, Any], **kwargs: Any) -> AgentLoopOutput:
         rollout_started = time.perf_counter()
         action_max_tokens = int(os.environ.get("LEXBROWSER_ACTION_MAX_TOKENS", "1024"))
         if action_max_tokens < 1:
@@ -556,6 +641,39 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
         )
         if empty_response:
             extra_fields["lexbrowser_empty_response"] = True
+        invalid_sample = bool(info.get("lexbrowser_invalid_sample"))
+        invalid_reason = str(info.get("lexbrowser_invalid_reason") or "")
+        if empty_response and not invalid_sample:
+            # A zero-token episode has two causally different sources and only
+            # one is an environment failure:
+            # (a) infrastructure — the episode deadline expired (or generation
+            #     was aborted) before the first generate() completed.  Exclude
+            #     from the group baseline like any environment failure.
+            # (b) policy — the model's first sampled token was a stop token
+            #     and the engine strips it from the output.  That is a real
+            #     policy outcome: reward=0 must participate in the baseline.
+            #     The response stays loss-masked (the placeholder token and
+            #     logprob are fabricated, so it must not carry a gradient).
+            # Non-timeout aborts (e.g. engine preemption) currently land in
+            # (b); verify the engine's stop-token behavior before tightening.
+            if timed_out:
+                invalid_sample = True
+                invalid_reason = "generation_aborted_timeout"
+            else:
+                extra_fields["lexbrowser_policy_empty"] = True
+        # Always materialize the flags on every sample: the batch collation
+        # only exposes a non-tensor key when at least one sample carries it,
+        # and the advantage patch must distinguish "no invalid samples"
+        # (all-False) from "flags unavailable" (fall back to mask inference).
+        extra_fields["lexbrowser_invalid_sample"] = invalid_sample
+        extra_fields["lexbrowser_invalid_reason"] = invalid_reason
+        if invalid_sample:
+            # Environment failure (reset/close/judge infrastructure or an
+            # aborted generation), not a policy failure.  Keep the trajectory
+            # in its GRPO group but excise its policy gradient by loss-masking
+            # every response token.  Group-statistics exclusion happens in the
+            # patched advantage estimator via the explicit flag above.
+            response_mask = [0] * len(response_mask)
         rollout_step = kwargs.get("global_steps", 0)
         if extra_fields.get("min_global_steps") is None:
             extra_fields["min_global_steps"] = int(rollout_step or 0)
@@ -586,6 +704,8 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
                 "step": int(rollout_step or 0),
                 "rollout_id": agent_data.request_id,
                 "reward": float(score),
+                "invalid_sample": invalid_sample,
+                "invalid_reason": invalid_reason,
                 "browser_environment_init_s": _metric_value(
                     agent_data, "browser_environment_init_s"
                 ),
