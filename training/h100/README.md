@@ -14,7 +14,7 @@
 | --- | --- |
 | 硬件 | 1 台 8×H100-80GB(默认);或 2 台同规格(head 到 worker 需免密 SSH)。每次训练预留 ~300 GB 磁盘(单个 checkpoint 约 92 GB,60 步存 3 个) |
 | 软件 | Docker + NVIDIA container toolkit;能访问 GitHub / PyPI / Docker Hub / Hugging Face / Lexmount API,以及任务集里的公开网站(arxiv.org、bbc.com、coursera.org、github.com) |
-| 凭证 | ① Lexmount API key + project ID(浏览器会话,需 64 并发配额);② 一个能调用 `deepseek-v4-flash` 的 OpenAI 兼容接口(裁判用,任何服务商或自部署均可)。逐项说明见 `secrets.env.example` |
+| 凭证 | ① Lexmount API key + project ID(浏览器会话;训练稳态用 64 并发,账号配额建议 ≥ 80 留出关闭确认/清理余量,见「会话生命周期与配额」);② 一个能调用 `deepseek-v4-flash` 的 OpenAI 兼容接口(裁判用,任何服务商或自部署均可)。逐项说明见 `secrets.env.example` |
 | 模型 | Hugging Face 上的官方 `Qwen/Qwen3-8B` 权重 |
 
 ---
@@ -115,6 +115,23 @@ docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服
 - rollout 结束阶段偶发个别 Lexmount 会话清理超时告警,不影响轨迹与判分。
 
 ---
+
+## 会话生命周期与配额(2026-07-27 加固)
+
+针对一次真实复现事故(step 61–80 大面积 `ERROR_ENVIRONMENT_BROWSER_RESET`,根因是环境服务在训练侧放弃后仍注册会话、以及超时重试放大了 provider 侧并发)的加固。默认值开箱即用,无需改动;这里说明背后的约束,便于调参时不破坏它们。
+
+**硬性不变量:provider 侧可见的会话数任意时刻 ≤ `LEXMOUNT_MAX_CONCURRENT_SESSIONS`(默认 64)。** 并发槽位跟随会话在 provider 侧的真实生命周期:create 请求发出即占位,超时被放弃的 create 仍占位直到迟到会话被关闭,close 未确认前不还位。账号配额应高于该值留出余量(建议配额 ≥ 会话数 + 16)。
+
+| 环境变量 | 默认 | 约束 |
+| --- | --- | --- |
+| `LEXMOUNT_MAX_CONCURRENT_SESSIONS` | 64 | = 每步轨迹数(8 任务 × 8 采样);须低于账号配额并留余量 |
+| `LEXMOUNT_SESSION_CREATE_ATTEMPTS` | 2 | 每次 /reset 内的 create 尝试数(带指数退避;配额类错误等更久) |
+| `LEXMOUNT_RESET_TOTAL_BUDGET_S` | 110 | 单次 /reset 的服务端总墙钟(含重试);**必须小于** 训练侧 `LEXMOUNT_RESET_REQUEST_TIMEOUT_S`(默认 120),否则训练侧放弃后服务端会注册无人认领的孤儿会话 |
+| `LEXMOUNT_RESET_CIRCUIT_COOLDOWN_S` | 60 | reset 成功率熔断(近 32 次 < 20% 即快速失败)的冷却时间 |
+| `LEXMOUNT_SWEEP_INTERVAL_S` | 60 | 孤儿会话对账周期:连续两轮出现在 provider 侧、但本服务不认识的会话会被删除。**要求账号专用于本次训练**;共享账号请设为 0 关闭 |
+| `LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S` | 45 | 裁判单次调用超时(裁判在会话释放之后运行,不占浏览器) |
+
+**环境失败与策略失败的区分**:reset 失败、/close 传输失败、会话丢失、裁判不可用等基础设施故障,会在样本上标记 `lexbrowser_invalid_sample`,该轨迹保留在 GRPO 组内但全部 response token 被 loss-mask(与空响应轨迹同机制)——环境故障造成的 reward=0 不再产生策略梯度。策略自身的错误(不合法动作、选择器失效、重复无进展)不受影响,照常参与训练。`/close` 服务端幂等(结果缓存可重放),训练侧超时重试能取回真实判分。`/health` 暴露 `live_sessions`、`unconfirmed_closes`、`leaked_sessions`、`sweeper_reclaimed`、`reset_circuit_open` 等仪表,复现时建议接入监控。
 
 ## 附录
 

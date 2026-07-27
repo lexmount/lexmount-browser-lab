@@ -904,9 +904,20 @@ class LexmountDOMMode:
         self.max_repeated_tool_calls = max_repeated_tool_calls
         self.stagehand_client: AsyncStagehand | None = None
         self._client_lock = asyncio.Lock()
+        # The semaphore is the client-side enforcement of the provider session
+        # quota.  A slot therefore tracks the *provider-visible* lifetime of a
+        # session — from the create call leaving this process until the close
+        # (or delete) is confirmed — not merely the tracked rollout lifetime.
+        # A timed-out create keeps its slot until the late session is closed,
+        # and an unconfirmed close keeps its slot through the delete retries.
         self._slots = asyncio.Semaphore(max_concurrent_sessions)
         self.session_create_timeout_s = session_create_timeout_s
         self._background_session_cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._live_session_ids: set[str] = set()
+        self._sweeper_candidates: set[str] = set()
+        self._sweeper_reclaimed = 0
+        self._leaked_sessions = 0
+        self._unconfirmed_closes = 0
         self.logger = LOGGER
 
     def register_tools(self, env: vf.StatefulToolEnv) -> None:
@@ -978,11 +989,18 @@ class LexmountDOMMode:
                     asyncio.shield(create_task),
                     timeout=create_timeout_s,
                 )
-            except asyncio.TimeoutError as exc:
+            except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
+                # The create thread cannot be cancelled and may still
+                # materialize a provider-side session.  Transfer the quota slot
+                # to the late-cleanup task so the abandoned create keeps
+                # counting against max_concurrent_sessions until it is closed;
+                # otherwise a retrying caller can exceed the provider quota.
+                slot_transferred = state.pop("lexbrowser_slot_acquired", False)
                 cleanup_task = asyncio.create_task(
                     self._cleanup_late_session_create(
                         create_task,
                         create_started_at=create_started_at,
+                        release_slot=slot_transferred,
                     )
                 )
                 self._background_session_cleanup_tasks.add(cleanup_task)
@@ -993,11 +1011,12 @@ class LexmountDOMMode:
                     "lexmount_session_create_seconds",
                     create_started_at,
                     phase="lexmount_session_create",
-                    status="error:TimeoutError",
+                    status=f"error:{type(exc).__name__}",
                 )
                 self.logger.warning(
-                    "Lexmount session creation timed out after %.2fs; "
+                    "Lexmount session creation abandoned (%s) after %.2fs; "
                     "late-created session will be closed if the provider returns it",
+                    type(exc).__name__,
                     time.monotonic() - create_started_at,
                 )
                 raise exc
@@ -1025,6 +1044,7 @@ class LexmountDOMMode:
                 raise RuntimeError("Lexmount session did not return a CDP URL")
             state["lexmount_session"] = lexmount_session
             state["lexmount_session_id"] = lexmount_session.id
+            self._track_session(lexmount_session)
             browser_attach_started_at = time.monotonic()
             if self.dom_backend == "cdp":
                 state["browser_session"] = await asyncio.to_thread(
@@ -1046,7 +1066,9 @@ class LexmountDOMMode:
                 phase="browser_attach",
             )
             return state
-        except Exception:
+        except BaseException:
+            # BaseException: a cancelled caller (for example a reset budget
+            # expiring) must not leak the session or its quota slot either.
             if lexmount_session is not None:
                 await self._close_lexmount_session(
                     lexmount_session, reason="setup_state_exception"
@@ -1054,11 +1076,21 @@ class LexmountDOMMode:
             self._release_slot(state)
             raise
 
+    def _track_session(self, lexmount_session: Any) -> None:
+        session_id = str(
+            getattr(lexmount_session, "id", None)
+            or getattr(lexmount_session, "session_id", None)
+            or ""
+        )
+        if session_id:
+            self._live_session_ids.add(session_id)
+
     async def _cleanup_late_session_create(
         self,
         create_task: asyncio.Task[Any],
         *,
         create_started_at: float,
+        release_slot: bool = False,
     ) -> None:
         try:
             lexmount_session = await create_task
@@ -1070,16 +1102,28 @@ class LexmountDOMMode:
                 time.monotonic() - create_started_at,
                 exc,
             )
+            if release_slot:
+                self._slots.release()
             return
-        await self._close_lexmount_session(
-            lexmount_session,
-            reason=(
-                "session_create_timeout_late_cleanup "
-                f"after={time.monotonic() - create_started_at:.2f}s"
-            ),
-        )
+        self._track_session(lexmount_session)
+        try:
+            confirmed = await self._close_lexmount_session(
+                lexmount_session,
+                reason=(
+                    "session_create_timeout_late_cleanup "
+                    f"after={time.monotonic() - create_started_at:.2f}s"
+                ),
+            )
+            if not confirmed:
+                await self._retry_unconfirmed_close(
+                    lexmount_session, reason="late_create_close_unconfirmed"
+                )
+        finally:
+            if release_slot:
+                self._slots.release()
 
-    async def _close_lexmount_session(self, lexmount_session: Any, *, reason: str) -> None:
+    async def _close_lexmount_session(self, lexmount_session: Any, *, reason: str) -> bool:
+        """Close (or delete) a provider session; True only when confirmed."""
         session_id = str(
             getattr(lexmount_session, "id", None)
             or getattr(lexmount_session, "session_id", None)
@@ -1095,7 +1139,8 @@ class LexmountDOMMode:
                 f" {session_id}" if session_id else "",
                 reason,
             )
-            return
+            self._live_session_ids.discard(session_id)
+            return True
         except Exception as exc:
             self.logger.warning(
                 "Failed to close Lexmount session%s (%s): %r",
@@ -1117,6 +1162,8 @@ class LexmountDOMMode:
                     session_id,
                     reason,
                 )
+                self._live_session_ids.discard(session_id)
+                return True
             except Exception as exc:
                 self.logger.warning(
                     "Failed to delete Lexmount session %s after close failure (%s): %r",
@@ -1124,6 +1171,31 @@ class LexmountDOMMode:
                     reason,
                     exc,
                 )
+        return False
+
+    async def _retry_unconfirmed_close(
+        self, lexmount_session: Any, *, reason: str, attempts: int = 3, delay_s: float = 20.0
+    ) -> bool:
+        """Keep retrying a failed close so the quota slot is not returned early.
+
+        Gives the provider ~1 minute to recover before declaring the session
+        leaked and leaving it to the orphan sweeper / provider TTL.
+        """
+        self._unconfirmed_closes += 1
+        for attempt in range(1, attempts + 1):
+            await asyncio.sleep(delay_s)
+            if await self._close_lexmount_session(
+                lexmount_session, reason=f"{reason}_retry_{attempt}"
+            ):
+                return True
+        self._leaked_sessions += 1
+        self.logger.warning(
+            "Lexmount session close remained unconfirmed after %d retries (%s); "
+            "counting it as leaked and releasing its quota slot",
+            attempts,
+            reason,
+        )
+        return False
 
     def _llm_config(self, state: vf.State) -> dict[str, str] | None:
         if not self.proxy_model_to_stagehand:
@@ -1178,13 +1250,32 @@ class LexmountDOMMode:
                 await asyncio.to_thread(browser_session.close)
             lexmount_session = state.pop("lexmount_session", None)
             if lexmount_session is not None:
-                await self._close_lexmount_session(
+                confirmed = await self._close_lexmount_session(
                     lexmount_session, reason="rollout_cleanup"
                 )
+                if not confirmed and state.pop("lexbrowser_slot_acquired", False):
+                    # The provider may still hold this session.  Move the quota
+                    # slot to a background delete-retry task instead of handing
+                    # it back while the provider-side browser possibly lives on.
+                    retry_task = asyncio.create_task(
+                        self._retry_close_then_release(lexmount_session)
+                    )
+                    self._background_session_cleanup_tasks.add(retry_task)
+                    retry_task.add_done_callback(
+                        self._background_session_cleanup_tasks.discard
+                    )
         finally:
             state.pop("stagehand_session_id", None)
             state.pop("lexmount_session_id", None)
             self._release_slot(state)
+
+    async def _retry_close_then_release(self, lexmount_session: Any) -> None:
+        try:
+            await self._retry_unconfirmed_close(
+                lexmount_session, reason="rollout_cleanup_unconfirmed"
+            )
+        finally:
+            self._slots.release()
 
     async def teardown(self) -> None:
         # A timed-out create runs in a thread that asyncio cannot cancel. Keep
@@ -1204,6 +1295,84 @@ class LexmountDOMMode:
     @property
     def pending_late_session_cleanups(self) -> int:
         return len(self._background_session_cleanup_tasks)
+
+    @property
+    def session_gauges(self) -> dict[str, int]:
+        return {
+            "live_sessions": len(self._live_session_ids),
+            "unconfirmed_closes": self._unconfirmed_closes,
+            "leaked_sessions": self._leaked_sessions,
+            "sweeper_reclaimed": self._sweeper_reclaimed,
+        }
+
+    def _list_provider_session_ids(self) -> list[str]:
+        """Best-effort listing of provider-side non-closed sessions."""
+        try:
+            page = self.lexmount.sessions.list(status="running")
+        except TypeError:
+            page = self.lexmount.sessions.list()
+        items = (
+            getattr(page, "items", None)
+            or getattr(page, "sessions", None)
+            or getattr(page, "data", None)
+            or page
+        )
+        session_ids: list[str] = []
+        for item in items or []:
+            status = str(getattr(item, "status", "") or "").lower()
+            if status and status not in {"running", "pending", "starting"}:
+                continue
+            session_id = str(
+                getattr(item, "id", None) or getattr(item, "session_id", None) or ""
+            )
+            if session_id:
+                session_ids.append(session_id)
+        return session_ids
+
+    async def sweep_orphan_sessions(self) -> int:
+        """Reconcile provider state against locally tracked sessions.
+
+        A provider session unknown to this process for two consecutive sweeps
+        is an orphan (a create that outlived its abandoned caller, or a close
+        that never landed) and is deleted.  The two-sweep confirmation is the
+        grace period that protects a session created between the provider
+        accepting the create and this process registering the returned id.
+        Requires the account to be dedicated to this run: on a shared account
+        this would delete other tenants' sessions.
+        """
+        provider_ids = set(await asyncio.to_thread(self._list_provider_session_ids))
+        unknown = provider_ids - self._live_session_ids
+        confirmed_orphans = unknown & self._sweeper_candidates
+        self._sweeper_candidates = unknown - confirmed_orphans
+        reclaimed = 0
+        for session_id in confirmed_orphans:
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.lexmount.sessions.delete, session_id=session_id
+                    ),
+                    timeout=30.0,
+                )
+                reclaimed += 1
+                self.logger.warning(
+                    "Orphan sweeper deleted untracked Lexmount session %s", session_id
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "Orphan sweeper failed to delete session %s: %r", session_id, exc
+                )
+        self._sweeper_reclaimed += reclaimed
+        return reclaimed
+
+    async def run_orphan_sweeper(self, interval_s: float) -> None:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                await self.sweep_orphan_sessions()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.warning("Orphan sweeper pass failed: %r", exc)
 
     async def navigate(self, url: str, session: Any, guard: TrajectoryGuard) -> str:
         """Navigate the browser directly to a URL."""
@@ -1495,6 +1664,15 @@ class LocalCDPMode(LexmountDOMMode):
     def pending_late_session_cleanups(self) -> int:
         return 0
 
+    @property
+    def session_gauges(self) -> dict[str, int]:
+        return {
+            "live_sessions": 0,
+            "unconfirmed_closes": 0,
+            "leaked_sessions": 0,
+            "sweeper_reclaimed": 0,
+        }
+
 
 class LexBrowserEnv(vf.StatefulToolEnv):
     def __init__(self, *, mode_impl: LexmountDOMMode, **kwargs: Any) -> None:
@@ -1621,6 +1799,22 @@ class LexBrowserEnv(vf.StatefulToolEnv):
     @vf.teardown
     async def teardown(self) -> None:
         await self._mode_impl.teardown()
+
+
+def is_quota_error(exc: BaseException) -> bool:
+    """Classify a session-create failure as provider quota/backpressure.
+
+    Quota rejections must be waited out, not retried immediately: hammering a
+    saturated per-account pool converts one slow create into a create storm.
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if status == 429:
+        return True
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("quota", "rate limit", "too many", "429", "concurren", "capacity")
+    )
 
 
 def _required_env(name: str) -> str:

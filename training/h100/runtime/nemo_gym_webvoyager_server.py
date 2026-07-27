@@ -6,8 +6,10 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import re
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -25,6 +27,7 @@ from lexbrowser_webvoyager_no_anti_bot.environment import (
     LocalCDPMode,
     LexmountDOMMode,
     TASK_EVIDENCE_FINAL_ANSWER_JUDGE_PROMPT,
+    is_quota_error,
 )
 from rollout_audit import append_judge_io, utc_timestamp
 
@@ -215,14 +218,25 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
     _judge_failures: int = PrivateAttr(default=0)
     _audit_writes: int = PrivateAttr(default=0)
     _audit_failures: int = PrivateAttr(default=0)
+    _reset_total_budget_s: float = PrivateAttr(default=110.0)
+    _reset_outcomes: deque = PrivateAttr(default_factory=lambda: deque(maxlen=32))
+    _circuit_open_until: float = PrivateAttr(default=0.0)
+    _circuit_rejections: int = PrivateAttr(default=0)
+    _close_results: dict[str, CloseResponse] = PrivateAttr(default_factory=dict)
+    _sweeper_task: asyncio.Task | None = PrivateAttr(default=None)
 
     def model_post_init(self, context: Any) -> None:
         del context
         self._max_concurrent_sessions = int(os.environ.get("LEXMOUNT_MAX_CONCURRENT_SESSIONS", "64"))
         self._max_concurrent_creates = int(os.environ.get("LEXMOUNT_MAX_CONCURRENT_CREATES", "16"))
-        # One initial create plus three retries; every create has its own 60s timeout.
-        self._create_attempts = int(os.environ.get("LEXMOUNT_SESSION_CREATE_ATTEMPTS", "4"))
+        # One initial create plus one retry; every create has its own 60s timeout.
+        self._create_attempts = int(os.environ.get("LEXMOUNT_SESSION_CREATE_ATTEMPTS", "2"))
         self._episode_timeout_s = float(os.environ.get("LEXMOUNT_AGENT_EPISODE_TIMEOUT_S", "180"))
+        # Hard wall-clock ceiling for one /reset request, retries included.  It
+        # must stay below the training client's reset RPC timeout (120s by
+        # default): once the client has given up, finishing the reset would
+        # only register a session nobody will ever use.
+        self._reset_total_budget_s = float(os.environ.get("LEXMOUNT_RESET_TOTAL_BUDGET_S", "110"))
         self._create_slots = asyncio.Semaphore(self._max_concurrent_creates)
         self._browser_backend = os.environ.get("BROWSER_BACKEND", "lexmount").strip().lower()
         common_mode_kwargs = {
@@ -263,9 +277,20 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
     def setup_webserver(self) -> FastAPI:
         @asynccontextmanager
         async def lifespan(_: FastAPI):
+            sweep_interval_s = float(os.environ.get("LEXMOUNT_SWEEP_INTERVAL_S", "60"))
+            if self._browser_backend == "lexmount" and sweep_interval_s > 0:
+                # Last line of defense for the provider quota: reclaim any
+                # session the bookkeeping above still managed to lose.
+                self._sweeper_task = asyncio.create_task(
+                    self._mode.run_orphan_sweeper(sweep_interval_s)
+                )
             try:
                 yield
             finally:
+                if self._sweeper_task is not None:
+                    self._sweeper_task.cancel()
+                    await asyncio.gather(self._sweeper_task, return_exceptions=True)
+                    self._sweeper_task = None
                 await self._cleanup_all()
                 await self._mode.teardown()
 
@@ -289,9 +314,14 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             "session_create_timeout_s": 60.0,
             "session_create_max_attempts": self._create_attempts,
             "session_create_retries": max(0, self._create_attempts - 1),
+            "reset_total_budget_s": self._reset_total_budget_s,
             "episode_timeout_s": self._episode_timeout_s,
             "expired_sessions": self._expired_sessions,
             "pending_late_session_cleanups": self._mode.pending_late_session_cleanups,
+            "reset_circuit_open": time.monotonic() < self._circuit_open_until,
+            "reset_circuit_rejections": self._circuit_rejections,
+            "close_result_cache_size": len(self._close_results),
+            **self._mode.session_gauges,
             "reset_requests": self._reset_requests,
             "reset_successes": self._reset_successes,
             "reset_failures": self._reset_failures,
@@ -305,29 +335,61 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             "audit_enabled": bool(os.environ.get("LEXBROWSER_AUDIT_DIR")),
         }
 
+    def _record_reset_outcome(self, succeeded: bool) -> None:
+        self._reset_outcomes.append(bool(succeeded))
+        if succeeded:
+            return
+        outcomes = list(self._reset_outcomes)
+        if len(outcomes) >= 10 and (sum(outcomes) / len(outcomes)) < 0.2:
+            cooldown_s = float(os.environ.get("LEXMOUNT_RESET_CIRCUIT_COOLDOWN_S", "60"))
+            self._circuit_open_until = time.monotonic() + cooldown_s
+
     async def reset(self, body: ResetRequest) -> BrowserResponse:
         self._reset_requests += 1
+        if time.monotonic() < self._circuit_open_until:
+            # Provider is in a failure regime: fail fast so the trainer marks
+            # the sample invalid instead of queuing more creates onto the pool.
+            self._circuit_rejections += 1
+            self._reset_failures += 1
+            raise HTTPException(status_code=503, detail="reset_circuit_open")
         await self._discard(body.session_id)
         state: dict[str, Any] = {}
         last_error: Exception | None = None
         reset_succeeded = False
-        for attempt in range(1, self._create_attempts + 1):
-            state = {"info": {"question": body.question, "start_url": body.start_url}}
-            try:
-                async with self._create_slots:
-                    state = await self._mode.setup_state(state)
-                session = state["browser_session"]
-                session.set_task_query(body.question)
-                await self._mode.navigate(body.start_url, session, state["trajectory_guard"])
-                reset_succeeded = True
-                break
-            except Exception as exc:
-                last_error = exc
-                await self._mode.cleanup_session(state)
+        try:
+            async with asyncio.timeout(self._reset_total_budget_s):
+                for attempt in range(1, self._create_attempts + 1):
+                    state = {"info": {"question": body.question, "start_url": body.start_url}}
+                    try:
+                        async with self._create_slots:
+                            state = await self._mode.setup_state(state)
+                        session = state["browser_session"]
+                        session.set_task_query(body.question)
+                        await self._mode.navigate(body.start_url, session, state["trajectory_guard"])
+                        reset_succeeded = True
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        await self._mode.cleanup_session(state)
+                        if attempt < self._create_attempts:
+                            # Quota rejections are backpressure, not a blip:
+                            # wait them out instead of hammering the pool.
+                            delay_s = 15.0 if is_quota_error(exc) else min(8.0, 1.5 * attempt)
+                            await asyncio.sleep(delay_s + random.uniform(0.0, 1.0))
+        except TimeoutError:
+            # Budget exhausted: the client has (nearly) given up.  Clean up any
+            # partially built state and refuse — registering a session now
+            # would only create an orphan holding a quota slot for 180s.
+            await self._mode.cleanup_session(state)
+            self._reset_failures += 1
+            self._record_reset_outcome(False)
+            raise HTTPException(status_code=503, detail="reset_budget_exhausted")
         if not reset_succeeded:
             self._reset_failures += 1
+            self._record_reset_outcome(False)
             assert last_error is not None
             raise last_error
+        self._record_reset_outcome(True)
 
         async with self._sessions_lock:
             record = {
@@ -380,11 +442,22 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         body.verify = True
         return await self.close(body)
 
+    def _cache_close_result(self, session_id: str, response: CloseResponse) -> None:
+        # /close must be idempotent: the training client may time out and retry
+        # while the first invocation is still judging.  Replay the finished
+        # result instead of answering unknown_browser_session with reward=0.
+        self._close_results[session_id] = response
+        while len(self._close_results) > 4096:
+            self._close_results.pop(next(iter(self._close_results)))
+
     async def close(self, body: CloseRequest) -> CloseResponse:
         finalize_started = time.perf_counter()
         async with self._sessions_lock:
             record = self._sessions.pop(body.session_id, None)
         if record is None:
+            cached = self._close_results.get(body.session_id)
+            if cached is not None:
+                return cached
             return CloseResponse(
                 session_id=body.session_id,
                 reward=0.0,
@@ -406,6 +479,14 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         final_answer_status = body.final_answer_status if final_answer else "no_final_answer"
         final_url, final_state = await _capture_final_browser_state(record)
         initial_state = _initial_environment_state(record)
+        # The browser evidence is fully captured above; release the session —
+        # and with it the provider quota slot — before the judge runs, so a
+        # slow judge does not extend browser occupancy.
+        cleanup_started = time.perf_counter()
+        try:
+            await self._mode.cleanup_session(record["state"])
+        finally:
+            early_session_cleanup_s = time.perf_counter() - cleanup_started
         execution_status = {
             "tool_call_count": int(record["tool_call_count"]),
             "session_created": True,
@@ -418,7 +499,7 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         }
         judge_log_path = ""
         audit_write_s = 0.0
-        session_cleanup_s = 0.0
+        session_cleanup_s = early_session_cleanup_s
         try:
             if body.verify:
                 reward, reason, judge_audit = await self._judge(
@@ -461,13 +542,11 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             finally:
                 audit_write_s = time.perf_counter() - audit_started
         finally:
-            cleanup_started = time.perf_counter()
-            try:
-                await self._mode.cleanup_session(record["state"])
-            finally:
-                session_cleanup_s = time.perf_counter() - cleanup_started
+            # The browser session was already cleaned up before judging; this
+            # only guards the bookkeeping if judge/audit raised unexpectedly.
+            record["state"].pop("browser_session", None)
         finalize_service_s = time.perf_counter() - finalize_started
-        return CloseResponse(
+        response = CloseResponse(
             session_id=body.session_id,
             reward=reward,
             info={
@@ -485,6 +564,8 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
                 **execution_status,
             },
         )
+        self._cache_close_result(body.session_id, response)
+        return response
 
     async def _judge(
         self,
@@ -522,6 +603,9 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         client = AsyncOpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             base_url=os.environ["OPENAI_BASE_URL"],
+            # An unbounded judge call (SDK default: 600s) can hold /close far
+            # past the training client's RPC timeout; bound each attempt.
+            timeout=float(os.environ.get("LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S", "45")),
         )
         attempts: list[dict[str, Any]] = []
         last_raw_text = ""

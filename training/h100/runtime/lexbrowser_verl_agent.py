@@ -229,9 +229,13 @@ class BrowserTool(BaseTool):
                             "task_id": create.get("task_id", ""),
                             "rubric": create.get("rubric", ""),
                         },
-                        # Session creation itself remains bounded at 60 seconds in
-                        # the sidecar. The reset RPC also includes initial navigation
-                        # and one retry, so its deadline must cover the final outcome.
+                        # The sidecar bounds the whole reset — creates, retries
+                        # and initial navigation — by LEXMOUNT_RESET_TOTAL_BUDGET_S
+                        # (110s default). This client deadline must stay above
+                        # that budget so the server always finishes (or refuses)
+                        # before the client walks away; a client-side timeout
+                        # here would otherwise let the server register a session
+                        # that no caller will ever step or close.
                         timeout=float(os.environ.get("LEXMOUNT_RESET_REQUEST_TIMEOUT_S", "120")),
                     )
                 except Exception as exc:
@@ -243,12 +247,19 @@ class BrowserTool(BaseTool):
 
         assert self.mode is not None
         started = time.perf_counter()
+        state: dict[str, Any] = {"info": {"question": create["question"], "start_url": create["start_url"]}}
+        reset_error = ""
         try:
-            state: dict[str, Any] = {"info": {"question": create["question"], "start_url": create["start_url"]}}
-            state = await self.mode.setup_state(state)
-            session = state["browser_session"]
-            session.set_task_query(create["question"])
-            await self.mode.navigate(create["start_url"], session, state["trajectory_guard"])
+            try:
+                state = await self.mode.setup_state(state)
+                session = state["browser_session"]
+                session.set_task_query(create["question"])
+                await self.mode.navigate(create["start_url"], session, state["trajectory_guard"])
+            except Exception as exc:
+                # Mirror the service path: a failed environment reset is a
+                # classified rollout outcome, not a crashed agent loop.
+                reset_error = type(exc).__name__
+                await self.mode.cleanup_session(state)
         finally:
             _add_metric(agent_data, "browser_environment_init_s", time.perf_counter() - started)
         self._sessions[request_id] = {
@@ -260,6 +271,8 @@ class BrowserTool(BaseTool):
             "service": False,
             "tool": self,
         }
+        if reset_error:
+            self._sessions[request_id]["reset_error"] = reset_error
         return self._sessions[request_id]
 
     async def execute(self, instance_id: str, parameters: dict[str, Any], **kwargs: Any) -> tuple[ToolResponse, float, dict]:
@@ -350,37 +363,77 @@ class BrowserTool(BaseTool):
         }
         if record["service"]:
             tool = record["tool"]
-            try:
-                result = await tool._post(
-                    "/close",
-                    {
-                        "session_id": agent_data.request_id,
-                        "verify": True,
-                        "final_answer": final_answer,
-                        "final_answer_status": final_answer_status,
-                        "generation_truncated": generation_truncated,
-                        "episode_timed_out": episode_timed_out,
-                        "final_answer_present": bool(final_answer),
-                    },
-                    timeout=90.0,
-                )
-            except Exception as exc:
+            result: dict[str, Any] | None = None
+            close_error: Exception | None = None
+            # /close is idempotent server-side (finished results are cached and
+            # replayed), so a retry after a client timeout recovers the real
+            # verdict instead of losing it to reward=0.
+            for _ in range(2):
+                try:
+                    result = await tool._post(
+                        "/close",
+                        {
+                            "session_id": agent_data.request_id,
+                            "verify": True,
+                            "final_answer": final_answer,
+                            "final_answer_status": final_answer_status,
+                            "generation_truncated": generation_truncated,
+                            "episode_timed_out": episode_timed_out,
+                            "final_answer_present": bool(final_answer),
+                        },
+                        timeout=90.0,
+                    )
+                    break
+                except Exception as exc:
+                    close_error = exc
+            if result is None:
+                assert close_error is not None
                 return 0.0, {
-                    "lexbrowser_reason": f"service_close_error:{type(exc).__name__}",
+                    "lexbrowser_reason": f"service_close_error:{type(close_error).__name__}",
                     "lexbrowser_transcript": transcript,
                     "environment_service": "nemo-gym",
+                    "lexbrowser_invalid_sample": True,
+                    "lexbrowser_invalid_reason": "environment_close_rpc_failed",
                 }
             info = dict(result.get("info") or {})
-            if info.get("judge_status") == "error":
-                raise RuntimeError(
-                    f"judge_error_without_training_signal:{info.get('lexbrowser_reason', 'unknown')}"
-                )
+            # Environment-failure classification (requested by the training
+            # side): a rollout whose reward=0 comes from infrastructure — not
+            # from the policy — must be distinguishable so the recipe can
+            # excise it from the GRPO loss instead of learning from it.
+            if record.get("reset_error"):
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_reset_failed"
+            elif info.get("lexbrowser_reason") == "unknown_browser_session":
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_unknown_session"
+            elif info.get("judge_status") == "error":
+                # Previously raised judge_error_without_training_signal, which
+                # aborted the whole training step; an unusable judge verdict is
+                # an invalid sample, not a fatal condition.
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = "environment_judge_failed"
             return float(result["reward"]), info
 
         score, reason = 0.0, "no_tool_calls"
         session_cleanup_s = 0.0
+        if record.get("reset_error"):
+            mode = record["tool"].mode
+            assert mode is not None
+            await mode.cleanup_session(record.get("state") or {})
+            return 0.0, {
+                "lexbrowser_reason": "environment_reset_failed",
+                "lexbrowser_transcript": transcript,
+                "environment_service": "direct",
+                "lexbrowser_invalid_sample": True,
+                "lexbrowser_invalid_reason": "environment_reset_failed",
+                **execution_status,
+            }
         try:
-            client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=os.environ["OPENAI_BASE_URL"])
+            client = AsyncOpenAI(
+                api_key=os.environ["OPENAI_API_KEY"],
+                base_url=os.environ["OPENAI_BASE_URL"],
+                timeout=float(os.environ.get("LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S", "45")),
+            )
             prompt = TASK_EVIDENCE_FINAL_ANSWER_JUDGE_PROMPT.format(
                 question=record["question"],
                 response=transcript,
@@ -416,7 +469,7 @@ class BrowserTool(BaseTool):
                 await mode.cleanup_session(record["state"])
             finally:
                 session_cleanup_s = time.perf_counter() - cleanup_started
-        return score, {
+        info = {
             "lexbrowser_reason": reason,
             "lexbrowser_transcript": transcript,
             "environment_service": "direct",
@@ -425,6 +478,10 @@ class BrowserTool(BaseTool):
             "browser_session_cleanup_s": session_cleanup_s,
             **execution_status,
         }
+        if reason.startswith("judge_error"):
+            info["lexbrowser_invalid_sample"] = True
+            info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+        return score, info
 
 
 _BROWSER_TOOLS: list[BaseTool] = []
@@ -556,6 +613,17 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
         )
         if empty_response:
             extra_fields["lexbrowser_empty_response"] = True
+        invalid_sample = bool(info.get("lexbrowser_invalid_sample"))
+        invalid_reason = str(info.get("lexbrowser_invalid_reason") or "")
+        if invalid_sample:
+            # Environment failure (reset/close/judge infrastructure), not a
+            # policy failure.  Keep the trajectory in its GRPO group but excise
+            # its policy gradient by loss-masking every response token — the
+            # same mechanism as empty_response above.  A reward=0 caused by a
+            # broken environment must not teach the policy anything.
+            response_mask = [0] * len(response_mask)
+            extra_fields["lexbrowser_invalid_sample"] = True
+            extra_fields["lexbrowser_invalid_reason"] = invalid_reason
         rollout_step = kwargs.get("global_steps", 0)
         if extra_fields.get("min_global_steps") is None:
             extra_fields["min_global_steps"] = int(rollout_step or 0)
@@ -586,6 +654,8 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
                 "step": int(rollout_step or 0),
                 "rollout_id": agent_data.request_id,
                 "reward": float(score),
+                "invalid_sample": invalid_sample,
+                "invalid_reason": invalid_reason,
                 "browser_environment_init_s": _metric_value(
                     agent_data, "browser_environment_init_s"
                 ),
