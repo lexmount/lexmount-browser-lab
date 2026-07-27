@@ -310,21 +310,36 @@ def compute_grpo_outcome_advantage(
     # agent loop.  Such samples must not enter the group statistics: an
     # environment outage would otherwise depress the group mean and inflate
     # the surviving samples' advantages (reward=0 without a policy cause).
-    # Invalid samples get advantage 0; groups left with fewer valid samples
-    # than LEXBROWSER_GRPO_MIN_VALID_PER_GROUP (default 2) are dropped whole
-    # (all advantages 0) because their baseline is no longer meaningful.
+    # Invalid samples get advantage 0; a whole group is dropped (all
+    # advantages 0) when its baseline is no longer meaningful, i.e. when
+    # EITHER fewer than LEXBROWSER_GRPO_MIN_VALID_PER_GROUP (default 2) valid
+    # samples remain OR the invalid fraction exceeds
+    # LEXBROWSER_INVALID_GROUP_MAX_FRACTION (default 0.25 — a baseline
+    # computed while >1/4 of the group's rollouts hit infrastructure failures
+    # reflects the outage, not the task difficulty).
     sample_is_valid = response_mask.sum(dim=-1) > 0
     min_valid_per_group = int(os.environ.get("LEXBROWSER_GRPO_MIN_VALID_PER_GROUP", "2"))
+    max_invalid_fraction = float(
+        os.environ.get("LEXBROWSER_INVALID_GROUP_MAX_FRACTION", "0.25")
+    )
 
     id2score = defaultdict(list)
+    id2total: dict[Any, int] = defaultdict(int)
     id2mean = {}
     id2std = {}
 
     with torch.no_grad():
         bsz = scores.shape[0]
         for i in range(bsz):
+            id2total[index[i]] += 1
             if sample_is_valid[i]:
                 id2score[index[i]].append(scores[i])
+        dropped_groups = {
+            idx
+            for idx, total in id2total.items()
+            if len(id2score.get(idx, ())) < min_valid_per_group
+            or (total - len(id2score.get(idx, ()))) / total > max_invalid_fraction
+        }
         for idx in id2score:
             if len(id2score[idx]) == 1:
                 id2mean[idx] = torch.tensor(0.0)
@@ -334,8 +349,7 @@ def compute_grpo_outcome_advantage(
                 id2mean[idx] = torch.mean(scores_tensor)
                 id2std[idx] = torch.std(scores_tensor)
         for i in range(bsz):
-            group_scores = id2score.get(index[i], [])
-            if not sample_is_valid[i] or len(group_scores) < min_valid_per_group:
+            if not sample_is_valid[i] or index[i] in dropped_groups:
                 scores[i] = torch.zeros_like(scores[i])
             elif norm_adv_by_std_in_grpo:
                 scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)

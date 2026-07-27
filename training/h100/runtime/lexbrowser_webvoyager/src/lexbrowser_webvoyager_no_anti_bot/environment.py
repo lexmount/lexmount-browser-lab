@@ -976,13 +976,21 @@ class LexmountDOMMode:
                 session_kwargs["proxy"] = self.external_proxy
             else:
                 session_kwargs["official_proxy"] = self.official_proxy
-            create_started_at = time.monotonic()
-            create_task: asyncio.Task[Any] = asyncio.create_task(
-                asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs)
-            )
             create_timeout_s = min(
                 self.session_create_timeout_s,
                 max(0.1, float(state.get("lexmount_session_create_timeout_s", self.session_create_timeout_s))),
+            )
+            # Bound the SDK's async-create status polling (default 600s) just
+            # under our own deadline.  Without this, every abandoned create
+            # pins a default-executor worker thread for 10 minutes, and enough
+            # of them starve the pool that serves all observe/act/close calls
+            # (the collapse engine behind the step 61-80 incident).  When the
+            # SDK times out first, its TimeoutError carries the provider
+            # session id, which the recovery paths below delete.
+            session_kwargs["poll_timeout_sec"] = max(5.0, create_timeout_s - 5.0)
+            create_started_at = time.monotonic()
+            create_task: asyncio.Task[Any] = asyncio.create_task(
+                asyncio.to_thread(self.lexmount.sessions.create, **session_kwargs)
             )
             try:
                 lexmount_session = await asyncio.wait_for(
@@ -1123,20 +1131,35 @@ class LexmountDOMMode:
         )
         return match.group(1) if match else ""
 
-    async def _delete_orphan_session_id(self, session_id: str, *, reason: str) -> bool:
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(self.lexmount.sessions.delete, session_id=session_id),
-                timeout=30.0,
-            )
-            self._live_session_ids.discard(session_id)
-            self.logger.info("Deleted Lexmount session %s (%s)", session_id, reason)
-            return True
-        except Exception as exc:
-            self.logger.warning(
-                "Failed to delete Lexmount session %s (%s): %r", session_id, reason, exc
-            )
-            return False
+    async def _delete_orphan_session_id(
+        self, session_id: str, *, reason: str, attempts: int = 3, delay_s: float = 20.0
+    ) -> bool:
+        for attempt in range(1, attempts + 1):
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self.lexmount.sessions.delete, session_id=session_id),
+                    timeout=30.0,
+                )
+                self._live_session_ids.discard(session_id)
+                self.logger.info("Deleted Lexmount session %s (%s)", session_id, reason)
+                return True
+            except Exception as exc:
+                if type(exc).__name__ == "SessionNotFoundError":
+                    # Already gone provider-side: the recovery goal is met and
+                    # this must not be counted (or retried) as a leak.
+                    self._live_session_ids.discard(session_id)
+                    return True
+                self.logger.warning(
+                    "Failed to delete Lexmount session %s (%s, attempt %d/%d): %r",
+                    session_id,
+                    reason,
+                    attempt,
+                    attempts,
+                    exc,
+                )
+                if attempt < attempts:
+                    await asyncio.sleep(delay_s)
+        return False
 
     async def _delete_orphan_then_release(
         self, session_id: str, *, release_slot: bool, reason: str
@@ -1399,6 +1422,17 @@ class LexmountDOMMode:
         must both use "active" (lexmount 0.5.12, ``sessions.list`` docstring).
         """
         page = self.lexmount.sessions.list(status="active")
+        pagination = getattr(page, "pagination", None)
+        total_pages = int(getattr(pagination, "total_pages", 1) or 1)
+        if total_pages > 1:
+            # The SDK exposes no page parameter; deleting based on a partial
+            # provider view is still safe (we only ever delete ids we can
+            # see), but reclamation coverage is reduced — say so.
+            self.logger.warning(
+                "Lexmount sessions.list returned %d pages of active sessions; "
+                "sweeper only sees the first page this pass",
+                total_pages,
+            )
         items = (
             getattr(page, "sessions", None)
             or getattr(page, "items", None)

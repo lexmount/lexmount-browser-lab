@@ -132,8 +132,10 @@ docker logs -f lexbrowser-nemo-gym-webvoyager               # 浏览器环境服
 | `LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S` | 45 | 裁判单次调用超时(裁判在会话释放之后运行,不占浏览器) |
 | `LEXBROWSER_ENV_FAILURE_RETRIES` | 1 | 环境失败 rollout 的整集重采样次数(新会话重跑该 episode) |
 | `LEXBROWSER_GRPO_MIN_VALID_PER_GROUP` | 2 | GRPO 组内有效样本低于此数时整组优势置 0(基线不再有意义) |
+| `LEXBROWSER_INVALID_GROUP_MAX_FRACTION` | 0.25 | GRPO 组内 invalid 占比超过此阈值时整组优势置 0(基线反映的是故障而非任务难度);与上一条任一命中即整组丢弃 |
+| `LEXBROWSER_EXECUTOR_WORKERS` | sessions+creates+16 | 环境服务默认线程池大小;默认池只有 `min(32, cpu+4)`,低于 64 会话并发,provider 变慢时会把 observe/act/close 全部排队拖超时 |
 
-**环境失败与策略失败的区分**(三层):① reset 失败、/close 传输失败、会话丢失、裁判不可用等基础设施故障,先按 `LEXBROWSER_ENV_FAILURE_RETRIES` 用新会话**重采样整条 episode**(失败路径有预算/熔断兜底,快速失败,重试代价低);② 重试后仍无效的样本标记 `lexbrowser_invalid_sample` 并全 response loss-mask;③ verl 补丁 `runtime/patches/core_algos.py` 让 GRPO **组均值/方差只在有效样本上计算**——无效样本优势恒 0、不进组统计,组内有效样本不足阈值时整组优势置 0。环境故障因此既不产生策略梯度,也不再压低组基线、放大幸存样本的优势。策略自身的错误(不合法动作、选择器失效、重复无进展)不受影响,照常参与训练。`/close` 服务端幂等(结果缓存可重放),训练侧超时重试能取回真实判分。`/health` 暴露 `live_sessions`、`unconfirmed_closes`、`leaked_sessions`、`sweeper_reclaimed`、`reset_circuit_open` 等仪表,复现时建议接入监控。
+**环境失败与策略失败的区分**(三层):① reset 失败、/close 传输失败、会话丢失、裁判不可用等基础设施故障,先按 `LEXBROWSER_ENV_FAILURE_RETRIES` 用新会话**重采样整条 episode**(失败路径有预算/熔断兜底,快速失败,重试代价低);② 重试后仍无效的样本标记 `lexbrowser_invalid_sample` 并全 response loss-mask;③ verl 补丁 `runtime/patches/core_algos.py` 让 GRPO **组均值/方差只在有效样本上计算**——无效样本优势恒 0、不进组统计,组内有效样本不足阈值时整组优势置 0。环境故障因此既不产生策略梯度,也不再压低组基线、放大幸存样本的优势。策略自身的错误(不合法动作、选择器失效、重复无进展)不受影响,照常参与训练。`/close` 服务端幂等:已完成的结果缓存重放,**处理中的 close 被重试请求直接 join**(per-session future;客户端 90s 超时通常发生在裁判仍在运行时,只有缓存无法覆盖这个窗口),训练侧超时重试能取回真实判分。SDK create 轮询被限制在 create 预算内(不再吃 600s 默认值占死线程),create 异常中携带的 session id 会被提取并按 id 删除。`/health` 暴露 `live_sessions`、`unconfirmed_closes`、`leaked_sessions`、`sweeper_reclaimed`、`reset_circuit_open` 等仪表,复现时建议接入监控。
 
 ## 附录
 

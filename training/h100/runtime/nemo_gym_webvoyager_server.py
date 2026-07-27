@@ -10,6 +10,7 @@ import random
 import re
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -223,6 +224,7 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
     _circuit_open_until: float = PrivateAttr(default=0.0)
     _circuit_rejections: int = PrivateAttr(default=0)
     _close_results: dict[str, CloseResponse] = PrivateAttr(default_factory=dict)
+    _close_futures: dict[str, "asyncio.Future[CloseResponse]"] = PrivateAttr(default_factory=dict)
     _sweeper_task: asyncio.Task | None = PrivateAttr(default=None)
 
     def model_post_init(self, context: Any) -> None:
@@ -277,6 +279,23 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
     def setup_webserver(self) -> FastAPI:
         @asynccontextmanager
         async def lifespan(_: FastAPI):
+            # Every blocking provider/browser call goes through asyncio's
+            # default executor, whose stock size (min(32, cpus+4)) is below
+            # the configured session concurrency (64) plus create concurrency
+            # (16).  An undersized pool queues observe/act/close behind slow
+            # creates and turns provider slowness into global tool timeouts.
+            executor_workers = int(
+                os.environ.get(
+                    "LEXBROWSER_EXECUTOR_WORKERS",
+                    str(self._max_concurrent_sessions + self._max_concurrent_creates + 16),
+                )
+            )
+            asyncio.get_running_loop().set_default_executor(
+                ThreadPoolExecutor(
+                    max_workers=max(8, executor_workers),
+                    thread_name_prefix="lexbrowser-io",
+                )
+            )
             sweep_interval_s = float(os.environ.get("LEXMOUNT_SWEEP_INTERVAL_S", "60"))
             if self._browser_backend == "lexmount" and sweep_interval_s > 0:
                 # Last line of defense for the provider quota: reclaim any
@@ -451,6 +470,45 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             self._close_results.pop(next(iter(self._close_results)))
 
     async def close(self, body: CloseRequest) -> CloseResponse:
+        """Idempotent /close: replay finished results, join in-flight ones.
+
+        The finished-result cache alone leaves a hole: the training client's
+        90s RPC timeout typically fires while the first invocation is *still*
+        judging, and its immediate retry then found no record and no cached
+        result — unknown_browser_session, reward=0, despite a judge verdict
+        arriving seconds later.  A per-session future closes that hole: the
+        retry awaits the primary invocation's outcome.  Registration below is
+        fully synchronous (no await), so two requests cannot both become the
+        executor.
+        """
+        cached = self._close_results.get(body.session_id)
+        if cached is not None:
+            return cached
+        in_flight = self._close_futures.get(body.session_id)
+        if in_flight is not None:
+            # Shield: the retry being cancelled (client gave up again) must
+            # not cancel the primary invocation's processing.
+            return await asyncio.shield(in_flight)
+        future: asyncio.Future[CloseResponse] = asyncio.get_running_loop().create_future()
+        self._close_futures[body.session_id] = future
+        try:
+            response = await self._close_impl(body)
+        except BaseException as exc:
+            if not future.done():
+                future.set_exception(exc)
+                # Mark retrieved so a waiterless future does not log
+                # "exception was never retrieved" at GC; joined waiters still
+                # receive the exception.
+                future.exception()
+            raise
+        else:
+            if not future.done():
+                future.set_result(response)
+            return response
+        finally:
+            self._close_futures.pop(body.session_id, None)
+
+    async def _close_impl(self, body: CloseRequest) -> CloseResponse:
         finalize_started = time.perf_counter()
         async with self._sessions_lock:
             record = self._sessions.pop(body.session_id, None)
