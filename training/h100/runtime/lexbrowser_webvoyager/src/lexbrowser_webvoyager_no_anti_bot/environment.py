@@ -1032,6 +1032,24 @@ class LexmountDOMMode:
                     time.monotonic() - create_started_at,
                     exc,
                 )
+                # The SDK's own activation timeout/APIError can fire before
+                # our wait_for: the exception still names a provider-side
+                # session.  Delete it in the background, holding the quota
+                # slot until that delete resolves.
+                orphan_id = self._session_id_from_create_error(exc)
+                if orphan_id:
+                    slot_transferred = state.pop("lexbrowser_slot_acquired", False)
+                    orphan_task = asyncio.create_task(
+                        self._delete_orphan_then_release(
+                            orphan_id,
+                            release_slot=slot_transferred,
+                            reason="create_error_session",
+                        )
+                    )
+                    self._background_session_cleanup_tasks.add(orphan_task)
+                    orphan_task.add_done_callback(
+                        self._background_session_cleanup_tasks.discard
+                    )
                 raise
             else:
                 guard.record_timing(
@@ -1085,6 +1103,53 @@ class LexmountDOMMode:
         if session_id:
             self._live_session_ids.add(session_id)
 
+    @staticmethod
+    def _session_id_from_create_error(exc: BaseException) -> str:
+        """Recover the provider session id from a failed create.
+
+        The SDK allocates the session first and only then polls it to active;
+        an activation timeout or a create_failed/closed APIError therefore
+        refers to a session that already exists provider-side, with its id
+        carried only inside the exception (structured ``response`` dict, or
+        the TimeoutError message text).
+        """
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):
+            session_id = response.get("session_id")
+            if session_id:
+                return str(session_id)
+        match = re.search(
+            r"\bsession\s+([\w-]+)\s+to become active", str(exc)
+        )
+        return match.group(1) if match else ""
+
+    async def _delete_orphan_session_id(self, session_id: str, *, reason: str) -> bool:
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self.lexmount.sessions.delete, session_id=session_id),
+                timeout=30.0,
+            )
+            self._live_session_ids.discard(session_id)
+            self.logger.info("Deleted Lexmount session %s (%s)", session_id, reason)
+            return True
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to delete Lexmount session %s (%s): %r", session_id, reason, exc
+            )
+            return False
+
+    async def _delete_orphan_then_release(
+        self, session_id: str, *, release_slot: bool, reason: str
+    ) -> None:
+        try:
+            if not await self._delete_orphan_session_id(session_id, reason=reason):
+                # Never tracked in _live_session_ids, so the sweeper will see
+                # it as unknown and reclaim it once the provider lists it.
+                self._leaked_sessions += 1
+        finally:
+            if release_slot:
+                self._slots.release()
+
     async def _cleanup_late_session_create(
         self,
         create_task: asyncio.Task[Any],
@@ -1102,7 +1167,17 @@ class LexmountDOMMode:
                 time.monotonic() - create_started_at,
                 exc,
             )
-            if release_slot:
+            # A "failed" create may still have allocated a provider session
+            # (activation timeout / create_failed carry the id in the
+            # exception): delete it instead of only logging.
+            session_id = self._session_id_from_create_error(exc)
+            if session_id:
+                await self._delete_orphan_then_release(
+                    session_id,
+                    release_slot=release_slot,
+                    reason="late_create_error_session",
+                )
+            elif release_slot:
                 self._slots.release()
             return
         self._track_session(lexmount_session)
@@ -1189,9 +1264,19 @@ class LexmountDOMMode:
             ):
                 return True
         self._leaked_sessions += 1
+        # Drop the leaked id from the tracked set: the sweeper's orphan test
+        # is (provider_ids - _live_session_ids), so a session we keep claiming
+        # as live would be permanently invisible to reclamation — and the
+        # live_sessions gauge would drift upward.
+        session_id = str(
+            getattr(lexmount_session, "id", None)
+            or getattr(lexmount_session, "session_id", None)
+            or ""
+        )
+        self._live_session_ids.discard(session_id)
         self.logger.warning(
             "Lexmount session close remained unconfirmed after %d retries (%s); "
-            "counting it as leaked and releasing its quota slot",
+            "counting it as leaked and leaving it to the orphan sweeper",
             attempts,
             reason,
         )
@@ -1306,21 +1391,24 @@ class LexmountDOMMode:
         }
 
     def _list_provider_session_ids(self) -> list[str]:
-        """Best-effort listing of provider-side non-closed sessions."""
-        try:
-            page = self.lexmount.sessions.list(status="running")
-        except TypeError:
-            page = self.lexmount.sessions.list()
+        """List provider-side active sessions.
+
+        The SDK's status vocabulary is active / creating / closed /
+        create_failed, and ``list(status=...)`` forwards the value verbatim as
+        a server-side filter — so the filter and the client-side check below
+        must both use "active" (lexmount 0.5.12, ``sessions.list`` docstring).
+        """
+        page = self.lexmount.sessions.list(status="active")
         items = (
-            getattr(page, "items", None)
-            or getattr(page, "sessions", None)
+            getattr(page, "sessions", None)
+            or getattr(page, "items", None)
             or getattr(page, "data", None)
             or page
         )
         session_ids: list[str] = []
         for item in items or []:
             status = str(getattr(item, "status", "") or "").lower()
-            if status and status not in {"running", "pending", "starting"}:
+            if status and status != "active":
                 continue
             session_id = str(
                 getattr(item, "id", None) or getattr(item, "session_id", None) or ""

@@ -19,11 +19,12 @@ NAME=${NAME:-lexbrowser-h100-ray}
 SHM_SIZE=${SHM_SIZE:-128g}
 VERL_AGENT_LOOP_PATCH=${VERL_AGENT_LOOP_PATCH:-$ROOT/runtime/patches/agent_loop.py}
 VERL_DISTRIBUTED_PATCH=${VERL_DISTRIBUTED_PATCH:-$ROOT/runtime/patches/distributed.py}
+VERL_CORE_ALGOS_PATCH=${VERL_CORE_ALGOS_PATCH:-$ROOT/runtime/patches/core_algos.py}
 LEXBROWSER_ACTION_MAX_TOKENS=${LEXBROWSER_ACTION_MAX_TOKENS:-1024}
 VERL_PROCESS_GROUP_TIMEOUT_SECONDS=${VERL_PROCESS_GROUP_TIMEOUT_SECONDS:-7200}
 SECRETS_FILE=${SECRETS_FILE:-$ROOT/secrets.env}
 
-for patch in "$VERL_AGENT_LOOP_PATCH" "$VERL_DISTRIBUTED_PATCH"; do
+for patch in "$VERL_AGENT_LOOP_PATCH" "$VERL_DISTRIBUTED_PATCH" "$VERL_CORE_ALGOS_PATCH"; do
   if [[ ! -f "$patch" ]]; then
     echo "Missing persistent verl patch: $patch" >&2
     exit 1
@@ -82,6 +83,7 @@ docker run -d --name "$NAME" --network host --ipc host --shm-size "$SHM_SIZE" \
   -v "$CHECKPOINT_ROOT:/workspace/checkpoints" \
   -v "$VERL_AGENT_LOOP_PATCH:/verl/verl/experimental/agent_loop/agent_loop.py:ro" \
   -v "$VERL_DISTRIBUTED_PATCH:/verl/verl/utils/distributed.py:ro" \
+  -v "$VERL_CORE_ALGOS_PATCH:/verl/verl/trainer/ppo/core_algos.py:ro" \
   -v "$MODEL_PATH:$MODEL_PATH:ro" \
   --env-file "$SECRETS_FILE" \
   -e PYTHONPATH=/workspace/lexbrowser-h100/runtime:/workspace/lexbrowser-h100/runtime/lexbrowser_webvoyager/src \

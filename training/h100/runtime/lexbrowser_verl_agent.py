@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import queue
 import re
@@ -25,6 +26,7 @@ from lexbrowser_webvoyager_no_anti_bot.environment import (
     TrajectoryGuard,
 )
 
+LOGGER = logging.getLogger(__name__)
 
 _METRICS_QUEUE: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=4096)
 _METRICS_THREAD: threading.Thread | None = None
@@ -490,6 +492,32 @@ _BROWSER_TOOLS: list[BaseTool] = []
 @register("lexbrowser_tool_agent")
 class LexBrowserToolAgentLoop(ToolAgentLoop):
     async def run(self, sampling_params: dict[str, Any], **kwargs: Any) -> AgentLoopOutput:
+        # Environment failures are resampled before they ever reach the batch:
+        # a rollout invalidated by infrastructure (reset/close/judge transport)
+        # is retried as a fresh episode with a new session.  Failed resets are
+        # fast (bounded by the reset budget / circuit breaker), so a retry is
+        # cheap exactly when it is needed.  Only a rollout that stays invalid
+        # after the retries reaches the batch, loss-masked, where the patched
+        # GRPO estimator excludes it from group statistics.
+        max_attempts = 1 + max(0, int(os.environ.get("LEXBROWSER_ENV_FAILURE_RETRIES", "1")))
+        output: AgentLoopOutput | None = None
+        for attempt in range(1, max_attempts + 1):
+            output = await self._run_episode(sampling_params, **kwargs)
+            if attempt > 1:
+                output.extra_fields["lexbrowser_env_retry_attempts"] = attempt
+            if not output.extra_fields.get("lexbrowser_invalid_sample"):
+                return output
+            if attempt < max_attempts:
+                LOGGER.warning(
+                    "Environment-invalid rollout (%s); resampling episode (attempt %d/%d)",
+                    output.extra_fields.get("lexbrowser_invalid_reason", "unknown"),
+                    attempt + 1,
+                    max_attempts,
+                )
+        assert output is not None
+        return output
+
+    async def _run_episode(self, sampling_params: dict[str, Any], **kwargs: Any) -> AgentLoopOutput:
         rollout_started = time.perf_counter()
         action_max_tokens = int(os.environ.get("LEXBROWSER_ACTION_MAX_TOKENS", "1024"))
         if action_max_tokens < 1:
