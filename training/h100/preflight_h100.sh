@@ -21,6 +21,7 @@ MIN_FREE_GB=${MIN_FREE_GB:-200}
 STORAGE_PATH=${STORAGE_PATH:-$CHECKPOINT_ROOT}
 SMOKE_URL=${SMOKE_URL:-https://arxiv.org/}
 BROWSER_BACKEND=${BROWSER_BACKEND:-lexmount}
+LEXMOUNT_BROWSER_MODE=${LEXMOUNT_BROWSER_MODE:-normal}
 LOCAL_CDP_HTTP_URL=${LOCAL_CDP_HTTP_URL:-http://127.0.0.1:9222}
 SSH_KEY=${SSH_KEY:-$HOME/.ssh/id_ed25519}
 SSH_USER=${SSH_USER:-root}
@@ -63,7 +64,7 @@ case "$BROWSER_BACKEND" in
     docker run --rm --network host --env-file "$ROOT/secrets.env" \
       -v "$ROOT:/workspace/lexbrowser-h100:ro" \
       -w /workspace/lexbrowser-h100 --entrypoint python3 "$IMAGE" \
-      runtime/smoke_lexmount_cdp.py --url "$SMOKE_URL" --timeout 60
+      runtime/smoke_lexmount_cdp.py --url "$SMOKE_URL" --timeout 60 --browser-mode "$LEXMOUNT_BROWSER_MODE"
     ;;
   local_cdp)
     if [[ "$NODE_IP" == "$HEAD_IP" ]]; then
@@ -76,8 +77,8 @@ case "$BROWSER_BACKEND" in
     exit 2
     ;;
 esac
-printf 'NODE_PREFLIGHT_OK host=%s free_gb=%s gpu_count=%s backend=%s\n' \
-  "$(hostname)" "$free_gb" "$gpu_count" "$BROWSER_BACKEND"
+printf 'NODE_PREFLIGHT_OK host=%s free_gb=%s gpu_count=%s backend=%s browser_mode=%s\n' \
+  "$(hostname)" "$free_gb" "$gpu_count" "$BROWSER_BACKEND" "$LEXMOUNT_BROWSER_MODE"
 NODE_SCRIPT
 
   if [[ "$node" == "${NODES[0]}" ]]; then
@@ -85,6 +86,7 @@ NODE_SCRIPT
       NEMO_GYM_ROOT="$NEMO_GYM_ROOT" RUNTIME_SITE="$RUNTIME_SITE" \
       MIN_FREE_GB="$MIN_FREE_GB" STORAGE_PATH="$STORAGE_PATH" GPUS_PER_NODE="$GPUS_PER_NODE" \
       SMOKE_URL="$SMOKE_URL" BROWSER_BACKEND="$BROWSER_BACKEND" \
+      LEXMOUNT_BROWSER_MODE="$LEXMOUNT_BROWSER_MODE" \
       LOCAL_CDP_HTTP_URL="$LOCAL_CDP_HTTP_URL" NODE_IP="$node" HEAD_IP="$HEAD_IP" \
       bash -lc "$script"
   else
@@ -92,6 +94,7 @@ NODE_SCRIPT
       IMAGE="$IMAGE" NEMO_GYM_ROOT="$NEMO_GYM_ROOT" RUNTIME_SITE="$RUNTIME_SITE" \
       MIN_FREE_GB="$MIN_FREE_GB" STORAGE_PATH="$STORAGE_PATH" GPUS_PER_NODE="$GPUS_PER_NODE" \
       SMOKE_URL="$SMOKE_URL" BROWSER_BACKEND="$BROWSER_BACKEND" \
+      LEXMOUNT_BROWSER_MODE="$LEXMOUNT_BROWSER_MODE" \
       LOCAL_CDP_HTTP_URL="$LOCAL_CDP_HTTP_URL" NODE_IP="$node" HEAD_IP="$HEAD_IP" \
       bash -s
   fi
