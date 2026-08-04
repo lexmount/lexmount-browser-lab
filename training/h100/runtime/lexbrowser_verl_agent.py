@@ -162,6 +162,38 @@ def _extract_user_visible_answer(content: str, generation_truncated: bool) -> tu
     return (text, "complete") if text else ("", "no_final_answer")
 
 
+def _in_episode_environment_failure(reward: float, info: dict[str, Any]) -> str:
+    """Classify a rollout that the browser broke *during* the episode.
+
+    The pre-existing checks cover failures at the episode boundary (reset,
+    unknown session, close RPC, judge).  They cannot see a tool call that fails
+    mid-episode: ``observe``/``act``/``navigate`` return an
+    ``ERROR_infrastructure_*`` string to the policy instead of raising, the
+    trajectory guard trips its breaker, and every later tool call is refused.
+    The policy then has no way to finish the task, the judge says "no", and that
+    reward=0 used to enter the GRPO group statistics as if the policy had failed
+    on its own.
+
+    Returns the invalid reason, or "" when the rollout is a valid training
+    sample.
+    """
+    # A successful rollout stays in the batch: a transient browser glitch that
+    # the policy nonetheless worked around carries real learning signal, and
+    # discarding it would bias the group mean downward.
+    if reward > 0:
+        return ""
+    termination_reason = str(info.get("termination_reason") or "")
+    if termination_reason.startswith("infrastructure_"):
+        return f"environment_{termination_reason}"
+    # The breaker did not trip, but the browser still failed at least once and
+    # the policy never produced an answer — the episode was not a fair trial.
+    if int(info.get("infrastructure_tool_failures") or 0) > 0 and not info.get(
+        "final_answer_present"
+    ):
+        return "environment_tool_infrastructure_failure"
+    return ""
+
+
 class BrowserTool(BaseTool):
     """Keeps one CDP browser session per agent request and closes it at rollout end."""
 
@@ -353,6 +385,7 @@ class BrowserTool(BaseTool):
                 "environment_service": "nemo-gym",
             }
         transcript, transcript_truncated = _render_transcript(record["events"])
+        guard = (record.get("state") or {}).get("trajectory_guard")
         execution_status = {
             "tool_call_count": int(record["tool_call_count"]),
             "session_created": not bool(record.get("reset_error")),
@@ -362,6 +395,10 @@ class BrowserTool(BaseTool):
             "final_answer_status": final_answer_status,
             "transcript_truncated": transcript_truncated,
             "browser_error": str(record["browser_error"]),
+            "infrastructure_tool_failures": int(
+                getattr(guard, "infrastructure_failures", 0) or 0
+            ),
+            "termination_reason": str(getattr(guard, "termination_reason", "") or ""),
         }
         if record["service"]:
             tool = record["tool"]
@@ -414,6 +451,13 @@ class BrowserTool(BaseTool):
                 # an invalid sample, not a fatal condition.
                 info["lexbrowser_invalid_sample"] = True
                 info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+            else:
+                in_episode = _in_episode_environment_failure(
+                    float(result["reward"]), info
+                )
+                if in_episode:
+                    info["lexbrowser_invalid_sample"] = True
+                    info["lexbrowser_invalid_reason"] = in_episode
             return float(result["reward"]), info
 
         score, reason = 0.0, "no_tool_calls"
@@ -483,6 +527,11 @@ class BrowserTool(BaseTool):
         if reason.startswith("judge_error"):
             info["lexbrowser_invalid_sample"] = True
             info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+        else:
+            in_episode = _in_episode_environment_failure(score, info)
+            if in_episode:
+                info["lexbrowser_invalid_sample"] = True
+                info["lexbrowser_invalid_reason"] = in_episode
         return score, info
 
 

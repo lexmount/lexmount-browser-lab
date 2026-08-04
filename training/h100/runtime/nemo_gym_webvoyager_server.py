@@ -545,6 +545,12 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             await self._mode.cleanup_session(record["state"])
         finally:
             early_session_cleanup_s = time.perf_counter() - cleanup_started
+        # A tool call that fails inside the episode (browser timeout, dead CDP
+        # connection, provider error page) returns an ``ERROR_infrastructure_*``
+        # string to the policy rather than raising, so ``browser_error`` alone
+        # cannot see it.  Publish the guard's own counters so the training side
+        # can tell an infrastructure-truncated trajectory from a policy failure.
+        guard = record["state"].get("trajectory_guard")
         execution_status = {
             "tool_call_count": int(record["tool_call_count"]),
             "session_created": True,
@@ -554,6 +560,10 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             "final_answer_status": str(final_answer_status),
             "transcript_truncated": transcript_truncated,
             "browser_error": str(record["browser_error"]),
+            "infrastructure_tool_failures": int(
+                getattr(guard, "infrastructure_failures", 0) or 0
+            ),
+            "termination_reason": str(getattr(guard, "termination_reason", "") or ""),
         }
         judge_log_path = ""
         audit_write_s = 0.0
