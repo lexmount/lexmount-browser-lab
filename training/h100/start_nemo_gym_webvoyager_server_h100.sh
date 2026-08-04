@@ -24,6 +24,10 @@ SWEEP_INTERVAL_S=${LEXMOUNT_SWEEP_INTERVAL_S:-60}
 JUDGE_REQUEST_TIMEOUT_S=${LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S:-45}
 EXECUTOR_WORKERS=${LEXBROWSER_EXECUTOR_WORKERS:-$((MAX_CONCURRENT_SESSIONS + MAX_CONCURRENT_CREATES + 16))}
 BROWSER_BACKEND=${BROWSER_BACKEND:-lexmount}
+# Provider browser engine: "normal" is the Chrome-based cloud browser, "light"
+# selects lightmount (chrome-light-docker), the in-house engine — the same
+# switch the SDK quickstart makes in light_demo.py.
+BROWSER_MODE=${LEXMOUNT_BROWSER_MODE:-normal}
 LOCAL_CDP_HTTP_URL=${LOCAL_CDP_HTTP_URL:-http://127.0.0.1:9222}
 JUDGE_TRANSCRIPT_CHAR_LIMIT=${LEXBROWSER_JUDGE_TRANSCRIPT_CHAR_LIMIT:-60000}
 JUDGE_MAX_ATTEMPTS=${LEXBROWSER_JUDGE_MAX_ATTEMPTS:-3}
@@ -45,6 +49,7 @@ fi
 docker run -d --name "$NAME" --network host --ipc host \
   --env-file "$SECRETS_FILE" \
   -e BROWSER_BACKEND="$BROWSER_BACKEND" \
+  -e LEXMOUNT_BROWSER_MODE="$BROWSER_MODE" \
   -e LOCAL_CDP_HTTP_URL="$LOCAL_CDP_HTTP_URL" \
   -e LEXMOUNT_MAX_CONCURRENT_SESSIONS="$MAX_CONCURRENT_SESSIONS" \
   -e LEXMOUNT_MAX_CONCURRENT_CREATES="$MAX_CONCURRENT_CREATES" \
@@ -68,7 +73,7 @@ docker run -d --name "$NAME" --network host --ipc host \
 
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$PORT/health" | grep -q '"status":"ok"'; then
-    echo "NEMO_GYM_WEBVOYAGER_SERVER_OK url=http://127.0.0.1:$PORT backend=$BROWSER_BACKEND"
+    echo "NEMO_GYM_WEBVOYAGER_SERVER_OK url=http://127.0.0.1:$PORT backend=$BROWSER_BACKEND browser_mode=$BROWSER_MODE"
     exit 0
   fi
   if ! docker inspect "$NAME" --format '{{.State.Running}}' 2>/dev/null | grep -q true; then
