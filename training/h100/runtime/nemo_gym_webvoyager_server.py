@@ -49,6 +49,27 @@ def _truncate_middle(text: str, limit: int) -> tuple[str, bool]:
     return text[:left] + TRUNCATION_MARKER + text[-right:], True
 
 
+# Tool results are strings, not exceptions: a broken browser call returns
+# "ERROR_INFRASTRUCTURE_*" to the policy.  "ERROR_POLICY_*" is the policy's own
+# mistake (bad selector, unparsable instruction) and must NOT count here.
+_INFRASTRUCTURE_ERROR_PREFIX = "ERROR_INFRASTRUCTURE"
+
+
+def _ends_on_infrastructure_failure(results) -> bool:
+    """True when the LAST browser call of the episode failed on infrastructure.
+
+    Occurrence alone is not evidence of causation: if the policy issued a
+    further call that succeeded, it recovered and the final outcome is its own.
+    Only a trajectory that ends on a broken call never got that chance.
+    """
+    last = ""
+    for result in results:
+        text = str(result).strip()
+        if text:
+            last = text
+    return last.upper().startswith(_INFRASTRUCTURE_ERROR_PREFIX)
+
+
 def _render_transcript(events: list[dict[str, str]]) -> tuple[str, bool]:
     """Share the Judge budget across all turns so no interaction disappears."""
     if not events:
@@ -551,6 +572,13 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         # cannot see it.  Publish the guard's own counters so the training side
         # can tell an infrastructure-truncated trajectory from a policy failure.
         guard = record["state"].get("trajectory_guard")
+        # Causality, not mere occurrence: a browser error the policy recovered
+        # from (a later call succeeded) leaves the outcome the policy's own.
+        # Only a trajectory whose *last* browser call was an infrastructure
+        # failure never got the chance to recover.
+        trailing_infrastructure_failure = _ends_on_infrastructure_failure(
+            str(event.get("result", "")) for event in record["events"]
+        )
         execution_status = {
             "tool_call_count": int(record["tool_call_count"]),
             "session_created": True,
@@ -564,6 +592,7 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
                 getattr(guard, "infrastructure_failures", 0) or 0
             ),
             "termination_reason": str(getattr(guard, "termination_reason", "") or ""),
+            "trailing_infrastructure_failure": trailing_infrastructure_failure,
         }
         judge_log_path = ""
         audit_write_s = 0.0

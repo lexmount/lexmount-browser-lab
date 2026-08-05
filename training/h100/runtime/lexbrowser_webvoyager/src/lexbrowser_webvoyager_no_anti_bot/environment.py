@@ -323,6 +323,19 @@ async def judge_task_completion(
         state["judge_seconds"] = time.monotonic() - started_at
 
 
+_POLICY_GROUNDING_ERROR_PATTERNS = (
+    # Raised by our own action JS: the control the policy addressed is not in
+    # the DOM any more (stale observation), which is a grounding mistake.
+    "selector not found",
+)
+
+
+def _is_policy_grounding_failure(exc: BaseException) -> bool:
+    """True when a tool error is the policy's fault, not the browser's."""
+    text = str(exc).lower()
+    return any(pattern in text for pattern in _POLICY_GROUNDING_ERROR_PATTERNS)
+
+
 @dataclass
 class TrajectoryGuard:
     """Per-episode circuit breaker and auditable failure classification."""
@@ -1634,6 +1647,15 @@ class LexmountDOMMode:
             guard.policy_failures += 1
             return f"ERROR_POLICY_ACT: {exc}"
         except Exception as exc:
+            # ``selector not found`` is raised by our own action JS when the
+            # policy feeds back a [data-lex-id=...] that is no longer in the
+            # DOM.  It arrives here as a RuntimeError from Runtime.evaluate,
+            # so it used to be counted as an infrastructure failure and could
+            # flip the whole rollout to environment-invalid — even though the
+            # browser is healthy and the mistake is the policy's grounding.
+            if _is_policy_grounding_failure(exc):
+                guard.policy_failures += 1
+                return f"ERROR_POLICY_ACT: {exc}"
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_ACT: {exc}"
         finally:

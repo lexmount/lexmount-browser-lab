@@ -162,17 +162,49 @@ def _extract_user_visible_answer(content: str, generation_truncated: bool) -> tu
     return (text, "complete") if text else ("", "no_final_answer")
 
 
+# Tool results are strings, not exceptions: a broken browser call returns
+# "ERROR_INFRASTRUCTURE_*" to the policy.  "ERROR_POLICY_*" is the policy's own
+# mistake (stale selector, unparsable instruction) and must NOT count here.
+_INFRASTRUCTURE_ERROR_PREFIX = "ERROR_INFRASTRUCTURE"
+
+
+def _ends_on_infrastructure_failure(results) -> bool:
+    """True when the LAST browser call of the episode failed on infrastructure.
+
+    Occurrence alone is not evidence of causation: if the policy issued a
+    further call that succeeded, it recovered and the final outcome is its own.
+    Only a trajectory that ends on a broken call never got that chance.
+    """
+    last = ""
+    for result in results:
+        text = str(result).strip()
+        if text:
+            last = text
+    return last.upper().startswith(_INFRASTRUCTURE_ERROR_PREFIX)
+
+
 def _in_episode_environment_failure(reward: float, info: dict[str, Any]) -> str:
     """Classify a rollout that the browser broke *during* the episode.
 
     The pre-existing checks cover failures at the episode boundary (reset,
     unknown session, close RPC, judge).  They cannot see a tool call that fails
     mid-episode: ``observe``/``act``/``navigate`` return an
-    ``ERROR_infrastructure_*`` string to the policy instead of raising, the
-    trajectory guard trips its breaker, and every later tool call is refused.
-    The policy then has no way to finish the task, the judge says "no", and that
-    reward=0 used to enter the GRPO group statistics as if the policy had failed
-    on its own.
+    ``ERROR_infrastructure_*`` string to the policy instead of raising, so a
+    reward=0 caused by a broken browser used to enter the GRPO group statistics
+    as if the policy had failed on its own.
+
+    The test is deliberately **causal, not merely coincidental**.  An earlier
+    version invalidated any answerless rollout that had seen at least one
+    infrastructure failure; that discarded trajectories where the policy hit a
+    transient error, recovered, kept working, and then failed on its own merits
+    — throwing away real negative signal and inflating the measured environment
+    failure rate.  A rollout is only unfair when the environment actually took
+    the trajectory away from the policy:
+
+      * the guard tripped its breaker on infrastructure, so every later tool
+        call was refused; or
+      * the episode's **last** browser call failed on infrastructure and the
+        policy never produced an answer — it never got a chance to recover.
 
     Returns the invalid reason, or "" when the rollout is a valid training
     sample.
@@ -185,9 +217,7 @@ def _in_episode_environment_failure(reward: float, info: dict[str, Any]) -> str:
     termination_reason = str(info.get("termination_reason") or "")
     if termination_reason.startswith("infrastructure_"):
         return f"environment_{termination_reason}"
-    # The breaker did not trip, but the browser still failed at least once and
-    # the policy never produced an answer — the episode was not a fair trial.
-    if int(info.get("infrastructure_tool_failures") or 0) > 0 and not info.get(
+    if info.get("trailing_infrastructure_failure") and not info.get(
         "final_answer_present"
     ):
         return "environment_tool_infrastructure_failure"
@@ -386,6 +416,9 @@ class BrowserTool(BaseTool):
             }
         transcript, transcript_truncated = _render_transcript(record["events"])
         guard = (record.get("state") or {}).get("trajectory_guard")
+        trailing_infrastructure_failure = _ends_on_infrastructure_failure(
+            str(event.get("result", "")) for event in record["events"]
+        )
         execution_status = {
             "tool_call_count": int(record["tool_call_count"]),
             "session_created": not bool(record.get("reset_error")),
@@ -399,6 +432,7 @@ class BrowserTool(BaseTool):
                 getattr(guard, "infrastructure_failures", 0) or 0
             ),
             "termination_reason": str(getattr(guard, "termination_reason", "") or ""),
+            "trailing_infrastructure_failure": trailing_infrastructure_failure,
         }
         if record["service"]:
             tool = record["tool"]
