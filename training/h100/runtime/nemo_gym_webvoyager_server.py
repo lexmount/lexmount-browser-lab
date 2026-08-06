@@ -90,6 +90,32 @@ def _render_transcript(events: list[dict[str, str]]) -> tuple[str, bool]:
     return transcript, truncated or total_shortened
 
 
+_CONTENT_FILTER_MARKERS = (
+    # DMX/deepseek upstream moderation of the judge prompt: HTTP 400 with
+    # vendor code 10013.  Observed on 2026-08-05 against WebVoyager's BBC News
+    # tasks — the judge prompt embeds the page text, so news about wars or
+    # politics trips the filter while the same run's other tasks pass.
+    "10013",
+    "无法提供关于以下内容",
+    "content_filter",
+    "content policy",
+)
+
+
+def _is_content_filter_refusal(exc: BaseException) -> bool:
+    """True when the provider moderated the prompt rather than failing transiently.
+
+    Retrying the same model with the same prompt reproduces it exactly, so the
+    caller should move on to the next judge instead of burning its attempts.
+    """
+    if getattr(exc, "status_code", None) not in (None, 400):
+        return False
+    text = str(exc).lower()
+    if "400" not in text and getattr(exc, "status_code", None) != 400:
+        return False
+    return any(marker.lower() in text for marker in _CONTENT_FILTER_MARKERS)
+
+
 def _extract_structured_judge_result(raw_text: str) -> dict[str, str] | None:
     """Accept only a non-empty reason and a binary verdict."""
     text = raw_text.strip()
@@ -679,6 +705,11 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             return 0.0, "no_tool_calls", {"status": "skipped", "reason": "no_tool_calls"}
         started = time.monotonic()
         model = os.environ.get("JUDGE_MODEL") or os.environ.get("OPENAI_MODEL", "glm-5.2")
+        fallback_models = [
+            name.strip()
+            for name in os.environ.get("LEXBROWSER_JUDGE_FALLBACK_MODELS", "").split(",")
+            if name.strip() and name.strip() != model
+        ]
         max_attempts = max(1, int(os.environ.get("LEXBROWSER_JUDGE_MAX_ATTEMPTS", "3")))
         prompt = TASK_EVIDENCE_FINAL_ANSWER_JUDGE_PROMPT.format(
             question=question,
@@ -705,71 +736,95 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             timeout=float(os.environ.get("LEXBROWSER_JUDGE_REQUEST_TIMEOUT_S", "45")),
         )
         attempts: list[dict[str, Any]] = []
+        attempt = 0
         last_raw_text = ""
         last_error = ""
-        for attempt in range(1, max_attempts + 1):
-            self._judge_requests += 1
-            try:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    max_tokens=1024,
-                )
-                message = response.choices[0].message
-                last_raw_text = message.content or ""
-                reasoning_content = getattr(message, "reasoning_content", "") or ""
-                result = _extract_structured_judge_result(last_raw_text)
-                if result is None and not last_raw_text.strip():
-                    result = _extract_structured_judge_result(reasoning_content)
-                attempt_record = {
-                    "attempt": attempt,
-                    "response_id": getattr(response, "id", ""),
-                    "raw_response": last_raw_text,
-                    "reasoning_content": reasoning_content,
-                    "parsed_result": result,
-                    "finish_reason": getattr(response.choices[0], "finish_reason", None),
-                }
-                attempts.append(attempt_record)
-                if result is not None:
-                    self._judge_successes += 1
-                    audit.update(
+        content_filtered = False
+        for judge_model in [model, *fallback_models]:
+            model_filtered = False
+            for _ in range(max_attempts):
+                attempt += 1
+                self._judge_requests += 1
+                try:
+                    response = await client.chat.completions.create(
+                        model=judge_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.0,
+                        max_tokens=1024,
+                    )
+                    message = response.choices[0].message
+                    last_raw_text = message.content or ""
+                    reasoning_content = getattr(message, "reasoning_content", "") or ""
+                    result = _extract_structured_judge_result(last_raw_text)
+                    if result is None and not last_raw_text.strip():
+                        result = _extract_structured_judge_result(reasoning_content)
+                    attempt_record = {
+                        "attempt": attempt,
+                        "model": judge_model,
+                        "response_id": getattr(response, "id", ""),
+                        "raw_response": last_raw_text,
+                        "reasoning_content": reasoning_content,
+                        "parsed_result": result,
+                        "finish_reason": getattr(response.choices[0], "finish_reason", None),
+                    }
+                    attempts.append(attempt_record)
+                    if result is not None:
+                        self._judge_successes += 1
+                        audit.update(
+                            {
+                                "status": "ok",
+                                "duration_seconds": time.monotonic() - started,
+                                "attempt_count": attempt,
+                                "attempts": attempts,
+                                "verdict": result["verdict"],
+                                "verdict_reason": result["reason"],
+                                **attempt_record,
+                            }
+                        )
+                        return (
+                            (1.0, "judge_yes", audit)
+                            if result["verdict"] == "yes"
+                            else (0.0, "judge_no", audit)
+                        )
+                    last_error = "Judge returned empty or invalid reason/verdict JSON"
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    filtered = _is_content_filter_refusal(exc)
+                    attempts.append(
                         {
-                            "status": "ok",
-                            "duration_seconds": time.monotonic() - started,
-                            "attempt_count": attempt,
-                            "attempts": attempts,
-                            "verdict": result["verdict"],
-                            "verdict_reason": result["reason"],
-                            **attempt_record,
+                            "attempt": attempt,
+                            "model": judge_model,
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc),
+                            "content_filter": filtered,
                         }
                     )
-                    return (
-                        (1.0, "judge_yes", audit)
-                        if result["verdict"] == "yes"
-                        else (0.0, "judge_no", audit)
-                    )
-                last_error = "Judge returned empty or invalid reason/verdict JSON"
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                attempts.append(
-                    {"attempt": attempt, "error_type": type(exc).__name__, "error_message": str(exc)}
-                )
+                    if filtered:
+                        # The provider moderated the judge prompt itself.  It is
+                        # a property of the prompt, not a transient fault, so
+                        # retrying the same model only burns latency — hand the
+                        # prompt to the next judge instead.
+                        content_filtered = True
+                        model_filtered = True
+                        break
+            if model_filtered:
+                continue
 
         self._judge_failures += 1
+        error_type = "JudgeContentFilter" if content_filtered else "InvalidJudgeResponse"
         audit.update(
             {
                 "status": "error",
                 "duration_seconds": time.monotonic() - started,
-                "attempt_count": max_attempts,
+                "attempt_count": attempt,
                 "attempts": attempts,
                 "raw_response": last_raw_text,
                 "parsed_result": None,
-                "error_type": "InvalidJudgeResponse",
+                "error_type": error_type,
                 "error_message": last_error or "Judge produced no valid reason/verdict JSON",
             }
         )
-        return 0.0, "judge_error:InvalidJudgeResponse", audit
+        return 0.0, f"judge_error:{error_type}", audit
 
     async def _discard(self, session_id: str) -> None:
         async with self._sessions_lock:

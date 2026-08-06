@@ -31,6 +31,11 @@ BROWSER_MODE=${LEXMOUNT_BROWSER_MODE:-normal}
 LOCAL_CDP_HTTP_URL=${LOCAL_CDP_HTTP_URL:-http://127.0.0.1:9222}
 JUDGE_TRANSCRIPT_CHAR_LIMIT=${LEXBROWSER_JUDGE_TRANSCRIPT_CHAR_LIMIT:-60000}
 JUDGE_MAX_ATTEMPTS=${LEXBROWSER_JUDGE_MAX_ATTEMPTS:-3}
+# Judges tried in order when the primary refuses the prompt on content policy.
+# The primary endpoint moderated WebVoyager's BBC News tasks on 2026-08-05
+# (HTTP 400, vendor code 10013); a refusal is a property of the prompt, so the
+# only way out is a different judge, not another attempt.
+JUDGE_FALLBACK_MODELS=${LEXBROWSER_JUDGE_FALLBACK_MODELS:-}
 AUDIT_DIR=${AUDIT_DIR:-$RUNS_ROOT/manual/audit}
 SECRETS_FILE=${SECRETS_FILE:-$ROOT/secrets.env}
 
@@ -61,6 +66,7 @@ docker run -d --name "$NAME" --network host --ipc host \
   -e LEXBROWSER_EXECUTOR_WORKERS="$EXECUTOR_WORKERS" \
   -e LEXBROWSER_JUDGE_TRANSCRIPT_CHAR_LIMIT="$JUDGE_TRANSCRIPT_CHAR_LIMIT" \
   -e LEXBROWSER_JUDGE_MAX_ATTEMPTS="$JUDGE_MAX_ATTEMPTS" \
+  -e LEXBROWSER_JUDGE_FALLBACK_MODELS="$JUDGE_FALLBACK_MODELS" \
   -e LEXBROWSER_AUDIT_DIR=/audit \
   -e PYTHONPATH=/runtime:/opt/nemo-gym:/workspace/lexbrowser-h100/runtime:/workspace/lexbrowser-h100/runtime/lexbrowser_webvoyager/src \
   -v "$ROOT:/workspace/lexbrowser-h100:ro" \

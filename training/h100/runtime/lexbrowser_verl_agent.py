@@ -224,6 +224,21 @@ def _in_episode_environment_failure(reward: float, info: dict[str, Any]) -> str:
     return ""
 
 
+def _judge_failure_reason(info: dict[str, Any]) -> str:
+    """Separate provider moderation from a genuinely unusable judge verdict.
+
+    Both are invalid samples, but they have different owners: a content filter
+    is the judge provider refusing the prompt (nothing about the browser or the
+    policy is wrong), while InvalidJudgeResponse means the judge answered and we
+    could not parse it.  Reporting them as one number hid a provider-side
+    moderation window that opened on 2026-08-05 and closed again on 08-06.
+    """
+    reason = str(info.get("lexbrowser_reason") or "")
+    if "contentfilter" in reason.replace("_", "").lower():
+        return "environment_judge_content_filtered"
+    return "environment_judge_failed"
+
+
 class BrowserTool(BaseTool):
     """Keeps one CDP browser session per agent request and closes it at rollout end."""
 
@@ -484,7 +499,7 @@ class BrowserTool(BaseTool):
                 # aborted the whole training step; an unusable judge verdict is
                 # an invalid sample, not a fatal condition.
                 info["lexbrowser_invalid_sample"] = True
-                info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+                info["lexbrowser_invalid_reason"] = _judge_failure_reason(info)
             else:
                 in_episode = _in_episode_environment_failure(
                     float(result["reward"]), info
@@ -560,7 +575,7 @@ class BrowserTool(BaseTool):
         }
         if reason.startswith("judge_error"):
             info["lexbrowser_invalid_sample"] = True
-            info["lexbrowser_invalid_reason"] = "environment_judge_failed"
+            info["lexbrowser_invalid_reason"] = _judge_failure_reason(info)
         else:
             in_episode = _in_episode_environment_failure(score, info)
             if in_episode:
