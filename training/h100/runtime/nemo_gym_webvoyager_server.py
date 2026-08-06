@@ -286,6 +286,17 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
         # default): once the client has given up, finishing the reset would
         # only register a session nobody will ever use.
         self._reset_total_budget_s = float(os.environ.get("LEXMOUNT_RESET_TOTAL_BUDGET_S", "110"))
+        # How long one provider session create may take before we give up on it.
+        # 60s was enough until 2026-08-06, when creates started taking far
+        # longer under provider load: a create measured directly against the
+        # API returned successfully after 130s while the sidecar had already
+        # abandoned it at 60s and booked the rollout as environment_reset_failed.
+        # Raising this converts slow-but-successful creates into usable
+        # rollouts; it must stay below LEXMOUNT_RESET_TOTAL_BUDGET_S, which in
+        # turn stays below the training client's reset RPC timeout.
+        self._session_create_timeout_s = float(
+            os.environ.get("LEXMOUNT_SESSION_CREATE_TIMEOUT_S", "60")
+        )
         self._create_slots = asyncio.Semaphore(self._max_concurrent_creates)
         self._browser_backend = os.environ.get("BROWSER_BACKEND", "lexmount").strip().lower()
         common_mode_kwargs = {
@@ -306,7 +317,7 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
                 browser_mode=os.environ.get("LEXMOUNT_BROWSER_MODE", "normal"),
                 official_proxy=os.environ.get("LEXMOUNT_OFFICIAL_PROXY", "0") == "1",
                 external_proxy=None,
-                session_create_timeout_s=60.0,
+                session_create_timeout_s=self._session_create_timeout_s,
                 stagehand_ready_timeout_s=30.0,
                 **common_mode_kwargs,
             )
@@ -377,7 +388,7 @@ class WebVoyagerResourcesServer(SimpleResourcesServer):
             "peak_active_sessions": self._peak_active_sessions,
             "max_concurrent_sessions": self._max_concurrent_sessions,
             "max_concurrent_creates": self._max_concurrent_creates,
-            "session_create_timeout_s": 60.0,
+            "session_create_timeout_s": self._session_create_timeout_s,
             "session_create_max_attempts": self._create_attempts,
             "session_create_retries": max(0, self._create_attempts - 1),
             "reset_total_budget_s": self._reset_total_budget_s,
