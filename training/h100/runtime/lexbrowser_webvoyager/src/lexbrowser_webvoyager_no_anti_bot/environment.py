@@ -336,6 +336,40 @@ def _is_policy_grounding_failure(exc: BaseException) -> bool:
     return any(pattern in text for pattern in _POLICY_GROUNDING_ERROR_PATTERNS)
 
 
+# Chrome error codes that mean *our* transport is broken whatever the target
+# was: the provider proxy is down, so any URL would have failed identically.
+_TRANSPORT_ERROR_CODES = (
+    "ERR_TUNNEL_CONNECTION_FAILED",
+    "ERR_PROXY_CONNECTION_FAILED",
+    "ERR_PROXY_AUTH_REQUESTED",
+    "ERR_SOCKS_CONNECTION_FAILED",
+    "ERR_NETWORK_CHANGED",
+    "ERR_INTERNET_DISCONNECTED",
+)
+
+
+def _is_unreachable_target_failure(exc: BaseException) -> bool:
+    """True when a navigation failed because of the URL the policy picked.
+
+    The engine collapses DNS failures into ``ERR_FAILED`` rather than
+    ``ERR_NAME_NOT_RESOLVED``, so the error code alone cannot separate "this
+    host does not exist" from "the network is down".  What does separate them
+    is who chose the URL: this is only consulted for a navigation the *policy*
+    issued, and every code except the transport-level ones above describes the
+    chosen target rather than our plumbing.
+
+    Attributing these to the policy is deliberate.  On the 2026-08-06 light run
+    all 14 were invented hostnames — ``example-conference-site.com``,
+    ``store.arxiv.org`` — that resolve nowhere.  Counting them as environment
+    failures dropped the rollout from the GRPO group statistics, which erased
+    the negative signal for a mistake the model really made.
+    """
+    text = str(exc)
+    if "infrastructure_browser_error_page" not in text:
+        return False
+    return not any(code in text for code in _TRANSPORT_ERROR_CODES)
+
+
 @dataclass
 class TrajectoryGuard:
     """Per-episode circuit breaker and auditable failure classification."""
@@ -349,6 +383,9 @@ class TrajectoryGuard:
     policy_failures: int = 0
     infrastructure_failures: int = 0
     timeouts: int = 0
+    # Set when the policy's own navigation landed on a browser error page, so a
+    # follow-up observe of that page is attributed the same way.
+    unreachable_navigation_target: bool = False
     terminated: bool = False
     termination_reason: str = ""
     timings: dict[str, float] = field(default_factory=dict)
@@ -1515,6 +1552,9 @@ class LexmountDOMMode:
         if blocked:
             return f"ERROR_{blocked.upper()}: trajectory terminated"
         started_at = time.monotonic()
+        # Any new navigation supersedes the previous one; only the latest can
+        # have left an error page under the policy's feet.
+        guard.unreachable_navigation_target = False
         try:
             if isinstance(session, LexmountCDPSession):
                 await asyncio.wait_for(
@@ -1549,6 +1589,14 @@ class LexmountDOMMode:
         except asyncio.TimeoutError:
             return f"ERROR_{guard.infrastructure_timeout('navigate').upper()}: retryable browser timeout"
         except Exception as exc:
+            if _is_unreachable_target_failure(exc):
+                # The policy navigated somewhere that does not resolve or
+                # refuses the connection.  The browser worked correctly; the
+                # choice of URL was the mistake, so this trajectory keeps its
+                # negative reward instead of being excised from the batch.
+                guard.policy_failures += 1
+                guard.unreachable_navigation_target = True
+                return f"ERROR_POLICY_NAVIGATE: {exc}"
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_NAVIGATE: {exc}"
         finally:
@@ -1593,6 +1641,13 @@ class LexmountDOMMode:
         except asyncio.TimeoutError:
             return f"ERROR_{guard.infrastructure_timeout('observe').upper()}: retryable browser timeout"
         except Exception as exc:
+            if guard.unreachable_navigation_target and _is_unreachable_target_failure(exc):
+                # Observing the error page left behind by the policy's own bad
+                # navigation is the same mistake seen twice, not a new browser
+                # fault.  A failure on the session's start URL keeps the
+                # infrastructure label, because nobody chose to go there.
+                guard.policy_failures += 1
+                return f"ERROR_POLICY_OBSERVE: {exc}"
             guard.infrastructure_failures += 1
             return f"ERROR_INFRASTRUCTURE_OBSERVE: {exc}"
         finally:
