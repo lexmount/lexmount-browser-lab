@@ -95,8 +95,17 @@ export WORK_ROOT MODEL_PATH GPUS_PER_NODE
 export BROWSER_BACKEND LOCAL_CDP_HTTP_URL
 
 if [[ "$TRAIN_BATCH_SIZE" -ne 8 || "$ROLLOUT_N" -ne 8 || "$PPO_MINI_BATCH_SIZE" -ne 8 ]]; then
-  echo "The validated TrainerV1 geometry is train_batch_size=8, rollout.n=8, ppo_mini_batch_size=8." >&2
-  exit 2
+  # The 2026-07-21 60-step run validated 8/8/8, and a silent change of geometry
+  # invalidates any comparison against it, so deviating has to be deliberate.
+  # Diagnostic runs legitimately need a smaller batch: two engines can then be
+  # compared side by side on separate nodes without exceeding the browser
+  # account's 80-session ceiling.
+  if [[ "${ALLOW_UNVALIDATED_GEOMETRY:-0}" != "1" ]]; then
+    echo "The validated TrainerV1 geometry is train_batch_size=8, rollout.n=8, ppo_mini_batch_size=8." >&2
+    echo "Set ALLOW_UNVALIDATED_GEOMETRY=1 to run a different one; results are not comparable with the validated run." >&2
+    exit 2
+  fi
+  echo "GEOMETRY_OVERRIDE train_batch_size=$TRAIN_BATCH_SIZE rollout_n=$ROLLOUT_N ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE"
 fi
 if (( 4096 + MAX_RESPONSE_LENGTH > MAX_MODEL_LENGTH )); then
   echo "initial prompt (4096) + rollout ($MAX_RESPONSE_LENGTH) exceeds model length ($MAX_MODEL_LENGTH)." >&2
