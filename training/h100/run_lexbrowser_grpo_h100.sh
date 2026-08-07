@@ -49,6 +49,22 @@ MAX_USER_TURNS=${MAX_USER_TURNS:-10}
 MAX_TOOL_RESPONSE_LENGTH=${MAX_TOOL_RESPONSE_LENGTH:-16384}
 REASONING_PARSER=${REASONING_PARSER:-qwen3}
 EXPECTED_TASKS_PER_STEP=${EXPECTED_TASKS_PER_STEP:-8}
+# --- Policy-loss shape (defaults = the validated 2026-07-21 recipe). ---
+# DAPO-style overrides (set by launch scripts that opt in, see the nvidia-pr
+# branch of lexmount/nemorl-webagent for the reference configuration):
+#   CLIP_RATIO_HIGH=0.28 — asymmetric clip ("clip-higher") leaves room to raise
+#     low-probability tokens, the main lever against entropy collapse;
+#   USE_KL_LOSS=False    — drop the KL term instead of keeping a placebo
+#     (0.001 contributed ~1e-3 of the loss while kl grew 20x);
+#   NORM_ADV_BY_STD=False — Dr.GRPO: no per-group std division, which
+#     over-weights near-uniform groups under sparse 0/1 rewards.
+CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
+CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
+CLIP_RATIO_C=${CLIP_RATIO_C:-3.0}
+USE_KL_LOSS=${USE_KL_LOSS:-True}
+KL_LOSS_COEF=${KL_LOSS_COEF:-0.001}
+NORM_ADV_BY_STD=${NORM_ADV_BY_STD:-True}
+LOSS_AGG_MODE=${LOSS_AGG_MODE:-token-mean}
 EXPECTED_ROLLOUTS_PER_TASK=${EXPECTED_ROLLOUTS_PER_TASK:-8}
 RUN_DIR=$RUNS_ROOT/$STAMP
 CHECKPOINT_DIR=$CHECKPOINT_ROOT/$STAMP
@@ -138,12 +154,14 @@ export VERL_FILE_LOGGER_ROOT=${VERL_FILE_LOGGER_ROOT:-$RUN_DIR/metrics}
 mkdir -p "$TENSORBOARD_DIR" "$LEXBROWSER_METRICS_DIR" "$VERL_FILE_LOGGER_ROOT" \
   "$RUN_DIR/rollouts" "$CHECKPOINT_DIR"
 echo "WEBVOYAGER_LENGTHS model=$MAX_MODEL_LENGTH initial_prompt=4096 rollout=$MAX_RESPONSE_LENGTH action_per_turn=${LEXBROWSER_ACTION_MAX_TOKENS:-1024} tool_response_chars=$MAX_TOOL_RESPONSE_LENGTH reasoning_parser=$REASONING_PARSER"
+echo "WEBVOYAGER_LOSS_SHAPE clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH,c=$CLIP_RATIO_C] kl_loss=$USE_KL_LOSS/$KL_LOSS_COEF norm_adv_by_std=$NORM_ADV_BY_STD agg=$LOSS_AGG_MODE"
 echo "WEBVOYAGER_MEMORY sp=$ULYSSES_SEQUENCE_PARALLEL_SIZE ppo_tokens_per_gpu=$PPO_MAX_TOKEN_LEN_PER_GPU ref_logprob_tokens_per_gpu=$REF_LOG_PROB_MAX_TOKEN_LEN_PER_GPU old_logprob_tokens_per_gpu=$ROLLOUT_LOG_PROB_MAX_TOKEN_LEN_PER_GPU entropy_chunking=$ENTROPY_FROM_LOGITS_WITH_CHUNKING entropy_chunk_size=$ENTROPY_FROM_LOGITS_CHUNK_SIZE"
 
 python3 -m verl.trainer.main_ppo \
   hydra.run.dir="$RUN_DIR/hydra" \
   algorithm.adv_estimator=grpo \
   algorithm.use_kl_in_reward=False \
+  algorithm.norm_adv_by_std_in_grpo="$NORM_ADV_BY_STD" \
   data.train_files="['$DATA']" \
   data.val_files="['$DATA']" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
@@ -164,9 +182,13 @@ python3 -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.use_torch_compile=False \
   actor_rollout_ref.actor.entropy_from_logits_with_chunking="$ENTROPY_FROM_LOGITS_WITH_CHUNKING" \
   actor_rollout_ref.actor.entropy_from_logits_chunk_size="$ENTROPY_FROM_LOGITS_CHUNK_SIZE" \
-  actor_rollout_ref.actor.use_kl_loss=True \
-  actor_rollout_ref.actor.kl_loss_coef=0.001 \
+  actor_rollout_ref.actor.use_kl_loss="$USE_KL_LOSS" \
+  actor_rollout_ref.actor.kl_loss_coef="$KL_LOSS_COEF" \
   actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+  actor_rollout_ref.actor.clip_ratio_low="$CLIP_RATIO_LOW" \
+  actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
+  actor_rollout_ref.actor.clip_ratio_c="$CLIP_RATIO_C" \
+  actor_rollout_ref.actor.loss_agg_mode="$LOSS_AGG_MODE" \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   actor_rollout_ref.actor.fsdp_config.ulysses_sequence_parallel_size="$ULYSSES_SEQUENCE_PARALLEL_SIZE" \
