@@ -919,12 +919,12 @@ def _dapo_worker_classes():
                         for item in buffer:
                             await tq.async_kv_batch_put(**item["put_args"])
                         if attempt > 1:
-                            LOGGER.info(
+                            LOGGER.warning(
                                 "DAPO group commit uid=%s attempt=%d rewards=%s",
                                 uid, attempt, [round(r, 3) if r is not None else None for r in rewards],
                             )
                         break
-                    LOGGER.info(
+                    LOGGER.warning(
                         "DAPO zero-variance group uid=%s attempt=%d/%d rewards=%s invalids=%d — resampling",
                         uid, attempt, max_attempts,
                         [round(r, 3) if r is not None else None for r in rewards], sum(invalids),
