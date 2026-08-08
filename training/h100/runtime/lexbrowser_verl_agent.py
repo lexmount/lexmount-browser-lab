@@ -865,7 +865,7 @@ def _dapo_worker_classes():
     import transfer_queue as tq
     from tensordict import NonTensorData, NonTensorStack  # noqa: F401
     from verl.trainer.ppo.v1.agent_loop_tq import AgentLoopManagerTQ, AgentLoopWorkerTQ
-    from verl.trainer.ppo.v1.utils import list_of_dict_to_tensordict
+    from verl.utils.tensordict_utils import list_of_dict_to_tensordict
 
     class LexBrowserDAPOWorker(AgentLoopWorkerTQ):
         async def _run_prompt(self, prompt, sampling_params, trajectory, trace=False):
