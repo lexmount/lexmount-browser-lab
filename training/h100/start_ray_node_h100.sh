@@ -77,9 +77,9 @@ extra_env=()
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 if [[ "$ROLE" == head ]]; then
-  ray_cmd="ray start --head --node-ip-address=${NODE_IP} --port=6379 --dashboard-host=0.0.0.0 --block"
+  ray_cmd="ray start --head --node-ip-address=${NODE_IP} --port=${RAY_PORT:-6379} --dashboard-host=0.0.0.0 --dashboard-port=${RAY_DASHBOARD_PORT:-8265} --block"
 else
-  ray_cmd="ray start --address=${HEAD_IP}:6379 --node-ip-address=${NODE_IP} --block"
+  ray_cmd="ray start --address=${HEAD_IP}:${RAY_PORT:-6379} --node-ip-address=${NODE_IP} --block"
 fi
 
 docker run -d --name "$NAME" --network host --ipc host --shm-size "$SHM_SIZE" \

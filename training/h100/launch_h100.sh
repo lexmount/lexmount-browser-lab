@@ -22,6 +22,11 @@ CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-$WORK_ROOT/checkpoints}
 MODEL_PATH=${MODEL_PATH:-/models/Qwen3-8B}
 IMAGE=${IMAGE:-lexbrowser-verl-h100:local}
 RAY_CONTAINER=${RAY_CONTAINER:-lexbrowser-h100-ray}
+# Ray control-plane ports. Default is ray's own 6379/8265; override when a
+# foreign ray cluster (e.g. a colleague's webagent-ray) already holds them —
+# joining someone else's GCS fails with a session-name assertion.
+RAY_PORT=${RAY_PORT:-6379}
+RAY_DASHBOARD_PORT=${RAY_DASHBOARD_PORT:-8265}
 
 # Node topology. NODES_CSV lists node IPs, head first.
 NODES_CSV=${NODES_CSV:-$(hostname -I 2>/dev/null | awk '{print $1}')}
@@ -157,6 +162,7 @@ export NEMO_GYM_BROWSER_URL="http://$HEAD_IP:$NEMO_GYM_PORT"
 mkdir -p "$RUN_DIR/logs" "$CHECKPOINT_ROOT/$STAMP"
 
 ROLE=head NODE_IP="$HEAD_IP" HEAD_IP="$HEAD_IP" ROOT="$ROOT" MODEL_PATH="$MODEL_PATH" \
+  RAY_PORT="$RAY_PORT" RAY_DASHBOARD_PORT="$RAY_DASHBOARD_PORT" \
   RUNS_ROOT="$RUNS_ROOT" CHECKPOINT_ROOT="$CHECKPOINT_ROOT" IMAGE="$IMAGE" NAME="$RAY_CONTAINER" \
   VERL_PROCESS_GROUP_TIMEOUT_SECONDS="$VERL_PROCESS_GROUP_TIMEOUT_SECONDS" \
   LEXBROWSER_ACTION_MAX_TOKENS="$ACTION_MAX_TOKENS" \
@@ -166,27 +172,27 @@ ROLE=head NODE_IP="$HEAD_IP" HEAD_IP="$HEAD_IP" ROOT="$ROOT" MODEL_PATH="$MODEL_
 
 head_ready=0
 for _ in $(seq 1 120); do
-  if timeout 2 bash -c "</dev/tcp/$HEAD_IP/6379" 2>/dev/null; then
+  if timeout 2 bash -c "</dev/tcp/$HEAD_IP/$RAY_PORT" 2>/dev/null; then
     head_ready=1
     break
   fi
   sleep 1
 done
 if [[ "$head_ready" != 1 ]]; then
-  echo "Ray head GCS did not listen on $HEAD_IP:6379" >&2
+  echo "Ray head GCS did not listen on $HEAD_IP:$RAY_PORT" >&2
   exit 1
 fi
 
 for node in "${NODES[@]}"; do
   [[ "$node" == "$HEAD_IP" ]] && continue
-  "${SSH[@]}" "$SSH_USER@$node" "ROLE=worker NODE_IP=$node HEAD_IP=$HEAD_IP ROOT=$ROOT RUNS_ROOT=$RUNS_ROOT CHECKPOINT_ROOT=$CHECKPOINT_ROOT MODEL_PATH=$MODEL_PATH IMAGE=$IMAGE NAME=$RAY_CONTAINER NEMO_GYM_BROWSER_URL=$NEMO_GYM_BROWSER_URL LEXBROWSER_ACTION_MAX_TOKENS=$ACTION_MAX_TOKENS LEXBROWSER_METRICS_DIR=$LEXBROWSER_METRICS_DIR TENSORBOARD_DIR=$TENSORBOARD_DIR VERL_FILE_LOGGER_ROOT=$VERL_FILE_LOGGER_ROOT VERL_PROCESS_GROUP_TIMEOUT_SECONDS=$VERL_PROCESS_GROUP_TIMEOUT_SECONDS bash $ROOT/start_ray_node_h100.sh"
+  "${SSH[@]}" "$SSH_USER@$node" "ROLE=worker NODE_IP=$node HEAD_IP=$HEAD_IP ROOT=$ROOT RAY_PORT=$RAY_PORT RAY_DASHBOARD_PORT=$RAY_DASHBOARD_PORT RUNS_ROOT=$RUNS_ROOT CHECKPOINT_ROOT=$CHECKPOINT_ROOT MODEL_PATH=$MODEL_PATH IMAGE=$IMAGE NAME=$RAY_CONTAINER NEMO_GYM_BROWSER_URL=$NEMO_GYM_BROWSER_URL LEXBROWSER_ACTION_MAX_TOKENS=$ACTION_MAX_TOKENS LEXBROWSER_METRICS_DIR=$LEXBROWSER_METRICS_DIR TENSORBOARD_DIR=$TENSORBOARD_DIR VERL_FILE_LOGGER_ROOT=$VERL_FILE_LOGGER_ROOT VERL_PROCESS_GROUP_TIMEOUT_SECONDS=$VERL_PROCESS_GROUP_TIMEOUT_SECONDS bash $ROOT/start_ray_node_h100.sh"
 done
 
 expected_gpus=$((NNODES * GPUS_PER_NODE))
 cluster_ready=0
 for _ in $(seq 1 60); do
   if timeout 15 docker exec "$RAY_CONTAINER" python3 -c \
-    "import ray; ray.init(address='$HEAD_IP:6379'); resources=ray.cluster_resources(); actual=int(resources.get('GPU', 0)); print(f'RAY_CLUSTER_GPU actual={actual} expected=$expected_gpus'); assert actual == $expected_gpus"; then
+    "import ray; ray.init(address='$HEAD_IP:$RAY_PORT'); resources=ray.cluster_resources(); actual=int(resources.get('GPU', 0)); print(f'RAY_CLUSTER_GPU actual={actual} expected=$expected_gpus'); assert actual == $expected_gpus"; then
     cluster_ready=1
     break
   fi
@@ -194,7 +200,7 @@ for _ in $(seq 1 60); do
 done
 if [[ "$cluster_ready" != 1 ]]; then
   echo "Ray cluster did not reach $expected_gpus GPU resources" >&2
-  docker exec "$RAY_CONTAINER" ray status --address="$HEAD_IP:6379" || true
+  docker exec "$RAY_CONTAINER" ray status --address="$HEAD_IP:$RAY_PORT" || true
   exit 1
 fi
 
@@ -208,5 +214,5 @@ TensorBoard:    $RUN_DIR/tensorboard  (tensorboard --logdir $RUN_DIR/tensorboard
 Rollout audit:  $RUN_DIR/rollouts
 Checkpoints:    $CHECKPOINT_ROOT/$STAMP (every $SAVE_FREQ steps)
 Sidecar logs:   docker logs -f lexbrowser-nemo-gym-webvoyager
-Ray status:     docker exec $RAY_CONTAINER ray status --address=$HEAD_IP:6379
+Ray status:     docker exec $RAY_CONTAINER ray status --address=$HEAD_IP:$RAY_PORT
 EOF
