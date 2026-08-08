@@ -862,12 +862,19 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
 
 def _dapo_worker_classes():
     """Import-on-use so this module stays loadable without the V1 stack."""
+    import ray
     import transfer_queue as tq
     from tensordict import NonTensorData, NonTensorStack  # noqa: F401
     from verl.trainer.ppo.v1.agent_loop_tq import AgentLoopManagerTQ, AgentLoopWorkerTQ
     from verl.utils.tensordict_utils import list_of_dict_to_tensordict
 
-    class LexBrowserDAPOWorker(AgentLoopWorkerTQ):
+    # AgentLoopWorkerTQ is declared with @ray.remote, and ray forbids
+    # inheriting from an ActorClass. Subclass the original user class it
+    # wraps, then wrap ours the same way the stock manager does
+    # (agent_loop.py: ray.remote(AgentLoopWorker)).
+    _worker_base = getattr(AgentLoopWorkerTQ, "__ray_actor_class__", AgentLoopWorkerTQ)
+
+    class LexBrowserDAPOWorker(_worker_base):
         async def _run_prompt(self, prompt, sampling_params, trajectory, trace=False):
             # Env-carried knobs: rollout.agent is a structured AgentLoopConfig,
             # so unknown hydra keys are rejected at instantiation. Ray workers
@@ -999,8 +1006,10 @@ def _dapo_worker_classes():
 
     class LexBrowserDAPOAgentLoopManager(AgentLoopManagerTQ):
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self.agent_loop_workers_class = LexBrowserDAPOWorker
+            # Must be set BEFORE super().__init__: AgentLoopManagerTQ assigns
+            # its own workers class first and the base __init__ spawns workers.
+            self.agent_loop_workers_class = ray.remote(LexBrowserDAPOWorker)
+            super(AgentLoopManagerTQ, self).__init__(*args, **kwargs)
 
     return LexBrowserDAPOWorker, LexBrowserDAPOAgentLoopManager
 
