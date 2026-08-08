@@ -65,6 +65,11 @@ USE_KL_LOSS=${USE_KL_LOSS:-True}
 KL_LOSS_COEF=${KL_LOSS_COEF:-0.001}
 NORM_ADV_BY_STD=${NORM_ADV_BY_STD:-True}
 LOSS_AGG_MODE=${LOSS_AGG_MODE:-token-mean}
+# DAPO dynamic sampling: zero-variance GRPO groups (all valid rollouts earning
+# the same reward) are resampled with fresh sessions instead of being trained
+# on. Default ON going forward; DYNAMIC_SAMPLING=0 restores the plain recipe.
+DYNAMIC_SAMPLING=${DYNAMIC_SAMPLING:-1}
+GROUP_RESAMPLES=${GROUP_RESAMPLES:-2}
 EXPECTED_ROLLOUTS_PER_TASK=${EXPECTED_ROLLOUTS_PER_TASK:-8}
 RUN_DIR=$RUNS_ROOT/$STAMP
 CHECKPOINT_DIR=$CHECKPOINT_ROOT/$STAMP
@@ -154,8 +159,18 @@ export VERL_FILE_LOGGER_ROOT=${VERL_FILE_LOGGER_ROOT:-$RUN_DIR/metrics}
 mkdir -p "$TENSORBOARD_DIR" "$LEXBROWSER_METRICS_DIR" "$VERL_FILE_LOGGER_ROOT" \
   "$RUN_DIR/rollouts" "$CHECKPOINT_DIR"
 echo "WEBVOYAGER_LENGTHS model=$MAX_MODEL_LENGTH initial_prompt=4096 rollout=$MAX_RESPONSE_LENGTH action_per_turn=${LEXBROWSER_ACTION_MAX_TOKENS:-1024} tool_response_chars=$MAX_TOOL_RESPONSE_LENGTH reasoning_parser=$REASONING_PARSER"
+echo "WEBVOYAGER_DYNAMIC_SAMPLING enable=$DYNAMIC_SAMPLING max_group_resamples=$GROUP_RESAMPLES"
 echo "WEBVOYAGER_LOSS_SHAPE clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH,c=$CLIP_RATIO_C] kl_loss=$USE_KL_LOSS/$KL_LOSS_COEF norm_adv_by_std=$NORM_ADV_BY_STD agg=$LOSS_AGG_MODE"
 echo "WEBVOYAGER_MEMORY sp=$ULYSSES_SEQUENCE_PARALLEL_SIZE ppo_tokens_per_gpu=$PPO_MAX_TOKEN_LEN_PER_GPU ref_logprob_tokens_per_gpu=$REF_LOG_PROB_MAX_TOKEN_LEN_PER_GPU old_logprob_tokens_per_gpu=$ROLLOUT_LOG_PROB_MAX_TOKEN_LEN_PER_GPU entropy_chunking=$ENTROPY_FROM_LOGITS_WITH_CHUNKING entropy_chunk_size=$ENTROPY_FROM_LOGITS_CHUNK_SIZE"
+
+dapo_args=()
+if [[ "$DYNAMIC_SAMPLING" == "1" ]]; then
+  dapo_args+=(
+    +actor_rollout_ref.rollout.agent.agent_loop_manager_class=lexbrowser_verl_agent.LexBrowserDAPOAgentLoopManager
+    +actor_rollout_ref.rollout.agent.dynamic_sampling.enable=True
+    +actor_rollout_ref.rollout.agent.dynamic_sampling.max_group_resamples="$GROUP_RESAMPLES"
+  )
+fi
 
 python3 -m verl.trainer.main_ppo \
   hydra.run.dir="$RUN_DIR/hydra" \
@@ -226,6 +241,7 @@ python3 -m verl.trainer.main_ppo \
   trainer.experiment_name="${MODEL_NAME}_${NNODES}n_${STAMP}" \
   trainer.rollout_data_dir="$RUN_DIR/rollouts" \
   trainer.default_local_dir="$CHECKPOINT_DIR" \
+  "${dapo_args[@]}" \
   "${resume_args[@]}"
 
 python3 "$ROOT/runtime/verify_rollout_groups.py" \

@@ -239,6 +239,28 @@ def _judge_failure_reason(info: dict[str, Any]) -> str:
     return "environment_judge_failed"
 
 
+
+def _group_has_learning_signal(rewards, invalids) -> bool:
+    """True when a GRPO group carries gradient signal worth training on.
+
+    DAPO's dynamic sampling drops zero-variance groups: when all n rollouts of
+    a prompt earn the same reward, every advantage in the group is zero and
+    the group contributes nothing — worse, degenerate behaviours (answering
+    without ever calling the browser) survive unpunished inside all-zero
+    groups, which is exactly how the norm60d run grew a 634-episode refusal
+    mode. Environment-invalid rollouts are excluded from the variance test the
+    same way the patched GRPO estimator excludes them from group statistics:
+    their rewards are artifacts, not the policy's.
+
+    A group with fewer than two valid rollouts has no usable comparison, so it
+    reports no signal and gets resampled along with the flat ones.
+    """
+    valid = [float(r) for r, inv in zip(rewards, invalids) if not inv and r is not None]
+    if len(valid) < 2:
+        return False
+    return max(valid) > min(valid)
+
+
 class BrowserTool(BaseTool):
     """Keeps one CDP browser session per agent request and closes it at rollout end."""
 
@@ -822,3 +844,169 @@ class LexBrowserToolAgentLoop(ToolAgentLoop):
             }
         )
         return AgentLoopOutput(prompt_ids=prompt_ids, response_ids=response_ids, response_mask=response_mask, response_logprobs=response_logprobs or None, reward_score=score, num_turns=agent_data.user_turns + agent_data.assistant_turns + 1, metrics=agent_data.metrics, extra_fields=extra_fields)
+
+
+# --- DAPO dynamic sampling (group-level resampling) --------------------------
+#
+# The V1 TransferQueue stack has no batch-level group filter: recipe.dapo's
+# trainers target the older stacks. Rather than fork the trainer, filtering
+# happens where the group is born: the worker runs all n rollouts of a prompt,
+# holds their payloads back from TransferQueue, and only commits them once the
+# group shows reward variance among valid rollouts. A flat group is discarded
+# and re-rolled with fresh browser sessions, up to
+# rollout.agent.dynamic_sampling.max_group_resamples extra attempts; the final
+# attempt is committed regardless so the batch geometry never changes. This
+# preserves DAPO's intent (no zero-signal groups) without dropping rows, so
+# the trainer, the GRPO group audit, and the env-invalid advantage masking all
+# see exactly the batch shape they were built for.
+
+def _dapo_worker_classes():
+    """Import-on-use so this module stays loadable without the V1 stack."""
+    import transfer_queue as tq
+    from tensordict import NonTensorData, NonTensorStack  # noqa: F401
+    from verl.trainer.ppo.v1.agent_loop_tq import AgentLoopManagerTQ, AgentLoopWorkerTQ
+    from verl.trainer.ppo.v1.utils import list_of_dict_to_tensordict
+
+    class LexBrowserDAPOWorker(AgentLoopWorkerTQ):
+        async def _run_prompt(self, prompt, sampling_params, trajectory, trace=False):
+            agent_cfg = self.config.actor_rollout_ref.rollout.agent
+            ds = agent_cfg.get("dynamic_sampling", None)
+            enabled = bool(ds and ds.get("enable", False)) and not trajectory["validate"]
+            if not enabled:
+                return await super()._run_prompt(prompt, sampling_params, trajectory, trace)
+
+            uid, partition_id = prompt["uid"], "train"
+            await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "running"})
+            try:
+                config = self.config.actor_rollout_ref.rollout
+                n = prompt.pop("__rollout_n__", config.n)
+                do_sample = prompt.pop("__do_sample__", True)
+                run_sampling_params = dict(sampling_params)
+                if not do_sample:
+                    from verl.trainer.ppo.v1.agent_loop_tq import apply_greedy_sampling_params
+
+                    apply_greedy_sampling_params(run_sampling_params)
+
+                max_attempts = 1 + max(0, int(ds.get("max_group_resamples", 2)))
+                for attempt in range(1, max_attempts + 1):
+                    buffer = []
+                    tasks = [
+                        asyncio.create_task(
+                            self._run_agent_loop(
+                                run_sampling_params,
+                                trajectory=trajectory,
+                                trace=trace,
+                                session_id=i,
+                                __group_buffer__=buffer,
+                                **prompt,
+                            )
+                        )
+                        for i in range(n)
+                    ]
+                    await asyncio.gather(*tasks)
+                    rewards = [item["reward"] for item in buffer]
+                    invalids = [item["invalid"] for item in buffer]
+                    if _group_has_learning_signal(rewards, invalids) or attempt == max_attempts:
+                        for item in buffer:
+                            await tq.async_kv_batch_put(**item["put_args"])
+                        if attempt > 1:
+                            LOGGER.info(
+                                "DAPO group commit uid=%s attempt=%d rewards=%s",
+                                uid, attempt, [round(r, 3) if r is not None else None for r in rewards],
+                            )
+                        break
+                    LOGGER.info(
+                        "DAPO zero-variance group uid=%s attempt=%d/%d rewards=%s invalids=%d — resampling",
+                        uid, attempt, max_attempts,
+                        [round(r, 3) if r is not None else None for r in rewards], sum(invalids),
+                    )
+                await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "finished"})
+            except Exception as e:  # mirror the parent's failure reporting
+                LOGGER.exception("Error in DAPO _run_prompt: %s", e)
+                await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "failure"})
+
+        async def _agent_loop_postprocess(self, output, validate, **kwargs):
+            buffer = kwargs.pop("__group_buffer__", None)
+            if buffer is None:
+                return await super()._agent_loop_postprocess(output, validate, **kwargs)
+
+            import torch
+
+            uid, session_id = kwargs["uid"], kwargs["session_id"]
+            outputs = output if isinstance(output, list) else [output]
+            if not outputs:
+                return None
+            await self._compute_score(outputs, kwargs=kwargs)
+            final_output = outputs[-1]
+            await self._compute_teacher_logprobs(
+                final_output,
+                prompt_ids=final_output.prompt_ids,
+                response_ids=final_output.response_ids,
+                validate=validate,
+                sample_kwargs=kwargs,
+            )
+            if final_output.reward_score is not None:
+                for out in outputs[:-1]:
+                    out.reward_score = final_output.reward_score
+                    out.extra_fields["reward_extra_info"] = final_output.extra_fields["reward_extra_info"]
+
+            keys, fields, tags = [], [], []
+            for i, out in enumerate(outputs):
+                prompts = torch.tensor(out.prompt_ids, dtype=torch.int64)
+                responses = torch.tensor(out.response_ids, dtype=torch.int64)
+                input_ids = torch.cat([prompts, responses], dim=0)
+                attention_mask = torch.ones_like(input_ids, dtype=torch.int64)
+                multi_modal_inputs = self._compute_multi_modal_inputs(out, input_ids)
+                position_ids = self._compute_position_ids(
+                    input_ids.unsqueeze(0), attention_mask.unsqueeze(0), multi_modal_inputs
+                ).squeeze(0)
+                keys.append(f"{uid}_{session_id}_{i}")
+                field = out.as_dict()
+                field.update(kwargs)
+                field.pop("multi_modal_data", None)
+                field["loss_mask"] = field["response_mask"]
+                field["input_ids"] = input_ids
+                field["position_ids"] = position_ids
+                field["multi_modal_inputs"] = multi_modal_inputs
+                fields.append(field)
+                prompt_len, response_len = field["prompts"].size(0), field["responses"].size(0)
+                tags.append(
+                    {
+                        "status": "success",
+                        "prompt_len": prompt_len,
+                        "response_len": response_len,
+                        "seq_len": prompt_len + response_len,
+                        "global_steps": kwargs["global_steps"],
+                        "min_global_steps": field["extra_fields"].get("min_global_steps"),
+                        "max_global_steps": field["extra_fields"].get("max_global_steps"),
+                    }
+                )
+            buffer.append(
+                {
+                    "reward": final_output.reward_score,
+                    "invalid": bool(final_output.extra_fields.get("lexbrowser_invalid_sample")),
+                    "put_args": {
+                        "keys": keys,
+                        "fields": list_of_dict_to_tensordict(fields),
+                        "tags": tags,
+                        "partition_id": "train" if not validate else "val",
+                    },
+                }
+            )
+            return None
+
+    class LexBrowserDAPOAgentLoopManager(AgentLoopManagerTQ):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.agent_loop_workers_class = LexBrowserDAPOWorker
+
+    return LexBrowserDAPOWorker, LexBrowserDAPOAgentLoopManager
+
+
+def __getattr__(name):
+    if name in ("LexBrowserDAPOWorker", "LexBrowserDAPOAgentLoopManager"):
+        worker, manager = _dapo_worker_classes()
+        globals()["LexBrowserDAPOWorker"] = worker
+        globals()["LexBrowserDAPOAgentLoopManager"] = manager
+        return globals()[name]
+    raise AttributeError(name)
