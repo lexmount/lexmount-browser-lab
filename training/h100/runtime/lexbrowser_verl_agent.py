@@ -869,9 +869,11 @@ def _dapo_worker_classes():
 
     class LexBrowserDAPOWorker(AgentLoopWorkerTQ):
         async def _run_prompt(self, prompt, sampling_params, trajectory, trace=False):
-            agent_cfg = self.config.actor_rollout_ref.rollout.agent
-            ds = agent_cfg.get("dynamic_sampling", None)
-            enabled = bool(ds and ds.get("enable", False)) and not trajectory["validate"]
+            # Env-carried knobs: rollout.agent is a structured AgentLoopConfig,
+            # so unknown hydra keys are rejected at instantiation. Ray workers
+            # inherit the ray container's environment (the same channel
+            # LEXBROWSER_ACTION_MAX_TOKENS uses).
+            enabled = os.environ.get("LEXBROWSER_DYNAMIC_SAMPLING", "0") == "1" and not trajectory["validate"]
             if not enabled:
                 return await super()._run_prompt(prompt, sampling_params, trajectory, trace)
 
@@ -887,7 +889,7 @@ def _dapo_worker_classes():
 
                     apply_greedy_sampling_params(run_sampling_params)
 
-                max_attempts = 1 + max(0, int(ds.get("max_group_resamples", 2)))
+                max_attempts = 1 + max(0, int(os.environ.get("LEXBROWSER_GROUP_RESAMPLES", "2")))
                 for attempt in range(1, max_attempts + 1):
                     buffer = []
                     tasks = [

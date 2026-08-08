@@ -163,12 +163,13 @@ echo "WEBVOYAGER_DYNAMIC_SAMPLING enable=$DYNAMIC_SAMPLING max_group_resamples=$
 echo "WEBVOYAGER_LOSS_SHAPE clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH,c=$CLIP_RATIO_C] kl_loss=$USE_KL_LOSS/$KL_LOSS_COEF norm_adv_by_std=$NORM_ADV_BY_STD agg=$LOSS_AGG_MODE"
 echo "WEBVOYAGER_MEMORY sp=$ULYSSES_SEQUENCE_PARALLEL_SIZE ppo_tokens_per_gpu=$PPO_MAX_TOKEN_LEN_PER_GPU ref_logprob_tokens_per_gpu=$REF_LOG_PROB_MAX_TOKEN_LEN_PER_GPU old_logprob_tokens_per_gpu=$ROLLOUT_LOG_PROB_MAX_TOKEN_LEN_PER_GPU entropy_chunking=$ENTROPY_FROM_LOGITS_WITH_CHUNKING entropy_chunk_size=$ENTROPY_FROM_LOGITS_CHUNK_SIZE"
 
+# The enable/resample knobs travel as LEXBROWSER_* environment variables set on
+# the ray container (rollout.agent is a structured config that rejects unknown
+# hydra keys); only the manager class override goes through hydra.
 dapo_args=()
 if [[ "$DYNAMIC_SAMPLING" == "1" ]]; then
   dapo_args+=(
     +actor_rollout_ref.rollout.agent.agent_loop_manager_class=lexbrowser_verl_agent.LexBrowserDAPOAgentLoopManager
-    +actor_rollout_ref.rollout.agent.dynamic_sampling.enable=True
-    +actor_rollout_ref.rollout.agent.dynamic_sampling.max_group_resamples="$GROUP_RESAMPLES"
   )
 fi
 
