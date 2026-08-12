@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f9f9f7">
+<title>Lightmount vs Chrome:RL 环境浏览器引擎对比(A100)</title>
+<style>
+/* ============ Editorial Paper · semantic tokens ============ */
+:root{
+  --paper:#f9f9f7; --raised:#ffffff; --ink:#171816; --muted:#6e716b;
+  --line:#deded8; --accent:#a93d3d; --positive:#2e6b4f; --warning:#a06a1f;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+  --serif:"Source Han Serif SC","Noto Serif SC",Georgia,serif;
+  --sans:"PingFang SC","Noto Sans SC",-apple-system,sans-serif;
+  --w-reading:46rem; --w-content:76rem; --w-stage:92rem;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#171816; --raised:#1f201d; --ink:#f1f0eb; --muted:#9a9d95;
+    --line:#383a35; --accent:#d47a6a; --positive:#7fb89a; --warning:#d9a85e;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#171816; --raised:#1f201d; --ink:#f1f0eb; --muted:#9a9d95;
+  --line:#383a35; --accent:#d47a6a; --positive:#7fb89a; --warning:#d9a85e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--serif);font-size:17px;line-height:1.85;
+  -webkit-font-smoothing:antialiased}
+main{display:block}
+.reading{max-width:var(--w-reading);margin:0 auto;padding:0 1.25rem}
+.content{max-width:var(--w-content);margin:0 auto;padding:0 1.25rem}
+h1,h2,h3{font-weight:500;line-height:1.35;letter-spacing:.01em}
+h2{font-size:1.6rem;margin:3.5rem 0 1rem;border-top:1px solid var(--line);padding-top:2.2rem}
+h3{font-size:1.15rem;margin:2rem 0 .6rem}
+p{margin:.9rem 0}
+.kicker{font-family:var(--sans);font-size:.72rem;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--muted)}
+.label{font-family:var(--sans);font-size:.78rem;color:var(--muted)}
+a{color:var(--accent)}
+code,.mono{font-family:var(--mono);font-size:.85em}
+/* ============ Data Ledger hero ============ */
+.hero{border-bottom:1px solid var(--line);padding:4.5rem 0 3rem}
+.hero h1{font-size:2.1rem;margin:.8rem 0 1rem;max-width:34ch}
+.hero .claim{font-size:1.06rem;color:var(--muted);max-width:60ch}
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);margin:2.2rem 0 0}
+.ledger .cell{background:var(--raised);padding:1.1rem 1.2rem}
+.ledger .num{font-family:var(--mono);font-size:1.7rem;line-height:1.2}
+.ledger .denom{font-family:var(--sans);font-size:.74rem;color:var(--muted);margin-top:.35rem}
+/* ============ evidence layers ============ */
+.fact{border-left:3px solid var(--positive);padding:.15rem 0 .15rem 1rem;margin:1.2rem 0}
+.hypothesis{border-left:3px solid var(--warning);padding:.15rem 0 .15rem 1rem;margin:1.2rem 0;color:var(--muted)}
+.pending{background:color-mix(in srgb,var(--warning) 9%,var(--raised));
+  border:1px dashed var(--warning);border-radius:4px;
+  padding:.7rem 1rem;margin:1.1rem 0;font-family:var(--sans);font-size:.86rem;color:var(--muted)}
+.pending::before{content:"待填 · ";color:var(--warning);font-weight:600}
+/* ============ tables ============ */
+table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.92rem}
+th{font-family:var(--sans);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);text-align:left;font-weight:600}
+th,td{border-bottom:1px solid var(--line);padding:.55rem .7rem;vertical-align:top}
+td.num{font-family:var(--mono);font-size:.86rem;white-space:nowrap}
+tr.best td{background:color-mix(in srgb,var(--positive) 7%,transparent)}
+.tablewrap{overflow-x:auto}
+.tnote{font-family:var(--sans);font-size:.78rem;color:var(--muted);margin-top:-.6rem}
+/* ============ figure ============ */
+figure{margin:1.8rem 0}
+figcaption{font-family:var(--sans);font-size:.8rem;color:var(--muted);margin-top:.5rem}
+.figbox{border:1px solid var(--line);background:var(--raised);min-height:230px;
+  display:flex;align-items:center;justify-content:center}
+footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
+  font-family:var(--sans);font-size:.8rem;color:var(--muted)}
+@media (max-width:640px){ body{font-size:16px} .hero h1{font-size:1.6rem} }
+</style>
+</head>
+<body>
+<main>
+
+<!-- ============================== HERO · Data Ledger ============================== -->
+<header class="hero">
+  <div class="content">
+    <div class="kicker">Lexmount Browser Lab · RL Environment Evidence · 2026-08</div>
+    <h1>Lightmount 作为 RL 浏览器环境:与 Chrome 的受控全维度对比</h1>
+    <p class="claim">同一台 A100×8、同一模型与训练配方、同一 session 池上限下,先后各跑 60 步
+      GRPO(DAPO + 动态采样)。本页只呈现该设置下的测量值;所有数字保留分母、时间窗与过滤条件,
+      session 级数据可按附录清单在 Prometheus 中逐条复核。</p>
+    <div class="ledger">
+      <div class="cell">
+        <div class="num">⟦X.XX⟧×</div>
+        <div class="denom">远端内存 · chrome/lightmount 每 session 均值比 · 60 步全量窗</div>
+      </div>
+      <div class="cell">
+        <div class="num">⟦XX⟧s vs ⟦XX⟧s</div>
+        <div class="denom">rollout 端到端中位 · lightmount / chrome · n=⟦N⟧/⟦N⟧</div>
+      </div>
+      <div class="cell">
+        <div class="num">⟦XX.X⟧% vs ⟦XX.X⟧%</div>
+        <div class="denom">GPU 平均利用率 · 训练全程 5s 采样 · 8×A100</div>
+      </div>
+      <div class="cell">
+        <div class="num">⟦X.XX⟧ vs ⟦X.XX⟧</div>
+        <div class="denom">60 步末段 reward 均值(后 10 步)· 8 任务 × 8 rollout</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================== 1 背景 ============================== -->
+<section class="reading">
+  <h2>1 · 背景与读者问题</h2>
+  <p>NeMo-Gym 生态目前缺一个可规模化的浏览器环境。要说服训练侧采用
+    Lexmount Browser,需要回答的不是"它能不能跑",而是三个可测量的问题:
+    在相同训练配置下<strong>收益是否一致</strong>;在等量并发下<strong>环境延迟与资源成本
+    是多少</strong>;长时间训练中<strong>失败模式是否可控</strong>。</p>
+  <p>此前在 910B 上已完成三消融(GRPO 基线 → +DAPO → +动态采样)并确认最终配方。
+    本报告在 GPU(A100)上以该配方做双引擎受控对比:lightmount(自研轻量引擎)
+    与 lexmount normal(云端 Chrome)。二者走完全相同的 CDP 通路与训练栈,唯一差异是
+    <code>browser_mode</code> 一个参数。</p>
+</section>
+
+<!-- ============================== 2 设置与口径 ============================== -->
+<section class="reading">
+  <h2>2 · 实验设置与口径</h2>
+  <div class="tablewrap"><table>
+    <tr><th>维度</th><th>取值(两组完全一致)</th></tr>
+    <tr><td>硬件</td><td class="mono">A100-SXM4-80G × 8,单机(a100-node3),128 vCPU / 1 TiB</td></tr>
+    <tr><td>模型 / 框架</td><td class="mono">Qwen3-8B · verl GRPO(TaskRunnerV1)· vLLM 0.18 · FA2</td></tr>
+    <tr><td>配方</td><td class="mono">DAPO(clip 0.2/0.28/c10 · no-KL · token-mean · 不按 std 归一)+ 动态采样(组内重采 ≤2)</td></tr>
+    <tr><td>几何 / 步数</td><td class="mono">8 任务 × 8 rollout / 步 · 60 步 · 无 checkpoint</td></tr>
+    <tr><td>Session 约束</td><td class="mono">MAX_CONCURRENT_SESSIONS=64 · CREATE 并发 16 · 两组串行不重叠</td></tr>
+    <tr><td>评判</td><td class="mono">gpt-4.1 judge · 同一 prompt 与阈值</td></tr>
+  </table></div>
+  <h3>测量口径</h3>
+  <p><strong>训练侧</strong>逐 rollout 记录延迟分解与 reward(observability schema v2);
+    <strong>宿主侧</strong>以 5 秒间隔采样 GPU 利用率/显存/功耗、CPU、内存与网络;
+    <strong>远端侧</strong>每个浏览器 session 在 Prometheus 中是独立 pod series
+    (<code>label_session_id</code>),训练栈将每次 create/close 写入审计文件,
+    两组数据按 session id 精确 join——冒烟验证 join 命中率 499/499。</p>
+  <div class="tablewrap"><table>
+    <tr><th>Run</th><th>时间窗(UTC)</th><th>Session 数</th><th>数据完备性</th></tr>
+    <tr><td>lightmount 60 步</td><td class="num">2026-08-11 14:07 – 19:24</td>
+      <td class="num">⟦~7600⟧</td><td>远端按 mode+project+时间窗过滤(id 埋点晚于该跑;新版 lightmount 就绪后将带埋点重跑)</td></tr>
+    <tr><td>chrome 60 步</td><td class="num">2026-08-12 07:30 – ⟦HH:MM⟧</td>
+      <td class="num">⟦N⟧</td><td>全量 session id 清单 + create/close 配对审计</td></tr>
+  </table></div>
+</section>
+
+<!-- ============================== 3 功能对比 ============================== -->
+<section class="reading">
+  <h2>3 · 功能对比:先回答"能不能",再比"快不快"</h2>
+  <p>三种把浏览器接进 RL 训练的方式,能力边界不同。性能数字只在能力等价的前提下才有意义,
+    因此先给定性对照。</p>
+  <div class="tablewrap"><table>
+    <tr><th>能力</th><th>lightmount(远端自研)</th><th>lexmount chrome(远端)</th><th>本地 docker Chrome</th></tr>
+    <tr><td>隔离模型</td><td>session 级独立 pod</td><td>池化 pod,分配制</td><td>与训练同机,抢 CPU/内存</td></tr>
+    <tr><td>并发弹性</td><td>⟦占位:配额/伸缩语义⟧</td><td>⟦占位⟧</td><td>受单机资源硬限</td></tr>
+    <tr><td>Session API / 池化</td><td colspan="2">create/close/delete + 孤儿清扫,配额语义明确</td><td>自行管理容器生命周期</td></tr>
+    <tr><td>协议</td><td colspan="2">标准 CDP websocket,栈零改动切换</td><td>CDP(自建代理)</td></tr>
+    <tr><td>资源可观测</td><td colspan="2">per-session Prometheus series</td><td>需自建 cAdvisor 等</td></tr>
+    <tr><td>对训练机的资源占用</td><td colspan="2">≈0(远端承载)</td><td>随并发线性增长,与 rollout 争核</td></tr>
+  </table></div>
+  <p class="tnote">本地 docker Chrome 一列为架构性事实与公开常识,本轮未实测(见 §9)。</p>
+</section>
+
+<!-- ============================== 4 训练收益与时间 ============================== -->
+<section class="reading">
+  <h2>4 · 训练收益与时间:两组实验的直接对比</h2>
+  <p>这一节回答"换引擎是否改变训练结果、是否节省墙钟"。</p>
+  <figure class="content">
+    <div class="figbox"><span class="label">⟦占位:双引擎 reward 曲线图(60 步,同轴)⟧</span></div>
+    <figcaption>图 4-1 · critic/rewards/mean 逐步曲线。lightmount(实线)/ chrome(虚线)。
+      单步为 64 个 rollout 的均值,步间震荡属于小样本方差。</figcaption>
+  </figure>
+  <div class="tablewrap"><table>
+    <tr><th>指标</th><th>lightmount</th><th>chrome</th><th>差异</th></tr>
+    <tr><td>reward 全程均值</td><td class="num">0.260</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>reward 后 10 步均值</td><td class="num">0.217</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>单步墙钟中位</td><td class="num">288 s</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>60 步总时长</td><td class="num">5.2 h</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>生成阶段占比</td><td class="num">79%</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>有效 rollout 吞吐</td><td class="num">⟦N/h⟧</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+  </table></div>
+  <div class="pending">norm60ds(chrome)于 2026-08-12 07:30 UTC 开跑,预计当日 13:00-14:00 UTC 完成后填入。</div>
+  <div class="hypothesis">910B 上的先验:单 rollout 端到端 lightmount 快 ~22%,但在 8×8 异步并发下
+    被批内等待吸收,墙钟差异不显著。A100 数据将检验该结论是否在生成更快(等待占比更高)时仍成立。</div>
+</section>
+
+<!-- ============================== 5 rollout 延迟分解 ============================== -->
+<section class="reading">
+  <h2>5 · 速度:rollout 延迟逐段分解</h2>
+  <p>端到端时延由五段构成:session 创建 → 交互(act)→ 观测(observe)→ 判分 → 清理。
+    逐段对比才能定位差异来自引擎还是栈。</p>
+  <div class="tablewrap"><table>
+    <tr><th>阶段(中位 / P95,秒)</th><th>lightmount(n=7,663)</th><th>chrome(n=⟦⟧)</th></tr>
+    <tr><td>session 创建</td><td class="num">4.2 / 10.4</td><td class="num">⟦⟧</td></tr>
+    <tr><td>浏览器交互 act</td><td class="num">5.0 / 25.6</td><td class="num">⟦⟧</td></tr>
+    <tr><td>观测 observe</td><td class="num">0.3 / 2.4</td><td class="num">⟦⟧</td></tr>
+    <tr><td>session 清理</td><td class="num">1.6 / 1.9</td><td class="num">⟦⟧</td></tr>
+    <tr><td>策略生成(GPU 侧,非环境)</td><td class="num">24.8 / 46.1</td><td class="num">⟦⟧</td></tr>
+    <tr><td><strong>端到端</strong></td><td class="num"><strong>43.0 / 73.0</strong></td><td class="num">⟦⟧</td></tr>
+  </table></div>
+  <p class="tnote">910B 参考(同栈、不同算力):端到端中位 light 75.3s / chrome 103.7s;
+    chrome 的 cleanup 恒定慢(5.7s vs 1.7s),create 恒定快(2.2s vs 4.5s)。</p>
+  <div class="pending">chrome 列、轨迹长度(turns / 输出 token)对比、以及分解瀑布图。</div>
+</section>
+
+<!-- ============================== 6 远端资源 ============================== -->
+<section class="reading">
+  <h2>6 · 远端资源:每个 session 花多少 CPU 和内存</h2>
+  <p>远端数字来自平台 Prometheus 的 pod 级 series,按 session id 过滤后聚合;
+    以下均为<strong>整个训练窗内我们全部 session 的总量</strong>,并折算峰值并发单价。</p>
+  <div class="tablewrap"><table>
+    <tr><th>指标(mean / p95 / max)</th><th>lightmount · 60 步全量窗</th><th>chrome · 60 步全量窗</th></tr>
+    <tr><td>内存 RSS 总量(GiB)</td><td class="num">1.28 / 5.78 / 7.73</td><td class="num">⟦⟧</td></tr>
+    <tr><td>CPU 总量(cores)</td><td class="num">1.57 / 6.65 / 8.91</td><td class="num">⟦⟧</td></tr>
+    <tr><td>出流量(MB/s)</td><td class="num">0.07 / 0.31 / 0.43</td><td class="num">⟦⟧</td></tr>
+    <tr><td>入流量(MB/s)</td><td class="num">0.87 / 3.57 / 4.68</td><td class="num">⟦⟧</td></tr>
+    <tr><td>并发 session(个)</td><td class="num">17.3 / 58 / 64</td><td class="num">⟦⟧</td></tr>
+    <tr><td>峰值并发内存单价(MiB/session)</td><td class="num">≈121(7.73 GiB ÷ 64)</td><td class="num">⟦⟧</td></tr>
+    <tr><td>资源积分(GiB·h / core·h)</td><td class="num">⟦⟧ / ⟦⟧</td><td class="num">⟦⟧</td></tr>
+  </table></div>
+  <p class="tnote">早期信号(仅 5 步冒烟,499 session,分母远小于全量,不作结论):
+    chrome 冒烟窗内存均值 2.06 GiB @ 平均并发 13.7 ≈ 154 MiB/session;
+    正式对比以两个 60 步全量窗为准。</p>
+  <figure class="content">
+    <div class="figbox"><span class="label">⟦占位:双引擎远端内存/CPU 时间线叠加图(同轴、同并发标注)⟧</span></div>
+    <figcaption>图 6-1 · 远端资源时间线。灰带为并发 session 数,用于对齐负载相位。</figcaption>
+  </figure>
+</section>
+
+<!-- ============================== 7 GPU 影响 ============================== -->
+<section class="reading">
+  <h2>7 · GPU 影响:环境延迟如何折算成算力浪费</h2>
+  <p>浏览器环境不占 GPU,但它的延迟决定 GPU 在 rollout 阶段的等待时长。
+    我们用 5 秒粒度的宿主采样,把利用率曲线与训练阶段对齐。</p>
+  <div class="tablewrap"><table>
+    <tr><th>指标</th><th>lightmount</th><th>chrome</th></tr>
+    <tr><td>GPU 利用率 mean / median(%)</td><td class="num">74.9 / 99.0</td><td class="num">⟦⟧</td></tr>
+    <tr><td>显存(GiB/卡)</td><td class="num">24.2</td><td class="num">⟦⟧</td></tr>
+    <tr><td>整机功耗均值(W,8 卡)</td><td class="num">1,144</td><td class="num">⟦⟧</td></tr>
+    <tr><td>每有效样本 GPU 卡时(card·s/rollout)</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+  </table></div>
+  <div class="pending">空转归因图:利用率时间线 × train.log 阶段(gen / update / env-wait)对齐;
+    以及两引擎"同卡时可多训多少样本"的折算。</div>
+</section>
+
+<!-- ============================== 8 稳定性 ============================== -->
+<section class="reading">
+  <h2>8 · 稳定性:失败模式与守恒检查</h2>
+  <div class="fact">
+    <p><strong>Session 守恒(chrome 冒烟,新埋点首跑)</strong>:499 create / 499 close,
+      配对率 100%,零泄漏。60 步全量的守恒表跑完即填。</p>
+  </div>
+  <div class="tablewrap"><table>
+    <tr><th>指标</th><th>lightmount</th><th>chrome</th></tr>
+    <tr><td>invalid 样本率</td><td class="num">7.8%(600 / 7,663)</td><td class="num">⟦⟧</td></tr>
+    <tr><td>· 其中导航超时</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>· 其中 act/observe 超时</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>session 泄漏(create−close)</td><td class="num">⟦⟧</td><td class="num">0(冒烟)/ ⟦⟧(全量)</td></tr>
+    <tr><td>长跑存活</td><td class="num">5.2 h 无崩溃</td><td class="num">⟦⟧</td></tr>
+  </table></div>
+  <div class="hypothesis">lightmount 的 invalid 率(A100 7.8%,910B 3.7%)高于 chrome(910B 0.85%),
+    集中在导航超时。归因未完成:可能是超时阈值按 Chrome 语义设定,也可能是特定站点渲染路径差异。
+    在归因结论出来前,本报告不把稳定性写成 lightmount 的优势项。</div>
+</section>
+
+<!-- ============================== 9 限制 ============================== -->
+<section class="reading">
+  <h2>9 · 限制与未验证项</h2>
+  <p>· 单机单模型:结论覆盖 A100×8 + Qwen3-8B + WebVoyager 任务分布,未验证多机与更大模型。<br>
+    · lightmount 全量跑早于 session id 埋点上线,其远端数据按 mode+project+时间窗过滤;
+      新版 lightmount 发布后将带埋点重跑,得到与 chrome 完全对称的 session 级清单。<br>
+    · 本地 docker Chrome 未实测,§3 中该列为架构性推断。<br>
+    · 两个 60 步窗相隔一天,共享公网与远端集群,潮汐负载未受控;
+      并发单价指标(per-session)对这类漂移相对稳健。</p>
+</section>
+
+<!-- ============================== 10 附录 ============================== -->
+<section class="reading">
+  <h2>10 · 附录:可复核性</h2>
+  <h3>数据资产</h3>
+  <p class="mono" style="font-size:.82rem;line-height:2">
+    训练日志:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260811-140745-wf-light60ds-a100/<br>
+    训练日志:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260812-073007-wf-norm60ds-a100/<br>
+    session 审计:&lt;run&gt;/audit/session_ids.jsonl(event/create/close/delete + ts + mode)<br>
+    宿主采样:/data2/webrl-a100/logs-*/resources-*.jsonl(5s · GPU/CPU/mem/net/容器)<br>
+    rollout 指标:&lt;run&gt;/observability/raw/*.jsonl(schema v2)</p>
+  <h3>远端查询(PromQL,数据源 P1809F7CD0C75ACF3)</h3>
+  <p class="mono" style="font-size:.82rem;line-height:2">
+    sum(pod:memory_rss:bytes{label_project_id="85329155-…",label_browser_mode="light"})<br>
+    sum(pod:cpu_usage:rate:cores{…}) · count(pod:memory_rss:bytes{…})<br>
+    per-session:直接按 label_session_id 过滤,与审计清单 join</p>
+  <div class="pending">chrome 全量窗时间戳、session 清单文件名、以及复跑命令块。</div>
+</section>
+
+<footer>
+  <div class="reading">
+    Lexmount Browser Lab · 数据窗 2026-08-11 ~ 08-12 · 本页所有数字均带分母与时间窗;
+    占位符(⟦⟧)将在 norm60ds 全量完成后由脚本回填。
+  </div>
+</footer>
+
+</main>
+</body>
+</html>
