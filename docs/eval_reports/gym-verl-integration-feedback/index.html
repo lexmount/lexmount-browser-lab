@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f9f9f7">
+<title>NeMo-Gym × verl 集成:一线使用反馈与建议</title>
+<style>
+:root{
+  --paper:#f9f9f7; --raised:#ffffff; --ink:#171816; --muted:#6e716b;
+  --line:#deded8; --accent:#a93d3d; --positive:#2e6b4f; --warning:#a06a1f;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,monospace;
+  --serif:"Source Han Serif SC","Noto Serif SC",Georgia,serif;
+  --sans:"PingFang SC","Noto Sans SC",-apple-system,sans-serif;
+  --w-reading:46rem; --w-content:76rem;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#171816; --raised:#1f201d; --ink:#f1f0eb; --muted:#9a9d95;
+    --line:#383a35; --accent:#d47a6a; --positive:#7fb89a; --warning:#d9a85e;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#171816; --raised:#1f201d; --ink:#f1f0eb; --muted:#9a9d95;
+  --line:#383a35; --accent:#d47a6a; --positive:#7fb89a; --warning:#d9a85e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--serif);font-size:17px;line-height:1.85;
+  -webkit-font-smoothing:antialiased}
+main{display:block}
+.reading{max-width:var(--w-reading);margin:0 auto;padding:0 1.25rem}
+.content{max-width:var(--w-content);margin:0 auto;padding:0 1.25rem}
+h1,h2,h3{font-weight:500;line-height:1.35;letter-spacing:.01em}
+h2{font-size:1.6rem;margin:3.5rem 0 1rem;border-top:1px solid var(--line);padding-top:2.2rem}
+h3{font-size:1.12rem;margin:2rem 0 .6rem}
+p{margin:.9rem 0}
+.kicker{font-family:var(--sans);font-size:.72rem;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--muted)}
+a{color:var(--accent)}
+code,.mono{font-family:var(--mono);font-size:.85em}
+pre{font-family:var(--mono);font-size:.78rem;line-height:1.7;background:var(--raised);
+  border:1px solid var(--line);border-radius:4px;padding:.9rem 1.1rem;overflow-x:auto}
+.hero{border-bottom:1px solid var(--line);padding:4.5rem 0 3rem}
+.hero h1{font-size:2.05rem;margin:.8rem 0 1rem;max-width:34ch}
+.hero .claim{font-size:1.06rem;color:var(--muted);max-width:62ch}
+.verdict{background:color-mix(in srgb,var(--positive) 8%,var(--raised));
+  border:1px solid color-mix(in srgb,var(--positive) 30%,var(--line));
+  border-left:5px solid var(--positive);border-radius:4px;
+  padding:1.5rem 1.8rem;margin:3rem auto 0}
+.verdict .vh{font-family:var(--sans);font-weight:700;font-size:1.05rem;
+  letter-spacing:.02em;margin:0 0 .7rem;color:var(--ink)}
+.verdict ul{margin:.5rem 0 0;padding-left:1.25rem}
+.verdict li{margin:.45rem 0}
+.hl{color:var(--positive);font-weight:700;font-family:var(--mono);font-size:.95em}
+.fact{border-left:3px solid var(--positive);padding:.15rem 0 .15rem 1rem;margin:1.2rem 0}
+.suggest{border-left:3px solid var(--warning);padding:.15rem 0 .15rem 1rem;margin:1.2rem 0}
+.suggest .sh{font-family:var(--sans);font-weight:700;font-size:.9rem;color:var(--warning)}
+table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.92rem}
+th{font-family:var(--sans);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--muted);text-align:left;font-weight:600}
+th,td{border-bottom:1px solid var(--line);padding:.55rem .7rem;vertical-align:top}
+.tablewrap{overflow-x:auto}
+figure{margin:1.8rem 0}
+figcaption{font-family:var(--sans);font-size:.82rem;color:var(--muted);
+  margin-top:.6rem;line-height:1.75}
+.figbox{border:1px solid var(--line);background:var(--raised);padding:1rem}
+.figbox svg{width:100%;height:auto;display:block;font-family:var(--sans)}
+footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
+  font-family:var(--sans);font-size:.8rem;color:var(--muted)}
+@media (max-width:640px){ body{font-size:16px} .hero h1{font-size:1.55rem} }
+</style>
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <div class="content">
+    <div class="kicker">Lexmount Browser Lab · NeMo-Gym × verl Integration Feedback · 2026-08-13</div>
+    <h1>NeMo-Gym × verl 集成:一线使用反馈与建议</h1>
+    <p class="claim">基于 WebVoyager 浏览器 RL 场景的数月实际使用:昇腾 910B 与 A100 双栈、
+      多次 60 步受控全量训练、单日 1.3 万个远端浏览器 session。
+      每条建议都附我们踩坑的实测数字与建议的具体接口形态。</p>
+  </div>
+</header>
+
+<section class="reading">
+  <div class="verdict">
+    <p class="vh">总评:集成路径已跑通规模化训练,异步 rollout 与 verifier 设计好评;八项建议集中在资源生命周期与训练信号质量两大类</p>
+    <ul>
+      <li>可用性:V1 TaskRunner + TransferQueue 的异步 rollout 与远端环境天然契合,<span class="hl">4 小时级长跑零崩溃</span></li>
+      <li>最痛的点:环境资源生命周期缺一等公民钩子——我们自建审计后才做到 <span class="hl">13,160 session 零泄漏</span></li>
+      <li>其次:环境基建失败缺协议级语义(现状只能 reward=0),需要 <span class="hl">environment_invalid</span> 字段 + 组级重采 API</li>
+      <li>可观测性:rollout ↔ 环境 ↔ 远端资源三方 id 断裂,靠自研埋点才 join 上(<span class="hl">6,695 / 6,695</span>)</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================== 1 集成形态 ============================== -->
+<section class="reading">
+  <h2>1 · 我们的集成形态</h2>
+  <p>训练侧 verl GRPO(TaskRunnerV1 + TransferQueue,vLLM 生成,DAPO + 动态采样);
+    环境侧 NeMo-Gym server 承载 WebVoyager 浏览器环境(工具循环 act/observe,
+    OpenAI 兼容 judge);浏览器本体在远端平台,每个 session 一个独立 pod,
+    平台侧 Prometheus 按 session 出资源 series。</p>
+  <figure class="content">
+    <div class="figbox">
+    <svg viewBox="0 0 760 340" xmlns="http://www.w3.org/2000/svg" role="img" font-size="12">
+      <!-- trainer -->
+      <rect x="18" y="36" width="208" height="158" rx="6" fill="var(--paper)" stroke="var(--line)" stroke-width="1.4"/>
+      <text x="122" y="60" text-anchor="middle" font-weight="700" fill="var(--ink)">verl 训练栈</text>
+      <text x="122" y="84" text-anchor="middle" fill="var(--muted)">TaskRunnerV1 · TransferQueue</text>
+      <text x="122" y="104" text-anchor="middle" fill="var(--muted)">vLLM 异步 rollout</text>
+      <text x="122" y="124" text-anchor="middle" fill="var(--muted)">GRPO + DAPO + 动态采样</text>
+      <rect x="52" y="146" width="140" height="26" rx="13" fill="none" stroke="var(--positive)" stroke-width="1.2"/>
+      <text x="122" y="163" text-anchor="middle" fill="var(--positive)" font-family="var(--mono)" font-size="11">rollout_id · step</text>
+      <!-- gym -->
+      <rect x="286" y="36" width="196" height="158" rx="6" fill="var(--paper)" stroke="var(--line)" stroke-width="1.4"/>
+      <text x="384" y="60" text-anchor="middle" font-weight="700" fill="var(--ink)">NeMo-Gym env server</text>
+      <text x="384" y="84" text-anchor="middle" fill="var(--muted)">WebVoyager 环境</text>
+      <text x="384" y="104" text-anchor="middle" fill="var(--muted)">工具循环 act / observe</text>
+      <text x="384" y="124" text-anchor="middle" fill="var(--muted)">session 创建 / 关闭</text>
+      <rect x="316" y="146" width="136" height="26" rx="13" fill="none" stroke="var(--accent)" stroke-width="1.2" stroke-dasharray="4 3"/>
+      <text x="384" y="163" text-anchor="middle" fill="var(--accent)" font-size="11">无贯穿 id(现状)</text>
+      <!-- platform -->
+      <rect x="542" y="36" width="200" height="158" rx="6" fill="var(--paper)" stroke="var(--line)" stroke-width="1.4"/>
+      <text x="642" y="60" text-anchor="middle" font-weight="700" fill="var(--ink)">远端浏览器平台</text>
+      <text x="642" y="84" text-anchor="middle" fill="var(--muted)">每 session 一个独立 pod</text>
+      <text x="642" y="104" text-anchor="middle" fill="var(--muted)">Prometheus 按 session</text>
+      <text x="642" y="122" text-anchor="middle" fill="var(--muted)">出 CPU / 内存 / 流量 series</text>
+      <rect x="580" y="146" width="124" height="26" rx="13" fill="none" stroke="var(--positive)" stroke-width="1.2"/>
+      <text x="642" y="163" text-anchor="middle" fill="var(--positive)" font-family="var(--mono)" font-size="11">session_id</text>
+      <!-- judge -->
+      <rect x="286" y="238" width="196" height="44" rx="6" fill="var(--paper)" stroke="var(--line)" stroke-width="1.4"/>
+      <text x="384" y="265" text-anchor="middle" fill="var(--muted)">judge(OpenAI 兼容 verifier)</text>
+      <line x1="384" y1="194" x2="384" y2="238" stroke="var(--muted)" stroke-width="1.2"/>
+      <!-- arrows -->
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <line x1="226" y1="100" x2="284" y2="100" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ar)"/>
+      <text x="255" y="90" text-anchor="middle" fill="var(--muted)" font-size="11">HTTP</text>
+      <line x1="482" y1="100" x2="540" y2="100" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ar)"/>
+      <text x="511" y="90" text-anchor="middle" fill="var(--muted)" font-size="11">SDK/CDP</text>
+      <!-- broken id -->
+      <line x1="238" y1="210" x2="270" y2="210" stroke="var(--accent)" stroke-width="2"/>
+      <text x="248" y="204" fill="var(--accent)" font-size="14" font-weight="700">✕</text>
+      <line x1="494" y1="210" x2="526" y2="210" stroke="var(--accent)" stroke-width="2"/>
+      <text x="504" y="204" fill="var(--accent)" font-size="14" font-weight="700">✕</text>
+      <text x="30" y="318" fill="var(--ink)" font-size="12.5">id 在两个边界都断开(✕):训练的 rollout_id 不进环境,环境的 session_id 不回训练——</text>
+      <text x="30" y="336" fill="var(--ink)" font-size="12.5">我们靠给环境代码打补丁,把每次 create/close 落盘 session_ids.jsonl,才与 Prometheus 精确 join(6,695/6,695)。</text>
+    </svg>
+    </div>
+    <figcaption>图 1-1 · 集成拓扑与三个 id 域。左:verl 训练栈,持有 rollout_id 与训练 step;
+      中:NeMo-Gym 环境 server,执行工具循环并管理远端 session 的创建/关闭;右:远端浏览器平台,
+      每个 session 是一个独立 pod,平台按 session_id 输出资源 series。两个红叉标出 id 链路的断点:
+      协议不透传 rollout_id、也不回传 session_id,导致"这条 rollout 花了多少远端资源"默认不可回答。
+      我们通过环境侧埋点(审计文件逐条记录 create/close 事件与 session_id)在事后完成 join,
+      chrome 组 6,695 个 session 与审计清单全部精确匹配——证明这条链路值得协议化而不是各家自研。</figcaption>
+  </figure>
+  <div class="fact">
+    <p><strong>规模背书</strong>:此形态下完成多次 60 步全量训练(8 任务 × 8 rollout / 步),
+      A100 单日双跑共 13,160 个远端 session,4 小时级长跑零崩溃、零人工干预。</p>
+  </div>
+</section>
+
+<!-- ============================== 2 生命周期 ============================== -->
+<section class="reading">
+  <h2>2 · 资源与生命周期:最需要一等公民支持的地方</h2>
+  <p>浏览器 RL 的环境资源(远端 session)有真实成本。verl 侧的中断、重试、步内异常
+    都可能让环境的 close 调用永远不会发生;协议目前没有任何兜底。</p>
+  <figure class="content">
+    <div class="figbox">
+    <svg viewBox="0 0 760 372" xmlns="http://www.w3.org/2000/svg" role="img" font-size="12">
+      <defs>
+        <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <!-- lane labels -->
+      <text x="18" y="52" fill="var(--muted)" font-size="11" font-weight="700">正常路径</text>
+      <text x="18" y="164" fill="var(--accent)" font-size="11" font-weight="700">中断路径(现状)</text>
+      <text x="18" y="286" fill="var(--positive)" font-size="11" font-weight="700">建议</text>
+      <!-- lane 1 -->
+      <g>
+        <rect x="18" y="64" width="92" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="64" y="86" text-anchor="middle" fill="var(--ink)">create</text>
+        <rect x="140" y="64" width="112" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="196" y="86" text-anchor="middle" fill="var(--ink)">act × N 轮</text>
+        <rect x="282" y="64" width="100" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="332" y="86" text-anchor="middle" fill="var(--ink)">observe</text>
+        <rect x="412" y="64" width="88" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="456" y="86" text-anchor="middle" fill="var(--ink)">judge</text>
+        <rect x="530" y="64" width="88" height="34" rx="5" fill="var(--paper)" stroke="var(--positive)" stroke-width="1.6"/><text x="574" y="86" text-anchor="middle" fill="var(--positive)" font-weight="700">close</text>
+        <line x1="110" y1="81" x2="138" y2="81" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <line x1="252" y1="81" x2="280" y2="81" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <line x1="382" y1="81" x2="410" y2="81" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <line x1="500" y1="81" x2="528" y2="81" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <text x="640" y="86" fill="var(--positive)" font-size="12">create/close 配对 ✓</text>
+      </g>
+      <!-- lane 2 -->
+      <g>
+        <rect x="18" y="176" width="92" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="64" y="198" text-anchor="middle" fill="var(--ink)">create</text>
+        <rect x="140" y="176" width="112" height="34" rx="5" fill="var(--paper)" stroke="var(--line)"/><text x="196" y="198" text-anchor="middle" fill="var(--ink)">act …</text>
+        <rect x="282" y="176" width="196" height="34" rx="5" fill="color-mix(in srgb,var(--accent) 10%,var(--paper))" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="380" y="198" text-anchor="middle" fill="var(--accent)" font-weight="700">训练侧中断:超时 / 重试 / 崩溃</text>
+        <rect x="508" y="176" width="234" height="34" rx="5" fill="none" stroke="var(--accent)" stroke-dasharray="5 4" stroke-width="1.6"/>
+        <text x="625" y="198" text-anchor="middle" fill="var(--accent)">close 不再发生,pod 成为孤儿</text>
+        <line x1="110" y1="193" x2="138" y2="193" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <line x1="252" y1="193" x2="280" y2="193" stroke="var(--muted)" marker-end="url(#ar2)"/>
+        <line x1="478" y1="193" x2="506" y2="193" stroke="var(--accent)" marker-end="url(#ar2)"/>
+        <text x="18" y="236" fill="var(--muted)" font-size="12">我们曾因此发生真实事故:一次复现实验中断后孤儿 session 持续占用远端配额,后续 create 全部被拒。</text>
+      </g>
+      <!-- lane 3 -->
+      <g>
+        <rect x="18" y="298" width="220" height="34" rx="5" fill="color-mix(in srgb,var(--positive) 8%,var(--paper))" stroke="var(--positive)" stroke-width="1.4"/>
+        <text x="128" y="320" text-anchor="middle" fill="var(--positive)">① on_rollout_abort(id, reason) 必达钩子</text>
+        <rect x="268" y="298" width="200" height="34" rx="5" fill="color-mix(in srgb,var(--positive) 8%,var(--paper))" stroke="var(--positive)" stroke-width="1.4"/>
+        <text x="368" y="320" text-anchor="middle" fill="var(--positive)">② server 端 session registry + TTL</text>
+        <rect x="498" y="298" width="244" height="34" rx="5" fill="color-mix(in srgb,var(--positive) 8%,var(--paper))" stroke="var(--positive)" stroke-width="1.4"/>
+        <text x="620" y="320" text-anchor="middle" fill="var(--positive)">③ create/close 配对计数暴露为标准指标</text>
+        <text x="18" y="358" fill="var(--muted)" font-size="12">三层兜底:钩子处理常规中断,TTL 扫掉钩子也没接住的,配对计数让泄漏第一时间可见。</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>图 2-1 · session 生命周期三条路径。第一行是理想路径,create 与 close 严格配对;
+      第二行是现状的中断路径——训练侧任何一处超时、重试或进程崩溃发生在 create 之后、close 之前,
+      这个远端 pod 就成为孤儿,继续占用配额与内存,协议层没有任何机制知道它该被回收
+      (我们的真实事故:中断复现后孤儿 session 占满配额,后续所有 create 被平台拒绝,训练假死)。
+      第三行是建议的三层兜底:必达的 abort 钩子、server 端带 TTL 的 session registry、
+      以及把 create/close 配对计数做成标准指标。我们在自家栈实现了等价机制后,
+      两次 60 步全量共 13,160 个 session 实现零泄漏。</figcaption>
+  </figure>
+  <h3>建议 1 · 生命周期钩子(协议级)</h3>
+  <pre># 环境基类(建议增加,由框架保证必达)
+class Env:
+    def on_rollout_abort(self, rollout_id, reason): ...  # 超时/重试/取消时
+    def on_run_exit(self): ...                           # 进程退出兜底
+# server 侧:session registry + TTL 自动回收 + create/close 配对指标</pre>
+  <h3>建议 2 · 并发背压做进框架</h3>
+  <p>浏览器类环境的瓶颈在远端配额而非 GPU(我们实测加卡无收益)。session create
+    突发会打崩远端调度,我们手动限制 create 并发 16、总并发 64 才稳定。
+    建议 Gym client 内置 per-resource 限流配置(create 速率、最大并发、指数退避),
+    而不是每个环境自己实现。</p>
+  <h3>建议 3 · session 池化 / 预热语义</h3>
+  <p>create 中位 4.45 s,约占 rollout 端到端(32.5 s)的 14%;远端冷启动高峰期
+    我们观测到过 30 s 级中位。建议协议支持 session 复用或预建池:
+    trainer 声明下一批需求量,server 提前建好。这部分墙钟是纯浪费。</p>
+</section>
+
+<!-- ============================== 3 训练信号 ============================== -->
+<section class="reading">
+  <h2>3 · 训练信号质量:环境失效需要协议级语义</h2>
+  <figure class="content">
+    <div class="figbox">
+    <svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img" font-size="12">
+      <defs>
+        <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/>
+        </marker>
+      </defs>
+      <rect x="230" y="20" width="300" height="52" rx="6" fill="var(--paper)" stroke="var(--line)" stroke-width="1.4"/>
+      <text x="380" y="42" text-anchor="middle" fill="var(--ink)" font-weight="700">环境基建失败(非任务失败)</text>
+      <text x="380" y="62" text-anchor="middle" fill="var(--muted)" font-size="11">导航超时 / 工具链故障 / 关闭 RPC 失败 —— 实测占 rollout 的 4–9%</text>
+      <!-- left branch: status quo -->
+      <line x1="300" y1="72" x2="190" y2="112" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#ar3)"/>
+      <text x="200" y="98" fill="var(--accent)" font-size="11" font-weight="700">现状</text>
+      <rect x="60" y="116" width="260" height="40" rx="5" fill="color-mix(in srgb,var(--accent) 8%,var(--paper))" stroke="var(--accent)" stroke-width="1.4"/>
+      <text x="190" y="141" text-anchor="middle" fill="var(--accent)">只能表现为 reward = 0</text>
+      <line x1="190" y1="156" x2="190" y2="186" stroke="var(--accent)" stroke-width="1.4" marker-end="url(#ar3)"/>
+      <rect x="60" y="190" width="260" height="52" rx="5" fill="none" stroke="var(--accent)" stroke-dasharray="5 4" stroke-width="1.4"/>
+      <text x="190" y="212" text-anchor="middle" fill="var(--accent)">进入 GRPO 分组:组均值被拉低</text>
+      <text x="190" y="232" text-anchor="middle" fill="var(--accent)">优势估计学到"环境噪声"</text>
+      <!-- right branch: proposal -->
+      <line x1="460" y1="72" x2="570" y2="112" stroke="var(--positive)" stroke-width="1.4" marker-end="url(#ar3)"/>
+      <text x="540" y="98" fill="var(--positive)" font-size="11" font-weight="700">建议</text>
+      <rect x="440" y="116" width="280" height="40" rx="5" fill="color-mix(in srgb,var(--positive) 8%,var(--paper))" stroke="var(--positive)" stroke-width="1.4"/>
+      <text x="580" y="141" text-anchor="middle" fill="var(--positive)">environment_invalid = true + reason</text>
+      <line x1="580" y1="156" x2="580" y2="186" stroke="var(--positive)" stroke-width="1.4" marker-end="url(#ar3)"/>
+      <rect x="440" y="190" width="280" height="52" rx="5" fill="none" stroke="var(--positive)" stroke-width="1.4"/>
+      <text x="580" y="212" text-anchor="middle" fill="var(--positive)">trainer 丢弃样本并组内补采(≤2 轮)</text>
+      <text x="580" y="232" text-anchor="middle" fill="var(--positive)">只从有效信号学习</text>
+      <text x="40" y="286" fill="var(--muted)" font-size="12">实测:lexmount 组 invalid 8.5%(571/6,707)、云端 chrome 组 4.3%(309/7,241)。我们在自家栈按右侧路径实现后,</text>
+      <text x="40" y="306" fill="var(--muted)" font-size="12">失效样本全部被隔离并补采,未污染训练信号;建议把这条路径协议化,附分类失败原因枚举。</text>
+    </svg>
+    </div>
+    <figcaption>图 3-1 · 环境失效的两种处理路径。任何规模化的真实环境都有基建性失败
+      (我们两组实测 4.3% 与 8.5%),它们与"模型没完成任务"是两回事。左侧红色是现状:
+      协议只有 reward 一个通道,失效只能编码成 reward=0,进入 GRPO 分组后拉低组均值、
+      抬高组内方差,优势估计会把环境噪声当成策略信号学习。右侧绿色是建议路径:
+      rollout 返回结构携带 environment_invalid 与分类原因,trainer 据此丢弃样本并触发组内补采
+      (配合动态采样,我们限制补采 ≤2 轮以控制墙钟)。该机制我们已在自家栈验证:
+      880 个失效样本全部被隔离,分组审计 120/120 步全部通过。</figcaption>
+  </figure>
+  <h3>建议 4 · rollout 返回结构(具体字段)</h3>
+  <pre>{
+  "reward": 0.0,
+  "environment_invalid": true,            # 与 reward 正交
+  "invalid_reason": "navigate_timeout",   # 枚举:infra/tool/close_rpc/...
+  "resource_ids": {"browser_session": "session_1755..."},  # 见 §4
+  "stage_timing_s": {"create": 4.4, "act": 3.1, "observe": 0.2,
+                      "judge": 2.3, "cleanup": 1.6}          # 见 §4
+}</pre>
+  <h3>建议 5 · 组级补采一等 API</h3>
+  <pre># 现状:trainer 裸循环调环境,组审计逻辑全部自研
+# 建议:
+groups = gym.rollout_groups(
+    prompts, group_size=8,
+    min_signal_groups=8,      # 有效且 reward std>0 的组数下限
+    max_resample_rounds=2)    # 墙钟保护</pre>
+  <p>DAPO 动态过滤要求"补采到足够多有信号的组"。这个循环跨 Gym 边界串行执行,
+    墙钟膨胀且各家重复造轮子;做成 server 侧原语后可以并行补采。</p>
+</section>
+
+<!-- ============================== 4 可观测性 ============================== -->
+<section class="reading">
+  <h2>4 · 可观测性:让三方数据默认可 join</h2>
+  <p>本次引擎对比报告的每个远端数字,都依赖"训练 rollout ↔ 环境 session ↔ 平台资源"
+    三方精确关联。现状协议里这条链是断的(图 1-1),我们的做法值得标准化:</p>
+  <div class="tablewrap"><table>
+    <tr><th>建议字段</th><th>方向</th><th>作用</th></tr>
+    <tr><td class="mono">rollout_id</td><td>trainer → env,全链路透传</td><td>环境日志、judge 调用、资源事件都可归属到具体 rollout 与训练 step</td></tr>
+    <tr><td class="mono">resource_ids{}</td><td>env → trainer,随返回回填</td><td>与平台监控(Prometheus label)join,资源成本可按 rollout 归因</td></tr>
+    <tr><td class="mono">stage_timing_s{}</td><td>env → trainer,标准分段延迟</td><td>create/act/observe/judge/cleanup 分段;定位瓶颈不再需要自研埋点</td></tr>
+    <tr><td class="mono">resource_events</td><td>env server 标准日志流</td><td>create/close/delete 事件 + 时间戳,泄漏审计与配对计数的数据源</td></tr>
+  </table></div>
+  <div class="fact">
+    <p><strong>为什么值得</strong>:我们靠等价自研机制,才能给出"chrome 组 6,695 个 session
+      与审计清单 100% 匹配、外来 16 个 session 被识别剔除"这种粒度的报告。
+      有标准字段后,任何接入 Gym 的环境都自动获得这个能力。</p>
+  </div>
+</section>
+
+<!-- ============================== 5 工程接口 ============================== -->
+<section class="reading">
+  <h2>5 · 工程接口:定制点靠 fork 太脆</h2>
+  <p>为接入浏览器环境,我们最初 fork 了 4 处 verl 核心组件;verl API 迭代快,
+    只能 pin 死 commit(<span class="mono">30119a2</span>)。后来全部改写为
+    "注册 + 运行时 patch"才敢跟随上游升级。</p>
+  <div class="suggest">
+    <p><span class="sh">建议 6</span> · 为 runner / worker / rollout loop 提供稳定的
+      plugin & registry 接口(入口点注册自定义实现),让 recipe 不改 core 源码。
+      判据很简单:一个新环境接入,应该只新增文件、不修改 verl 本体。</p>
+  </div>
+</section>
+
+<!-- ============================== 6 好评 ============================== -->
+<section class="reading">
+  <h2>6 · 做得好的部分</h2>
+  <p>· <strong>OpenAI 兼容 verifier(judge)模式</strong>:我们把判分模型当成普通
+    endpoint 挂进去,零适配成本,换 judge 模型只改一个 URL。<br>
+    · <strong>V1 TaskRunner + TransferQueue 异步 rollout</strong>:与高延迟远端环境天然契合,
+    64 并发 rollout 打满远端配额,GPU 利用率均值 63% 且长跑稳定;
+    这套异步架构是浏览器 RL 可行的前提,请保持。<br>
+    · <strong>环境即 server 的边界划分</strong>:训练栈与环境解耦干净,
+    我们双引擎 A/B 只需要改一个环境参数,训练侧零改动——这正是本次对比实验能严格受控的原因。</p>
+</section>
+
+<footer>
+  <div class="reading">
+    Lexmount Browser Lab · 反馈基线:910B + A100 双栈 · 多次 60 步全量 GRPO ·
+    单日 13,160 远端 session · 所有数字可在引擎对比报告中复核。
+  </div>
+</footer>
+
+</main>
+</body>
+</html>
