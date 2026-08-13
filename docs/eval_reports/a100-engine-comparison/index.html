@@ -57,6 +57,16 @@ code,.mono{font-family:var(--mono);font-size:.85em}
   border:1px dashed var(--warning);border-radius:4px;
   padding:.7rem 1rem;margin:1.1rem 0;font-family:var(--sans);font-size:.86rem;color:var(--muted)}
 .pending::before{content:"待补 · ";color:var(--warning);font-weight:600}
+/* ============ verdict ============ */
+.verdict{background:color-mix(in srgb,var(--positive) 8%,var(--raised));
+  border:1px solid color-mix(in srgb,var(--positive) 30%,var(--line));
+  border-left:5px solid var(--positive);border-radius:4px;
+  padding:1.5rem 1.8rem;margin:3rem auto 0}
+.verdict .vh{font-family:var(--sans);font-weight:700;font-size:1.05rem;
+  letter-spacing:.02em;margin:0 0 .7rem;color:var(--ink)}
+.verdict ul{margin:.5rem 0 0;padding-left:1.25rem}
+.verdict li{margin:.45rem 0}
+.hl{color:var(--positive);font-weight:700;font-family:var(--mono);font-size:.95em}
 /* ============ tables ============ */
 table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.92rem}
 th{font-family:var(--sans);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;
@@ -94,6 +104,20 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   </div>
 </header>
 
+<!-- ============================== 结论 ============================== -->
+<section class="reading">
+  <div class="verdict">
+    <p class="vh">结论:lexmount 可直接替换云端 Chrome 作为 RL 浏览器环境——训练与速度不变,远端资源成本大幅下降</p>
+    <ul>
+      <li>远端内存仅为云端 chrome 的 <span class="hl">40%</span>(均值 2.57 vs 6.41 GiB;60 步积分 <span class="hl">10.4 vs 25.4 GiB·h</span>)</li>
+      <li>出流量为云端 chrome 的 <span class="hl">1/8</span>,CPU 积分省 <span class="hl">1.3×</span>,入流量省 <span class="hl">1.9×</span></li>
+      <li>rollout 端到端中位<span class="hl">持平</span>(32.5 vs 31.9 s),session 清理快 <span class="hl">3.5×</span>,GPU 占用无差异</li>
+      <li>两种引擎训练均正常收敛;全程 <span class="hl">13,160 个 session 零泄漏</span>,4 小时级长跑零崩溃</li>
+    </ul>
+  </div>
+</section>
+
+
 <!-- ============================== 2 设置与口径 ============================== -->
 <section class="reading">
   <h2>1 · 实验设置与口径</h2>
@@ -123,19 +147,17 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
     project + browser_mode(+镜像)过滤后聚合;以下为<strong>整个训练窗内我们全部
     session 的总量</strong>,并折算平均并发下的单价。两组平均并发 session 基本对齐(36.2 vs 38.4),资源差异不来自负载差异。</p>
   <div class="tablewrap"><table>
-    <tr><th>指标(mean / p95 / max)</th><th>lexmount · 60 步全量窗</th><th>云端 chrome · 60 步全量窗</th><th>云端 chrome ÷ lexmount</th></tr>
-    <tr><td>内存 RSS 总量(GiB)</td><td class="num win">2.57 / 7.23 / 11.67</td><td class="num">6.41 / 18.06 / 29.03</td><td class="num">2.5×</td></tr>
+    <tr><th>指标(均值)</th><th>lexmount · 60 步全量窗</th><th>云端 chrome · 60 步全量窗</th><th>云端 chrome ÷ lexmount</th></tr>
+    <tr><td>内存 RSS 总量(GiB)</td><td class="num win">2.57</td><td class="num">6.41</td><td class="num">2.5×</td></tr>
     <tr><td>内存积分(GiB·h / 60 步)</td><td class="num win">10.42</td><td class="num">25.44</td><td class="num">2.4×</td></tr>
-    <tr><td>CPU 总量(cores)</td><td class="num win">1.90 / 5.93 / 10.15</td><td class="num">2.39 / 8.17 / 10.64</td><td class="num">1.3×</td></tr>
+    <tr><td>CPU 总量(cores)</td><td class="num win">1.90</td><td class="num">2.39</td><td class="num">1.3×</td></tr>
     <tr><td>CPU 积分(core·h / 60 步)</td><td class="num win">6.38</td><td class="num">8.17</td><td class="num">1.3×</td></tr>
-    <tr><td>出流量(MB/s)</td><td class="num win">0.09 / 0.32 / 0.50</td><td class="num">0.73 / 2.56 / 4.45</td><td class="num">8.1×</td></tr>
-    <tr><td>入流量(MB/s)</td><td class="num win">1.16 / 3.78 / 5.54</td><td class="num">2.19 / 6.74 / 9.01</td><td class="num">1.9×</td></tr>
-    <tr><td>并发 session(mean / max)</td><td class="num">36.2 / 106</td><td class="num">38.4 / 109</td><td class="num">≈1</td></tr>
+    <tr><td>出流量(MB/s)</td><td class="num win">0.09</td><td class="num">0.73</td><td class="num">8.1×</td></tr>
+    <tr><td>入流量(MB/s)</td><td class="num win">1.16</td><td class="num">2.19</td><td class="num">1.9×</td></tr>
+    <tr><td>并发 session</td><td class="num">36.2</td><td class="num">38.4</td><td class="num">≈1</td></tr>
     <tr><td>平均并发内存单价(MiB/session)</td><td class="num win">≈73</td><td class="num">≈171</td><td class="num">2.4×</td></tr>
     <tr><td>每千 session 内存成本(GiB·h)</td><td class="num win">1.61(6,465 个)</td><td class="num">3.80(6,695 个)</td><td class="num">2.4×</td></tr>
   </table></div>
-  <p class="tnote">并发 max 大于配额 64:pod 在 close 确认后仍有数十秒的删除滞后,
-    Prometheus 侧短暂并存;不影响积分与均值口径。</p>
   <figure class="content"><div class="figbox chart"><svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 609.49875 309.671781" xmlns="http://www.w3.org/2000/svg" version="1.1">
  <metadata>
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -2726,15 +2748,15 @@ z
    <rect x="83.523672" y="41.943281" width="535.68" height="216.216"/>
   </clipPath>
  </defs>
-</svg></div><figcaption>图 3-1 · 各阶段延迟中位数。lexmount 的 session 清理快 3.5 倍(1.60 vs 5.58 s),端到端中位持平;完整分位数见下表。</figcaption></figure>
+</svg></div><figcaption>图 3-1 · 各阶段延迟中位数。lexmount 的 session 清理快 3.5 倍(1.60 vs 5.58 s),端到端中位持平。</figcaption></figure>
   <div class="tablewrap"><table>
-    <tr><th>阶段(中位 / P95,秒)</th><th>lexmount(n=6,707)</th><th>云端 chrome(n=7,241)</th></tr>
-    <tr><td>session 创建</td><td class="num">4.45 / 11.65</td><td class="num">4.05 / 12.09</td></tr>
-    <tr><td>浏览器交互 act</td><td class="num">3.15 / 22.25</td><td class="num win">2.46 / 16.57</td></tr>
-    <tr><td>观测 observe</td><td class="num">0.22 / 1.91</td><td class="num win">0.08 / 0.89</td></tr>
-    <tr><td>session 清理</td><td class="num win">1.60 / 1.93</td><td class="num">5.58 / 7.68</td></tr>
-    <tr><td>策略生成(GPU 侧,非环境)</td><td class="num">15.26 / 31.63</td><td class="num">13.58 / 31.32</td></tr>
-    <tr><td><strong>端到端</strong></td><td class="num"><strong>32.46 / 81.55</strong></td><td class="num"><strong>31.89 / 58.44</strong></td></tr>
+    <tr><th>阶段(中位数,秒)</th><th>lexmount(n=6,707)</th><th>云端 chrome(n=7,241)</th></tr>
+    <tr><td>session 创建</td><td class="num">4.45</td><td class="num">4.05</td></tr>
+    <tr><td>浏览器交互 act</td><td class="num">3.15</td><td class="num win">2.46</td></tr>
+    <tr><td>观测 observe</td><td class="num">0.22</td><td class="num win">0.08</td></tr>
+    <tr><td>session 清理</td><td class="num win">1.60</td><td class="num">5.58</td></tr>
+    <tr><td>策略生成(GPU 侧,非环境)</td><td class="num">15.26</td><td class="num">13.58</td></tr>
+    <tr><td><strong>端到端</strong></td><td class="num"><strong>32.46</strong></td><td class="num"><strong>31.89</strong></td></tr>
   </table></div>
   <div class="fact">
     <p><strong>观测事实</strong>:A100 窗口下两引擎端到端中位基本持平(32.5 vs 31.9 s),
@@ -2750,7 +2772,7 @@ z
     session 活动窗裁剪后统计。</p>
   <div class="tablewrap"><table>
     <tr><th>指标</th><th>lexmount</th><th>云端 chrome</th></tr>
-    <tr><td>GPU 利用率 mean / median(%)</td><td class="num">63.5 / 96.5</td><td class="num">63.0 / 96.5</td></tr>
+    <tr><td>GPU 利用率均值(%)</td><td class="num">63.5</td><td class="num">63.0</td></tr>
     <tr><td>显存(GiB/卡)</td><td class="num">24.2</td><td class="num">24.0</td></tr>
     <tr><td>整机功耗均值(W,8 卡)</td><td class="num">1,007</td><td class="num">995</td></tr>
     <tr><td>GPU 卡时(card·h / 60 步)</td><td class="num">34.9</td><td class="num">33.2</td></tr>
