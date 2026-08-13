@@ -56,21 +56,21 @@ code,.mono{font-family:var(--mono);font-size:.85em}
 .pending{background:color-mix(in srgb,var(--warning) 9%,var(--raised));
   border:1px dashed var(--warning);border-radius:4px;
   padding:.7rem 1rem;margin:1.1rem 0;font-family:var(--sans);font-size:.86rem;color:var(--muted)}
-.pending::before{content:"待填 · ";color:var(--warning);font-weight:600}
+.pending::before{content:"待补 · ";color:var(--warning);font-weight:600}
 /* ============ tables ============ */
 table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.92rem}
 th{font-family:var(--sans);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;
   color:var(--muted);text-align:left;font-weight:600}
 th,td{border-bottom:1px solid var(--line);padding:.55rem .7rem;vertical-align:top}
 td.num{font-family:var(--mono);font-size:.86rem;white-space:nowrap}
-tr.best td{background:color-mix(in srgb,var(--positive) 7%,transparent)}
+td.win{color:var(--positive);font-weight:600}
 .tablewrap{overflow-x:auto}
 .tnote{font-family:var(--sans);font-size:.78rem;color:var(--muted);margin-top:-.6rem}
 /* ============ figure ============ */
 figure{margin:1.8rem 0}
 figcaption{font-family:var(--sans);font-size:.8rem;color:var(--muted);margin-top:.5rem}
-.figbox{border:1px solid var(--line);background:var(--raised);min-height:230px;
-  display:flex;align-items:center;justify-content:center}
+.figbox{border:1px solid var(--line);background:var(--raised);padding:.8rem}
+.figbox svg{width:100%;height:auto;display:block}
 footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   font-family:var(--sans);font-size:.8rem;color:var(--muted)}
 @media (max-width:640px){ body{font-size:16px} .hero h1{font-size:1.6rem} }
@@ -82,27 +82,28 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
 <!-- ============================== HERO · Data Ledger ============================== -->
 <header class="hero">
   <div class="content">
-    <div class="kicker">Lexmount Browser Lab · RL Environment Evidence · 2026-08</div>
+    <div class="kicker">Lexmount Browser Lab · RL Environment Evidence · 2026-08-13</div>
     <h1>Lightmount 作为 RL 浏览器环境:与 Chrome 的受控全维度对比</h1>
     <p class="claim">同一台 A100×8、同一模型与训练配方、同一 session 池上限下,先后各跑 60 步
-      GRPO(DAPO + 动态采样)。本页只呈现该设置下的测量值;所有数字保留分母、时间窗与过滤条件,
-      session 级数据可按附录清单在 Prometheus 中逐条复核。</p>
+      GRPO(DAPO + 动态采样),两组引擎版本均以 <code>custom_image_id</code> 固定。
+      本页只呈现该设置下的测量值;所有数字保留分母、时间窗与过滤条件,
+      session 级数据可按附录清单在 Prometheus 中逐条复核(join 命中率 6,695 / 6,695)。</p>
     <div class="ledger">
       <div class="cell">
-        <div class="num">⟦X.XX⟧×</div>
-        <div class="denom">远端内存 · chrome/lightmount 每 session 均值比 · 60 步全量窗</div>
+        <div class="num">2.5×</div>
+        <div class="denom">远端内存 · chrome/lightmount 总量均值比(6.41 vs 2.57 GiB)· 平均并发 38 vs 36 session</div>
       </div>
       <div class="cell">
-        <div class="num">⟦XX⟧s vs ⟦XX⟧s</div>
-        <div class="denom">rollout 端到端中位 · lightmount / chrome · n=⟦N⟧/⟦N⟧</div>
+        <div class="num">25.4 vs 10.4</div>
+        <div class="denom">远端内存积分(GiB·h)· chrome / lightmount · 各自 60 步全量窗</div>
       </div>
       <div class="cell">
-        <div class="num">⟦XX.X⟧% vs ⟦XX.X⟧%</div>
-        <div class="denom">GPU 平均利用率 · 训练全程 5s 采样 · 8×A100</div>
+        <div class="num">32.5 vs 31.9 s</div>
+        <div class="denom">rollout 端到端中位 · lightmount / chrome · n=6,707 / 7,241,基本持平</div>
       </div>
       <div class="cell">
-        <div class="num">⟦X.XX⟧ vs ⟦X.XX⟧</div>
-        <div class="denom">60 步末段 reward 均值(后 10 步)· 8 任务 × 8 rollout</div>
+        <div class="num">0 / 13,160</div>
+        <div class="denom">session 泄漏(create−close)· 两组合计 · 埋点逐条配对审计</div>
       </div>
     </div>
   </div>
@@ -118,7 +119,8 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   <p>此前在 910B 上已完成三消融(GRPO 基线 → +DAPO → +动态采样)并确认最终配方。
     本报告在 GPU(A100)上以该配方做双引擎受控对比:lightmount(自研轻量引擎)
     与 lexmount normal(云端 Chrome)。二者走完全相同的 CDP 通路与训练栈,唯一差异是
-    <code>browser_mode</code> 一个参数。</p>
+    <code>browser_mode</code> 一个参数;两组引擎镜像均通过
+    <code>custom_image_id</code> 固定版本,排除平台默认镜像滚动带来的漂移。</p>
 </section>
 
 <!-- ============================== 2 设置与口径 ============================== -->
@@ -127,24 +129,26 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   <div class="tablewrap"><table>
     <tr><th>维度</th><th>取值(两组完全一致)</th></tr>
     <tr><td>硬件</td><td class="mono">A100-SXM4-80G × 8,单机(a100-node3),128 vCPU / 1 TiB</td></tr>
-    <tr><td>模型 / 框架</td><td class="mono">Qwen3-8B · verl GRPO(TaskRunnerV1)· vLLM 0.18 · FA2</td></tr>
+    <tr><td>模型 / 框架</td><td class="mono">Qwen3-8B · verl GRPO(TaskRunnerV1)· vLLM 0.18 · flash-attn 2.8.3</td></tr>
     <tr><td>配方</td><td class="mono">DAPO(clip 0.2/0.28/c10 · no-KL · token-mean · 不按 std 归一)+ 动态采样(组内重采 ≤2)</td></tr>
     <tr><td>几何 / 步数</td><td class="mono">8 任务 × 8 rollout / 步 · 60 步 · 无 checkpoint</td></tr>
-    <tr><td>Session 约束</td><td class="mono">MAX_CONCURRENT_SESSIONS=64 · CREATE 并发 16 · 两组串行不重叠</td></tr>
+    <tr><td>Session 约束</td><td class="mono">MAX_CONCURRENT_SESSIONS=64 · CREATE 并发 16 · 两组串行,窗口间隔 10 分钟</td></tr>
     <tr><td>评判</td><td class="mono">gpt-4.1 judge · 同一 prompt 与阈值</td></tr>
+    <tr><td>引擎镜像(pin)</td><td class="mono">lightmount-20260807-180709-ba70627fa6 / chrome-20260810-192637-c1ea47dd67</td></tr>
   </table></div>
   <h3>测量口径</h3>
   <p><strong>训练侧</strong>逐 rollout 记录延迟分解与 reward(observability schema v2);
-    <strong>宿主侧</strong>以 5 秒间隔采样 GPU 利用率/显存/功耗、CPU、内存与网络;
+    <strong>宿主侧</strong>以 5 秒间隔采样 GPU 利用率/显存/功耗、CPU、内存与网络,
+    统计窗按 session 活动窗裁剪(排除训练结束后的空转采样);
     <strong>远端侧</strong>每个浏览器 session 在 Prometheus 中是独立 pod series
     (<code>label_session_id</code>),训练栈将每次 create/close 写入审计文件,
-    两组数据按 session id 精确 join——冒烟验证 join 命中率 499/499。</p>
+    两侧按 session id 精确 join。</p>
   <div class="tablewrap"><table>
-    <tr><th>Run</th><th>时间窗(UTC)</th><th>Session 数</th><th>数据完备性</th></tr>
-    <tr><td>lightmount 60 步</td><td class="num">2026-08-11 14:07 – 19:24</td>
-      <td class="num">⟦~7600⟧</td><td>远端按 mode+project+时间窗过滤(id 埋点晚于该跑;新版 lightmount 就绪后将带埋点重跑)</td></tr>
-    <tr><td>chrome 60 步</td><td class="num">2026-08-12 07:30 – ⟦HH:MM⟧</td>
-      <td class="num">⟦N⟧</td><td>全量 session id 清单 + create/close 配对审计</td></tr>
+    <tr><th>Run</th><th>时间窗(UTC)</th><th>Session 数</th><th>观测窗纯净度</th></tr>
+    <tr><td>lightmount 60 步</td><td class="num">2026-08-12 12:31 – 16:53</td>
+      <td class="num">6,465</td><td>窗内 1,101/1,101 抽查 series 全部落在 pin 镜像;按 project+mode+镜像过滤</td></tr>
+    <tr><td>chrome 60 步</td><td class="num">2026-08-12 17:14 – 21:22</td>
+      <td class="num">6,695</td><td>Prometheus 窗内 6,711 个 normal session,6,695 个与审计清单精确匹配;16 个外来 session 已按 project 过滤剔除(0.24%)</td></tr>
   </table></div>
 </section>
 
@@ -155,12 +159,12 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
     因此先给定性对照。</p>
   <div class="tablewrap"><table>
     <tr><th>能力</th><th>lightmount(远端自研)</th><th>lexmount chrome(远端)</th><th>本地 docker Chrome</th></tr>
-    <tr><td>隔离模型</td><td>session 级独立 pod</td><td>池化 pod,分配制</td><td>与训练同机,抢 CPU/内存</td></tr>
-    <tr><td>并发弹性</td><td>⟦占位:配额/伸缩语义⟧</td><td>⟦占位⟧</td><td>受单机资源硬限</td></tr>
+    <tr><td>隔离模型</td><td>session 级独立 pod</td><td>池化 pod,分配制(label_browser_pool_role)</td><td>与训练同机,抢 CPU/内存</td></tr>
+    <tr><td>版本固定</td><td colspan="2">custom_image_id 按 session 指定引擎构建,可复现</td><td>自行管理镜像</td></tr>
     <tr><td>Session API / 池化</td><td colspan="2">create/close/delete + 孤儿清扫,配额语义明确</td><td>自行管理容器生命周期</td></tr>
     <tr><td>协议</td><td colspan="2">标准 CDP websocket,栈零改动切换</td><td>CDP(自建代理)</td></tr>
-    <tr><td>资源可观测</td><td colspan="2">per-session Prometheus series</td><td>需自建 cAdvisor 等</td></tr>
-    <tr><td>对训练机的资源占用</td><td colspan="2">≈0(远端承载)</td><td>随并发线性增长,与 rollout 争核</td></tr>
+    <tr><td>资源可观测</td><td colspan="2">per-session Prometheus series(本报告数据来源)</td><td>需自建 cAdvisor 等</td></tr>
+    <tr><td>对训练机的资源占用</td><td colspan="2">≈0(远端承载;本轮实测训练机 CPU 均值 8.5%,全部来自训练本身)</td><td>随并发线性增长,与 rollout 争核</td></tr>
   </table></div>
   <p class="tnote">本地 docker Chrome 一列为架构性事实与公开常识,本轮未实测(见 §9)。</p>
 </section>
@@ -170,22 +174,28 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   <h2>4 · 训练收益与时间:两组实验的直接对比</h2>
   <p>这一节回答"换引擎是否改变训练结果、是否节省墙钟"。</p>
   <figure class="content">
-    <div class="figbox"><span class="label">⟦占位:双引擎 reward 曲线图(60 步,同轴)⟧</span></div>
-    <figcaption>图 4-1 · critic/rewards/mean 逐步曲线。lightmount(实线)/ chrome(虚线)。
+    <div class="figbox"><svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" font-family="PingFang SC,Noto Sans SC,sans-serif"><line x1="46" y1="14" x2="46" y2="266" stroke="var(--line)"/><line x1="46" y1="266" x2="748" y2="266" stroke="var(--line)"/><line x1="46" y1="266.0" x2="748" y2="266.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="269.0" text-anchor="end" font-size="10" fill="var(--muted)">0</text><line x1="46" y1="203.0" x2="748" y2="203.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="206.0" text-anchor="end" font-size="10" fill="var(--muted)">0.2</text><line x1="46" y1="140.0" x2="748" y2="140.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="143.0" text-anchor="end" font-size="10" fill="var(--muted)">0.4</text><line x1="46" y1="77.0" x2="748" y2="77.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="80.0" text-anchor="end" font-size="10" fill="var(--muted)">0.6</text><line x1="46" y1="14.0" x2="748" y2="14.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="17.0" text-anchor="end" font-size="10" fill="var(--muted)">0.8</text><text x="46.0" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">0</text><text x="165.0" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">10</text><text x="284.0" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">20</text><text x="402.9" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">30</text><text x="521.9" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">40</text><text x="640.9" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">50</text><text x="759.9" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">60</text><text x="12" y="22" font-size="10" fill="var(--muted)">reward</text><text x="397.0" y="294" text-anchor="middle" font-size="10" fill="var(--muted)">training step</text><polyline fill="none" stroke="var(--positive)" stroke-width="0.9" points="46.0,221.7 57.9,216.8 69.8,202.0 81.7,177.4 93.6,152.8 105.5,226.6 117.4,216.8 129.3,187.2 141.2,157.7 153.1,202.0 165.0,182.3 176.9,133.1 188.8,138.0 200.7,197.1 212.6,216.8 224.5,147.9 236.4,211.9 248.3,147.9 260.2,221.7 272.1,187.2 284.0,147.9 295.9,103.6 307.8,187.2 319.7,123.3 331.6,103.6 343.5,113.4 355.4,177.4 367.3,157.7 379.2,103.6 391.1,98.7 402.9,182.3 414.8,39.6 426.7,192.2 438.6,128.2 450.5,152.8 462.4,177.4 474.3,113.4 486.2,197.1 498.1,113.4 510.0,177.4 521.9,147.9 533.8,143.0 545.7,118.3 557.6,133.1 569.5,143.0 581.4,123.3 593.3,162.6 605.2,64.2 617.1,172.5 629.0,167.6 640.9,59.3 652.8,192.2 664.7,133.1 676.6,79.0 688.5,128.2 700.4,192.2 712.3,157.7 724.2,143.0 736.1,128.2 748.0,128.2"/><circle cx="46.0" cy="221.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="57.9" cy="216.8" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="69.8" cy="202.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="81.7" cy="177.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="93.6" cy="152.8" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="105.5" cy="226.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="117.4" cy="216.8" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="129.3" cy="187.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="141.2" cy="157.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="153.1" cy="202.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="165.0" cy="182.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="176.9" cy="133.1" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="188.8" cy="138.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="200.7" cy="197.1" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="212.6" cy="216.8" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="224.5" cy="147.9" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="236.4" cy="211.9" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="248.3" cy="147.9" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="260.2" cy="221.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="272.1" cy="187.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="284.0" cy="147.9" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="295.9" cy="103.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="307.8" cy="187.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="319.7" cy="123.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="331.6" cy="103.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="343.5" cy="113.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="355.4" cy="177.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="367.3" cy="157.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="379.2" cy="103.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="391.1" cy="98.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="402.9" cy="182.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="414.8" cy="39.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="426.7" cy="192.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="438.6" cy="128.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="450.5" cy="152.8" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="462.4" cy="177.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="474.3" cy="113.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="486.2" cy="197.1" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="498.1" cy="113.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="510.0" cy="177.4" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="521.9" cy="147.9" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="533.8" cy="143.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="545.7" cy="118.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="557.6" cy="133.1" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="569.5" cy="143.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="581.4" cy="123.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="593.3" cy="162.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="605.2" cy="64.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="617.1" cy="172.5" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="629.0" cy="167.6" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="640.9" cy="59.3" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="652.8" cy="192.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="664.7" cy="133.1" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="676.6" cy="79.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="688.5" cy="128.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="700.4" cy="192.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="712.3" cy="157.7" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="724.2" cy="143.0" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="736.1" cy="128.2" r="1.6" fill="var(--positive)" opacity="0.55"/><circle cx="748.0" cy="128.2" r="1.6" fill="var(--positive)" opacity="0.55"/><polyline fill="none" stroke="var(--accent)" stroke-width="0.9" points="46.0,231.5 57.9,246.3 69.8,197.1 81.7,241.4 93.6,206.9 105.5,236.5 117.4,221.7 129.3,236.5 141.2,202.0 153.1,216.8 165.0,182.3 176.9,182.3 188.8,128.2 200.7,192.2 212.6,236.5 224.5,133.1 236.4,177.4 248.3,211.9 260.2,202.0 272.1,211.9 284.0,167.6 295.9,187.2 307.8,192.2 319.7,216.8 331.6,172.5 343.5,206.9 355.4,206.9 367.3,202.0 379.2,216.8 391.1,211.9 402.9,221.7 414.8,167.6 426.7,226.6 438.6,157.7 450.5,187.2 462.4,206.9 474.3,157.7 486.2,202.0 498.1,197.1 510.0,162.6 521.9,167.6 533.8,256.2 545.7,236.5 557.6,177.4 569.5,187.2 581.4,172.5 593.3,187.2 605.2,113.4 617.1,202.0 629.0,226.6 640.9,177.4 652.8,172.5 664.7,177.4 676.6,167.6 688.5,197.1 700.4,187.2 712.3,211.9 724.2,172.5 736.1,211.9 748.0,216.8"/><circle cx="46.0" cy="231.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="57.9" cy="246.3" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="69.8" cy="197.1" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="81.7" cy="241.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="93.6" cy="206.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="105.5" cy="236.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="117.4" cy="221.7" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="129.3" cy="236.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="141.2" cy="202.0" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="153.1" cy="216.8" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="165.0" cy="182.3" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="176.9" cy="182.3" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="188.8" cy="128.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="200.7" cy="192.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="212.6" cy="236.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="224.5" cy="133.1" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="236.4" cy="177.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="248.3" cy="211.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="260.2" cy="202.0" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="272.1" cy="211.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="284.0" cy="167.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="295.9" cy="187.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="307.8" cy="192.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="319.7" cy="216.8" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="331.6" cy="172.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="343.5" cy="206.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="355.4" cy="206.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="367.3" cy="202.0" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="379.2" cy="216.8" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="391.1" cy="211.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="402.9" cy="221.7" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="414.8" cy="167.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="426.7" cy="226.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="438.6" cy="157.7" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="450.5" cy="187.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="462.4" cy="206.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="474.3" cy="157.7" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="486.2" cy="202.0" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="498.1" cy="197.1" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="510.0" cy="162.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="521.9" cy="167.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="533.8" cy="256.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="545.7" cy="236.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="557.6" cy="177.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="569.5" cy="187.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="581.4" cy="172.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="593.3" cy="187.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="605.2" cy="113.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="617.1" cy="202.0" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="629.0" cy="226.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="640.9" cy="177.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="652.8" cy="172.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="664.7" cy="177.4" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="676.6" cy="167.6" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="688.5" cy="197.1" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="700.4" cy="187.2" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="712.3" cy="211.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="724.2" cy="172.5" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="736.1" cy="211.9" r="1.6" fill="var(--accent)" opacity="0.55"/><circle cx="748.0" cy="216.8" r="1.6" fill="var(--accent)" opacity="0.55"/><polyline fill="none" stroke="var(--positive)" stroke-width="2.4" points="46.0,221.7 57.9,219.2 69.8,213.5 81.7,204.5 93.6,194.1 105.5,195.1 117.4,195.1 129.3,192.2 141.2,188.2 153.1,198.1 165.0,189.2 176.9,172.5 188.8,162.6 200.7,170.5 212.6,173.5 224.5,166.6 236.4,182.3 248.3,184.3 260.2,189.2 272.1,183.3 284.0,183.3 295.9,161.7 307.8,169.5 319.7,149.8 331.6,133.1 343.5,126.2 355.4,141.0 367.3,135.1 379.2,131.1 391.1,130.2 402.9,143.9 414.8,116.4 426.7,123.3 438.6,128.2 450.5,139.0 462.4,138.0 474.3,152.8 486.2,153.8 498.1,150.8 510.0,155.8 521.9,149.8 533.8,155.8 545.7,140.0 557.6,143.9 569.5,137.0 581.4,132.1 593.3,136.1 605.2,125.2 617.1,133.1 629.0,138.0 640.9,125.2 652.8,131.1 664.7,144.9 676.6,126.2 688.5,118.3 700.4,144.9 712.3,138.0 724.2,140.0 736.1,149.8 748.0,149.8"/><polyline fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-dasharray="6 3" points="46.0,231.5 57.9,238.9 69.8,225.0 81.7,229.1 93.6,224.7 105.5,225.6 117.4,220.7 129.3,228.6 141.2,220.7 153.1,222.7 165.0,211.9 176.9,204.0 188.8,182.3 200.7,180.4 212.6,184.3 224.5,174.5 236.4,173.5 248.3,190.2 260.2,192.2 272.1,187.2 284.0,194.1 295.9,196.1 307.8,192.2 319.7,195.1 331.6,187.2 343.5,195.1 355.4,199.1 367.3,201.0 379.2,201.0 391.1,208.9 402.9,211.9 414.8,204.0 426.7,208.9 438.6,197.1 450.5,192.2 462.4,189.2 474.3,187.2 486.2,182.3 498.1,190.2 510.0,185.3 521.9,177.4 533.8,197.1 545.7,204.0 557.6,200.0 569.5,205.0 581.4,206.0 593.3,192.2 605.2,167.6 617.1,172.5 629.0,180.4 640.9,181.3 652.8,178.4 664.7,191.2 676.6,184.3 688.5,178.4 700.4,180.4 712.3,188.2 724.2,187.2 736.1,196.1 748.0,200.0"/><line x1="56" y1="20" x2="78" y2="20" stroke="var(--positive)" stroke-width="2"/><text x="84" y="23.5" font-size="10.5" fill="var(--ink)">lightmount(5 步滑动均值)</text><line x1="56" y1="36" x2="78" y2="36" stroke="var(--accent)" stroke-width="2" stroke-dasharray="6 3"/><text x="84" y="39.5" font-size="10.5" fill="var(--ink)">chrome(5 步滑动均值)</text></svg></div>
+    <figcaption>图 4-1 · critic/rewards/mean 逐步曲线(细线为单步值,粗线为 5 步滑动均值)。
       单步为 64 个 rollout 的均值,步间震荡属于小样本方差。</figcaption>
   </figure>
   <div class="tablewrap"><table>
     <tr><th>指标</th><th>lightmount</th><th>chrome</th><th>差异</th></tr>
-    <tr><td>reward 全程均值</td><td class="num">0.260</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>reward 后 10 步均值</td><td class="num">0.217</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>单步墙钟中位</td><td class="num">288 s</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>60 步总时长</td><td class="num">5.2 h</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>生成阶段占比</td><td class="num">79%</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>有效 rollout 吞吐</td><td class="num">⟦N/h⟧</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>reward 全程均值(60 步)</td><td class="num win">0.355</td><td class="num">0.221</td><td class="num">+0.134</td></tr>
+    <tr><td>reward 后 10 步均值</td><td class="num win">0.419</td><td class="num">0.244</td><td class="num">+0.175</td></tr>
+    <tr><td>reward 单步峰值</td><td class="num">0.719</td><td class="num">0.484</td><td class="num">—</td></tr>
+    <tr><td>单步墙钟中位</td><td class="num">244 s</td><td class="num">214 s</td><td class="num">chrome −12%</td></tr>
+    <tr><td>60 步总时长</td><td class="num">4.37 h</td><td class="num">4.15 h</td><td class="num">chrome −5%</td></tr>
+    <tr><td>生成阶段占比</td><td class="num">77%</td><td class="num">76%</td><td class="num">持平</td></tr>
+    <tr><td>rollout 总数(含动态采样重采)</td><td class="num">6,707</td><td class="num">7,241</td><td class="num">—</td></tr>
   </table></div>
-  <div class="pending">norm60ds(chrome)于 2026-08-12 07:30 UTC 开跑,预计当日 13:00-14:00 UTC 完成后填入。</div>
-  <div class="hypothesis">910B 上的先验:单 rollout 端到端 lightmount 快 ~22%,但在 8×8 异步并发下
-    被批内等待吸收,墙钟差异不显著。A100 数据将检验该结论是否在生成更快(等待占比更高)时仍成立。</div>
+  <div class="fact">
+    <p><strong>观测事实</strong>:同配置下 lightmount 组的 reward 全程高于 chrome 组
+      (全程均值 0.355 vs 0.221),而墙钟基本相当(chrome 略快 5%,部分来自其平均
+      响应序列更短:3,510 vs 3,641 字符中位)。</p>
+  </div>
+  <div class="hypothesis">各引擎仅一次 60 步运行、同一数据顺序、无多种子重复,reward 差距不能排除
+    单次运行方差与页面内容随时间变化的贡献;§8 的 invalid 率差异(两组任务有效样本构成不同)也可能影响
+    学习信号。把该差距解读为"lightmount 必然训得更好"超出本轮证据边界;结论以资源与延迟维度为主。</div>
 </section>
 
 <!-- ============================== 5 rollout 延迟分解 ============================== -->
@@ -194,88 +204,108 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   <p>端到端时延由五段构成:session 创建 → 交互(act)→ 观测(observe)→ 判分 → 清理。
     逐段对比才能定位差异来自引擎还是栈。</p>
   <div class="tablewrap"><table>
-    <tr><th>阶段(中位 / P95,秒)</th><th>lightmount(n=7,663)</th><th>chrome(n=⟦⟧)</th></tr>
-    <tr><td>session 创建</td><td class="num">4.2 / 10.4</td><td class="num">⟦⟧</td></tr>
-    <tr><td>浏览器交互 act</td><td class="num">5.0 / 25.6</td><td class="num">⟦⟧</td></tr>
-    <tr><td>观测 observe</td><td class="num">0.3 / 2.4</td><td class="num">⟦⟧</td></tr>
-    <tr><td>session 清理</td><td class="num">1.6 / 1.9</td><td class="num">⟦⟧</td></tr>
-    <tr><td>策略生成(GPU 侧,非环境)</td><td class="num">24.8 / 46.1</td><td class="num">⟦⟧</td></tr>
-    <tr><td><strong>端到端</strong></td><td class="num"><strong>43.0 / 73.0</strong></td><td class="num">⟦⟧</td></tr>
+    <tr><th>阶段(中位 / P95,秒)</th><th>lightmount(n=6,707)</th><th>chrome(n=7,241)</th></tr>
+    <tr><td>session 创建</td><td class="num">4.45 / 11.65</td><td class="num">4.05 / 12.09</td></tr>
+    <tr><td>浏览器交互 act</td><td class="num">3.15 / 22.25</td><td class="num win">2.46 / 16.57</td></tr>
+    <tr><td>观测 observe</td><td class="num">0.22 / 1.91</td><td class="num win">0.08 / 0.89</td></tr>
+    <tr><td>session 清理</td><td class="num win">1.60 / 1.93</td><td class="num">5.58 / 7.68</td></tr>
+    <tr><td>策略生成(GPU 侧,非环境)</td><td class="num">15.26 / 31.63</td><td class="num">13.58 / 31.32</td></tr>
+    <tr><td><strong>端到端</strong></td><td class="num"><strong>32.46 / 81.55</strong></td><td class="num"><strong>31.89 / 58.44</strong></td></tr>
   </table></div>
-  <p class="tnote">910B 参考(同栈、不同算力):端到端中位 light 75.3s / chrome 103.7s;
-    chrome 的 cleanup 恒定慢(5.7s vs 1.7s),create 恒定快(2.2s vs 4.5s)。</p>
-  <div class="pending">chrome 列、轨迹长度(turns / 输出 token)对比、以及分解瀑布图。</div>
+  <div class="fact">
+    <p><strong>观测事实</strong>:A100 窗口下两引擎端到端中位基本持平(32.5 vs 31.9 s)。
+      结构上 chrome 的 act/observe 略快、清理慢 3.5 倍(5.58 vs 1.60 s);
+      lightmount 的 P95 尾部更差(81.6 vs 58.4 s),与 §8 的导航超时集中一致。</p>
+  </div>
+  <div class="hypothesis">910B 窗口(2026-08-07/08,旧采集版本)曾测得 lightmount 端到端中位快 22%
+    (75.3 vs 103.7 s)。两轮结论不同,可能来自引擎版本、远端集群负载或站点内容随时间的变化;
+    以本轮 pin 版本、串行同日的测量为准。</div>
 </section>
 
 <!-- ============================== 6 远端资源 ============================== -->
 <section class="reading">
   <h2>6 · 远端资源:每个 session 花多少 CPU 和内存</h2>
-  <p>远端数字来自平台 Prometheus 的 pod 级 series,按 session id 过滤后聚合;
-    以下均为<strong>整个训练窗内我们全部 session 的总量</strong>,并折算峰值并发单价。</p>
+  <p>远端数字来自平台 Prometheus 的 pod 级 series(每 session 一条,60 s 采样),按
+    project + browser_mode(+镜像)过滤后聚合;以下为<strong>整个训练窗内我们全部
+    session 的总量</strong>,并折算平均并发下的单价。</p>
   <div class="tablewrap"><table>
-    <tr><th>指标(mean / p95 / max)</th><th>lightmount · 60 步全量窗</th><th>chrome · 60 步全量窗</th></tr>
-    <tr><td>内存 RSS 总量(GiB)</td><td class="num">1.28 / 5.78 / 7.73</td><td class="num">⟦⟧</td></tr>
-    <tr><td>CPU 总量(cores)</td><td class="num">1.57 / 6.65 / 8.91</td><td class="num">⟦⟧</td></tr>
-    <tr><td>出流量(MB/s)</td><td class="num">0.07 / 0.31 / 0.43</td><td class="num">⟦⟧</td></tr>
-    <tr><td>入流量(MB/s)</td><td class="num">0.87 / 3.57 / 4.68</td><td class="num">⟦⟧</td></tr>
-    <tr><td>并发 session(个)</td><td class="num">17.3 / 58 / 64</td><td class="num">⟦⟧</td></tr>
-    <tr><td>峰值并发内存单价(MiB/session)</td><td class="num">≈121(7.73 GiB ÷ 64)</td><td class="num">⟦⟧</td></tr>
-    <tr><td>资源积分(GiB·h / core·h)</td><td class="num">⟦⟧ / ⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><th>指标(mean / p95 / max)</th><th>lightmount · 60 步全量窗</th><th>chrome · 60 步全量窗</th><th>chrome ÷ light</th></tr>
+    <tr><td>内存 RSS 总量(GiB)</td><td class="num win">2.57 / 7.23 / 11.67</td><td class="num">6.41 / 18.06 / 29.03</td><td class="num">2.5×</td></tr>
+    <tr><td>内存积分(GiB·h / 60 步)</td><td class="num win">10.42</td><td class="num">25.44</td><td class="num">2.4×</td></tr>
+    <tr><td>CPU 总量(cores)</td><td class="num win">1.90 / 5.93 / 10.15</td><td class="num">2.39 / 8.17 / 10.64</td><td class="num">1.3×</td></tr>
+    <tr><td>CPU 积分(core·h / 60 步)</td><td class="num win">6.38</td><td class="num">8.17</td><td class="num">1.3×</td></tr>
+    <tr><td>出流量(MB/s)</td><td class="num win">0.09 / 0.32 / 0.50</td><td class="num">0.73 / 2.56 / 4.45</td><td class="num">8.1×</td></tr>
+    <tr><td>入流量(MB/s)</td><td class="num win">1.16 / 3.78 / 5.54</td><td class="num">2.19 / 6.74 / 9.01</td><td class="num">1.9×</td></tr>
+    <tr><td>并发 session(mean / max)</td><td class="num">36.2 / 106</td><td class="num">38.4 / 109</td><td class="num">≈1</td></tr>
+    <tr><td>平均并发内存单价(MiB/session)</td><td class="num win">≈73</td><td class="num">≈171</td><td class="num">2.4×</td></tr>
+    <tr><td>每千 session 内存成本(GiB·h)</td><td class="num win">1.61(6,465 个)</td><td class="num">3.80(6,695 个)</td><td class="num">2.4×</td></tr>
   </table></div>
-  <p class="tnote">早期信号(仅 5 步冒烟,499 session,分母远小于全量,不作结论):
-    chrome 冒烟窗内存均值 2.06 GiB @ 平均并发 13.7 ≈ 154 MiB/session;
-    正式对比以两个 60 步全量窗为准。</p>
+  <p class="tnote">并发 max 大于配额 64:pod 在 close 确认后仍有数十秒的删除滞后,
+    Prometheus 侧短暂并存;不影响积分与均值口径。</p>
   <figure class="content">
-    <div class="figbox"><span class="label">⟦占位:双引擎远端内存/CPU 时间线叠加图(同轴、同并发标注)⟧</span></div>
-    <figcaption>图 6-1 · 远端资源时间线。灰带为并发 session 数,用于对齐负载相位。</figcaption>
+    <div class="figbox"><svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img" font-family="PingFang SC,Noto Sans SC,sans-serif"><line x1="46" y1="14" x2="46" y2="266" stroke="var(--line)"/><line x1="46" y1="266" x2="748" y2="266" stroke="var(--line)"/><line x1="46" y1="266.0" x2="748" y2="266.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="269.0" text-anchor="end" font-size="10" fill="var(--muted)">0</text><line x1="46" y1="203.0" x2="748" y2="203.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="206.0" text-anchor="end" font-size="10" fill="var(--muted)">7.5</text><line x1="46" y1="140.0" x2="748" y2="140.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="143.0" text-anchor="end" font-size="10" fill="var(--muted)">15</text><line x1="46" y1="77.0" x2="748" y2="77.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="80.0" text-anchor="end" font-size="10" fill="var(--muted)">22.5</text><line x1="46" y1="14.0" x2="748" y2="14.0" stroke="var(--line)" stroke-width="0.5" opacity="0.55"/><text x="40" y="17.0" text-anchor="end" font-size="10" fill="var(--muted)">30</text><text x="46.0" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">0</text><text x="126.7" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">30</text><text x="207.4" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">60</text><text x="288.1" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">90</text><text x="368.8" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">120</text><text x="449.4" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">150</text><text x="530.1" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">180</text><text x="610.8" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">210</text><text x="691.5" y="280" text-anchor="middle" font-size="10" fill="var(--muted)">240</text><text x="12" y="22" font-size="10" fill="var(--muted)">GiB</text><text x="397.0" y="294" text-anchor="middle" font-size="10" fill="var(--muted)">相对运行时间(分钟)</text><polyline fill="none" stroke="var(--positive)" stroke-width="1.6" points="46.0,265.1 48.7,214.7 51.4,223.2 54.1,252.0 56.8,256.3 59.4,261.8 62.1,265.6 70.2,222.5 72.9,214.0 75.6,236.7 78.3,264.8 83.7,254.5 86.3,207.7 89.0,250.7 94.4,265.2 97.1,240.7 99.8,259.3 102.5,263.4 105.2,226.2 107.9,203.0 110.6,265.9 113.2,233.6 115.9,238.0 118.6,264.6 121.3,225.0 124.0,215.6 126.7,230.2 129.4,242.6 132.1,264.2 134.8,212.8 137.4,260.7 140.1,265.7 142.8,264.7 145.5,220.8 148.2,238.7 150.9,265.1 153.6,264.3 156.3,220.5 159.0,216.1 161.7,253.6 164.3,253.7 167.0,233.8 169.7,259.5 172.4,261.9 175.1,246.1 177.8,255.2 180.5,250.0 183.2,251.0 185.9,262.8 188.6,216.3 191.2,233.0 193.9,260.5 196.6,264.6 199.3,206.1 202.0,212.7 204.7,230.9 207.4,259.7 210.1,260.9 212.8,265.6 215.4,265.8 218.1,261.4 220.8,232.5 223.5,252.6 226.2,264.8 228.9,233.6 231.6,265.5 234.3,248.9 237.0,261.3 239.7,264.6 242.3,265.2 245.0,212.6 247.7,264.6 250.4,265.6 253.1,265.8 255.8,235.1 258.5,238.3 261.2,265.3 263.9,238.6 266.6,246.3 269.2,265.8 271.9,245.5 274.6,260.6 277.3,264.0 280.0,265.3 282.7,262.9 285.4,207.4 288.1,253.7 290.8,261.9 293.4,264.8 296.1,257.5 298.8,265.7 301.5,215.1 304.2,245.5 309.6,221.9 312.3,244.8 315.0,264.6 317.7,226.9 320.3,264.3 323.0,229.5 325.7,256.8 328.4,262.2 331.1,266.0 333.8,228.0 336.5,235.0 339.2,251.5 341.9,259.4 344.6,253.2 347.2,226.1 349.9,264.9 352.6,211.8 355.3,262.5 360.7,244.7 363.4,261.8 371.4,218.6 374.1,235.9 376.8,263.6 379.5,265.5 382.2,200.7 384.9,225.7 387.6,260.1 390.3,260.9 393.0,266.0 395.7,217.6 398.3,227.3 401.0,261.4 403.7,264.8 406.4,265.4 409.1,212.7 411.8,240.8 414.5,255.6 417.2,255.8 419.9,261.4 422.6,260.0 425.2,213.5 427.9,240.8 430.6,259.2 433.3,193.5 436.0,212.7 441.4,216.8 444.1,249.4 446.8,254.7 449.4,265.6 452.1,207.2 454.8,212.9 457.5,239.3 460.2,264.8 462.9,220.3 465.6,232.7 468.3,244.9 471.0,219.7 473.7,192.3 476.3,244.4 479.0,255.7 481.7,256.9 484.4,251.4 487.1,261.6 489.8,215.4 492.5,195.3 495.2,254.5 497.9,261.0 503.2,196.4 505.9,254.9 508.6,260.3 511.3,264.1 516.7,217.9 524.8,249.6 527.4,231.8 530.1,253.9 532.8,264.4 535.5,259.9 538.2,215.1 540.9,259.9 543.6,265.4 549.0,205.2 551.7,246.5 554.3,253.5 557.0,251.4 559.7,255.1 562.4,194.0 565.1,168.0 567.8,235.8 573.2,201.6 575.9,216.3 578.6,254.5 581.2,266.0 583.9,216.8 586.6,201.5 589.3,235.0 592.0,266.0 594.7,232.6 597.4,228.3 600.1,248.8 602.8,252.3 605.4,265.1 608.1,214.7 610.8,235.2 613.5,260.2 616.2,263.5 618.9,265.4 621.6,222.4 624.3,193.4 627.0,243.6 629.7,265.8 632.3,235.8 635.0,256.9 637.7,265.1 640.4,202.8 643.1,249.5 645.8,263.6 648.5,265.8 651.2,217.3 653.9,248.2 659.2,225.6 661.9,266.0 664.6,213.6 667.3,240.9 670.0,255.6 672.7,215.7 675.4,243.9 683.4,252.7 686.1,260.8 691.5,262.7 694.2,265.6 696.9,232.1 699.6,242.8 702.3,258.4 705.0,251.2 707.7,231.6 710.3,262.2 713.0,264.0 715.7,265.8 718.4,264.8 721.1,221.4 723.8,248.8 726.5,257.9 729.2,258.8 731.9,258.6 734.6,252.3 737.2,265.3 739.9,238.2 742.6,254.2 745.3,262.3 748.0,262.8"/><polyline fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-dasharray="5 3" points="46.0,140.9 48.7,214.9 51.4,238.9 54.1,237.2 56.8,258.5 59.4,254.9 62.1,232.8 64.8,244.8 67.5,254.7 70.2,264.4 78.3,164.1 81.0,182.6 83.7,139.1 86.3,216.2 89.0,235.4 97.1,87.7 99.8,58.2 102.5,179.6 105.2,241.2 110.6,200.9 113.2,223.3 115.9,240.9 118.6,264.5 121.3,265.6 124.0,202.6 126.7,247.2 129.4,260.5 132.1,194.0 134.8,225.6 137.4,234.8 140.1,248.7 142.8,186.8 145.5,198.2 148.2,228.0 150.9,258.0 153.6,184.3 156.3,209.8 159.0,234.4 161.7,258.2 164.3,113.1 167.0,131.5 169.7,163.2 172.4,248.8 175.1,172.9 177.8,181.8 180.5,205.7 183.2,251.5 185.9,158.5 188.6,159.5 191.2,217.3 193.9,247.2 196.6,198.8 199.3,120.6 202.0,246.6 204.7,216.6 207.4,156.9 210.1,186.4 212.8,236.2 215.4,199.5 218.1,135.1 220.8,244.3 223.5,243.2 226.2,125.3 228.9,22.1 231.6,187.9 234.3,245.6 237.0,264.1 239.7,104.6 242.3,232.7 245.0,241.4 247.7,138.7 250.4,132.2 253.1,244.2 255.8,262.2 258.5,264.8 261.2,144.2 263.9,197.2 266.6,261.3 269.2,104.3 271.9,134.4 274.6,219.9 277.3,217.2 280.0,107.7 282.7,186.3 285.4,265.4 288.1,190.1 290.8,245.9 293.4,248.1 296.1,246.3 298.8,248.1 301.5,259.4 304.2,131.1 306.9,201.9 309.6,250.9 312.3,229.8 315.0,188.3 317.7,259.1 320.3,135.4 323.0,122.6 325.7,233.1 328.4,265.9 331.1,160.1 333.8,220.1 336.5,264.4 339.2,114.3 341.9,234.3 344.6,196.1 347.2,122.7 349.9,241.2 352.6,257.7 355.3,265.9 358.0,218.4 360.7,253.1 363.4,260.4 366.1,204.8 368.8,265.9 371.4,159.8 374.1,243.3 376.8,263.5 379.5,265.9 382.2,209.0 384.9,193.0 387.6,248.5 390.3,264.0 393.0,202.7 395.7,167.7 398.3,224.5 401.0,211.6 403.7,256.5 406.4,263.0 409.1,185.9 411.8,255.0 414.5,265.1 417.2,122.5 419.9,211.3 425.2,212.5 427.9,247.0 430.6,262.5 433.3,158.2 436.0,255.0 438.7,264.0 441.4,182.5 444.1,231.5 449.4,143.2 452.1,241.9 454.8,253.4 457.5,253.3 460.2,262.7 462.9,242.6 465.6,259.3 468.3,248.2 471.0,264.4 476.3,140.5 479.0,248.8 481.7,247.6 484.4,240.2 487.1,243.0 492.5,148.9 495.2,238.8 500.6,163.4 503.2,185.1 505.9,255.6 508.6,264.5 511.3,182.0 514.0,202.4 516.7,244.7 519.4,263.1 522.1,135.2 524.8,249.3 527.4,263.6 530.1,180.0 532.8,55.6 535.5,236.5 538.2,265.9 540.9,164.7 543.6,214.3 546.3,265.9 549.0,145.2 551.7,78.0 554.3,165.3 557.0,245.2 559.7,248.6 562.4,258.8 565.1,222.0 567.8,166.2 570.5,232.9 575.9,167.6 578.6,224.9 581.2,260.3 583.9,157.6 586.6,185.9 589.3,247.0 592.0,192.2 594.7,259.9 597.4,263.5 600.1,166.2 602.8,259.0 605.4,249.9 608.1,250.7 610.8,254.8 613.5,265.1 616.2,97.2 618.9,177.8 621.6,251.8 624.3,235.8 627.0,169.5 629.7,249.0 632.3,263.3 635.0,127.2 637.7,181.4 640.4,254.2 643.1,163.5 645.8,221.6 648.5,252.4 651.2,265.2 653.9,93.5 656.6,205.9 659.2,260.2 661.9,265.9 664.6,179.6 667.3,185.0 670.0,233.0 672.7,248.4 675.4,116.8 678.1,188.0 680.8,247.9 683.4,219.9 686.1,255.4 688.8,234.1 691.5,256.8 694.2,244.6 696.9,221.5 699.6,256.6 702.3,263.0 705.0,123.5 707.7,208.2 710.3,256.0 713.0,266.0"/><line x1="56" y1="20" x2="78" y2="20" stroke="var(--positive)" stroke-width="2"/><text x="84" y="23.5" font-size="10.5" fill="var(--ink)">lightmount 远端内存总量</text><line x1="56" y1="36" x2="78" y2="36" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 3"/><text x="84" y="39.5" font-size="10.5" fill="var(--ink)">chrome 远端内存总量</text></svg></div>
+    <figcaption>图 6-1 · 两个训练窗的远端内存总量时间线(相对各自开跑时刻对齐)。
+      两组负载相位一致(锯齿为按步的 session 批量创建/销毁);chrome 的包络整体高一档。</figcaption>
   </figure>
 </section>
 
 <!-- ============================== 7 GPU 影响 ============================== -->
 <section class="reading">
-  <h2>7 · GPU 影响:环境延迟如何折算成算力浪费</h2>
-  <p>浏览器环境不占 GPU,但它的延迟决定 GPU 在 rollout 阶段的等待时长。
-    我们用 5 秒粒度的宿主采样,把利用率曲线与训练阶段对齐。</p>
+  <h2>7 · GPU 影响:环境延迟如何折算成算力占用</h2>
+  <p>浏览器环境不占 GPU,但它决定 GPU 在 rollout 阶段的等待时长。宿主 5 秒采样按
+    session 活动窗裁剪后统计。</p>
   <div class="tablewrap"><table>
     <tr><th>指标</th><th>lightmount</th><th>chrome</th></tr>
-    <tr><td>GPU 利用率 mean / median(%)</td><td class="num">74.9 / 99.0</td><td class="num">⟦⟧</td></tr>
-    <tr><td>显存(GiB/卡)</td><td class="num">24.2</td><td class="num">⟦⟧</td></tr>
-    <tr><td>整机功耗均值(W,8 卡)</td><td class="num">1,144</td><td class="num">⟦⟧</td></tr>
-    <tr><td>每有效样本 GPU 卡时(card·s/rollout)</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
+    <tr><td>GPU 利用率 mean / median(%)</td><td class="num">63.5 / 96.5</td><td class="num">63.0 / 96.5</td></tr>
+    <tr><td>显存(GiB/卡)</td><td class="num">24.2</td><td class="num">24.0</td></tr>
+    <tr><td>整机功耗均值(W,8 卡)</td><td class="num">1,007</td><td class="num">995</td></tr>
+    <tr><td>GPU 卡时(card·h / 60 步)</td><td class="num">34.9</td><td class="num">33.2</td></tr>
+    <tr><td>每有效 rollout 卡时(card·s)</td><td class="num">20.5(6,136 个有效)</td><td class="num">17.2(6,932 个有效)</td></tr>
+    <tr><td>训练机 CPU / 内存均值</td><td class="num">8.6% / 221 GiB</td><td class="num">8.3% / 219 GiB</td></tr>
   </table></div>
-  <div class="pending">空转归因图:利用率时间线 × train.log 阶段(gen / update / env-wait)对齐;
-    以及两引擎"同卡时可多训多少样本"的折算。</div>
+  <div class="fact">
+    <p><strong>观测事实</strong>:GPU 侧两组几乎不可区分(利用率、显存、功耗差均在噪声内)。
+      在 8×8 异步并发 + A100 生成速度下,环境不构成 GPU 瓶颈;两引擎对"训练机本身"的
+      开销同样接近零——这与本地 docker 方案(浏览器与训练争抢同机资源)形成架构性差异。
+      chrome 组每有效 rollout 卡时略低,主要因其 invalid 率更低(§8)、有效样本分母更大。</p>
+  </div>
 </section>
 
 <!-- ============================== 8 稳定性 ============================== -->
 <section class="reading">
   <h2>8 · 稳定性:失败模式与守恒检查</h2>
   <div class="fact">
-    <p><strong>Session 守恒(chrome 冒烟,新埋点首跑)</strong>:499 create / 499 close,
-      配对率 100%,零泄漏。60 步全量的守恒表跑完即填。</p>
+    <p><strong>Session 守恒(两组全量,埋点逐条配对)</strong>:lightmount 6,465 create /
+      6,465 close;chrome 6,695 / 6,695;<strong>合计 13,160 个 session 零泄漏</strong>。
+      两组各 4 小时级长跑均零崩溃、零人工干预,60 步 GRPO 分组审计全部通过。</p>
   </div>
   <div class="tablewrap"><table>
     <tr><th>指标</th><th>lightmount</th><th>chrome</th></tr>
-    <tr><td>invalid 样本率</td><td class="num">7.8%(600 / 7,663)</td><td class="num">⟦⟧</td></tr>
-    <tr><td>· 其中导航超时</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>· 其中 act/observe 超时</td><td class="num">⟦⟧</td><td class="num">⟦⟧</td></tr>
-    <tr><td>session 泄漏(create−close)</td><td class="num">⟦⟧</td><td class="num">0(冒烟)/ ⟦⟧(全量)</td></tr>
-    <tr><td>长跑存活</td><td class="num">5.2 h 无崩溃</td><td class="num">⟦⟧</td></tr>
+    <tr><td>invalid 样本率</td><td class="num">8.5%(571 / 6,707)</td><td class="num win">4.3%(309 / 7,241)</td></tr>
+    <tr><td>· 导航超时</td><td class="num">409</td><td class="num">231</td></tr>
+    <tr><td>· close RPC 失败</td><td class="num">148</td><td class="num">0</td></tr>
+    <tr><td>· 工具链基础设施失败</td><td class="num">5</td><td class="num">78</td></tr>
+    <tr><td>· act / observe 超时</td><td class="num">9</td><td class="num">0</td></tr>
+    <tr><td>session 泄漏(create−close)</td><td class="num">0</td><td class="num">0</td></tr>
+    <tr><td>长跑存活</td><td class="num">4.37 h 无崩溃</td><td class="num">4.15 h 无崩溃</td></tr>
   </table></div>
-  <div class="hypothesis">lightmount 的 invalid 率(A100 7.8%,910B 3.7%)高于 chrome(910B 0.85%),
-    集中在导航超时。归因未完成:可能是超时阈值按 Chrome 语义设定,也可能是特定站点渲染路径差异。
-    在归因结论出来前,本报告不把稳定性写成 lightmount 的优势项。</div>
+  <div class="hypothesis">lightmount 的 invalid 率(8.5%)约为 chrome 的 2 倍,集中在导航超时与
+    close RPC 失败两类。归因未完成:导航超时阈值按 Chrome 语义设定,可能不适配 lightmount 的加载
+    事件时序;close RPC 失败(148 例)是本轮新出现的类别,需要引擎侧日志定位。
+    在归因结论出来前,本报告不把稳定性写成 lightmount 的优势项;
+    但两类失败均被训练栈正确识别、隔离并重采,未污染训练信号,也未造成泄漏。</div>
 </section>
 
 <!-- ============================== 9 限制 ============================== -->
 <section class="reading">
   <h2>9 · 限制与未验证项</h2>
   <p>· 单机单模型:结论覆盖 A100×8 + Qwen3-8B + WebVoyager 任务分布,未验证多机与更大模型。<br>
-    · lightmount 全量跑早于 session id 埋点上线,其远端数据按 mode+project+时间窗过滤;
-      新版 lightmount 发布后将带埋点重跑,得到与 chrome 完全对称的 session 级清单。<br>
-    · 本地 docker Chrome 未实测,§3 中该列为架构性推断。<br>
-    · 两个 60 步窗相隔一天,共享公网与远端集群,潮汐负载未受控;
-      并发单价指标(per-session)对这类漂移相对稳健。</p>
+    · 每引擎一次 60 步运行,无多种子重复;§4 的 reward 差距按单次观测呈现,不外推为普适结论。<br>
+    · 两个训练窗同日先后进行(间隔 10 分钟),共享公网与远端集群,潮汐负载未完全受控;
+      per-session 单价与积分口径对此类漂移相对稳健。<br>
+    · lightmount 为 2026-08-07 构建(老版,与此前所有实验一致);新版(moli 系列)就绪后
+      将以同口径重跑,验证版本演进的影响。<br>
+    · 本地 docker Chrome 未实测,§3 中该列为架构性推断。</p>
 </section>
 
 <!-- ============================== 10 附录 ============================== -->
@@ -283,23 +313,32 @@ footer{border-top:1px solid var(--line);margin-top:4rem;padding:2rem 0 3rem;
   <h2>10 · 附录:可复核性</h2>
   <h3>数据资产</h3>
   <p class="mono" style="font-size:.82rem;line-height:2">
-    训练日志:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260811-140745-wf-light60ds-a100/<br>
-    训练日志:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260812-073007-wf-norm60ds-a100/<br>
+    light:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260812-122606-wf-light60ds-a100/<br>
+    chrome:node3:/data2/webrl-a100/lexbrowser-rl/runs/20260812-170830-wf-norm60ds-a100/<br>
     session 审计:&lt;run&gt;/audit/session_ids.jsonl(event/create/close/delete + ts + mode)<br>
-    宿主采样:/data2/webrl-a100/logs-*/resources-*.jsonl(5s · GPU/CPU/mem/net/容器)<br>
+    宿主采样:/data2/webrl-a100/logs-*/resources-&lt;stamp&gt;.jsonl(5 s · GPU/CPU/mem/net/容器)<br>
     rollout 指标:&lt;run&gt;/observability/raw/*.jsonl(schema v2)</p>
   <h3>远端查询(PromQL,数据源 P1809F7CD0C75ACF3)</h3>
   <p class="mono" style="font-size:.82rem;line-height:2">
-    sum(pod:memory_rss:bytes{label_project_id="85329155-…",label_browser_mode="light"})<br>
-    sum(pod:cpu_usage:rate:cores{…}) · count(pod:memory_rss:bytes{…})<br>
-    per-session:直接按 label_session_id 过滤,与审计清单 join</p>
-  <div class="pending">chrome 全量窗时间戳、session 清单文件名、以及复跑命令块。</div>
+    light 窗 2026-08-12T12:31–16:53Z:
+    sum(pod:memory_rss:bytes{label_project_id="85329155-…",label_browser_mode="light",
+    label_docker_image="lightmount-20260807-180709-ba70627fa6-experimental"})<br>
+    chrome 窗 2026-08-12T17:14–21:22Z:
+    sum(pod:memory_rss:bytes{label_project_id="85329155-…",label_browser_mode="normal"})<br>
+    同型查询替换 cpu_usage:rate:cores / network_*_bytes:rate;count(…) 得并发;
+    per-session 按 label_session_id 过滤,与审计清单 join(chrome 窗命中 6,695/6,695,
+    外来 16 个已剔除)</p>
+  <h3>复跑命令(node3)</h3>
+  <p class="mono" style="font-size:.82rem;line-height:2">
+    light:cd /data2/webrl-a100 && bash launch_wf_light60ds_a100.sh(内置 pin 镜像)<br>
+    chrome:cd /data2/webrl-a100 && bash launch_wf_norm60ds_a100.sh<br>
+    引擎版本 pin:LEXMOUNT_CUSTOM_IMAGE_ID=&lt;registry image&gt;(SDK sessions.create 原生参数)</p>
 </section>
 
 <footer>
   <div class="reading">
-    Lexmount Browser Lab · 数据窗 2026-08-11 ~ 08-12 · 本页所有数字均带分母与时间窗;
-    占位符(⟦⟧)将在 norm60ds 全量完成后由脚本回填。
+    Lexmount Browser Lab · 数据窗 2026-08-12(UTC)· 本页所有数字均带分母与时间窗;
+    单一来源:两次 60 步受控运行 + 平台 Prometheus,session 级可逐条复核。
   </div>
 </footer>
 
